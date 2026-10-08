@@ -33,40 +33,55 @@ Repository: `pin-glide-android`.
 - [Gradle release builds and APK signing](https://developer.android.com/build/build-for-release): Generate release packages.
 - ADB: Local test installation. Signed APK downloads: Initial distribution method.
 
-## Cloudflare
+## Service
 
 Repository: `pin-glide-service`.
 
 ### Development Environment Setup
 
-- IDE: VS Code with built-in TypeScript support.
-- Tools: Git, Node.js LTS, and npm. Install [Wrangler](https://developers.cloudflare.com/workers/wrangler/) in the project.
-- Skills: Install official [Cloudflare Skills](https://github.com/cloudflare/skills), using `wrangler`, `durable-objects`, and `workers-best-practices`.
-- Account: Set up a Cloudflare account and authenticate Wrangler.
+- IDE: VS Code with the Go extension and Go language tooling.
+- Tools: Git, the Go toolchain and Go Modules, Docker Engine, and Docker Compose v2. Pin Jet and psqldef as repository Go tools.
+- Reference: Follow the Go/PostgreSQL/Huma/Jet/psqldef stack and Docker deployment workflow in [helm-gateway](https://github.com/BuddyLabsCo/helm-gateway).
+- Server: Prepare the project's own Linux server with Docker access, deployment-tool prerequisites, container registry read access, and a reverse proxy providing public HTTPS/WSS endpoints.
 
 ### Build
 
-- TypeScript + Hono: Authentication, device management, configuration, and ciphertext routing APIs.
-- npm + Wrangler: Dependency management and Workers builds.
-- SQL migration files: D1 schema management.
+- Go + Huma: Authentication, device management, configuration, and ciphertext routing HTTP APIs. Go handles authenticated WSS connections and live ciphertext delivery. Huma is the HTTP/API framework.
+- Go Modules and Go build tooling: Dependency management and backend builds.
+- PostgreSQL + Jet: Persistent business data and schema-generated typed database queries/models.
+- psqldef: Deploy the declarative PostgreSQL schema. Keep versioned structural/data upgrade scripts distinct from target-schema application, following the reference deployment workflow.
+- Generate Jet code from the target schema using a disposable PostgreSQL instance; generation does not connect to deployed databases. Validate generated artifacts before packaging.
+- Docker: Package the Go backend and the matching SQL/deployment tools as versioned release images.
 - WeChat server APIs and Bailian temporary API key API: Identity validation and model credential requests.
 
 ### Testing
 
-- All service tests run against deployed Cloudflare environments. No local testing or local runtime simulation.
-- HTTP/WebSocket test scripts: Access the cloud test service to verify authentication, device routing, pairing relay, receipt acknowledgments, and failure handling.
-- Android and Windows clients connect to the cloud test environment: End-to-end integration and public internet latency testing.
-- Wrangler real-time logs and Cloudflare logs: Cloud troubleshooting and result verification.
+- Go tests and isolated local PostgreSQL instances: Business logic, database integration, schema evolution, and failure-path checks. Test fixtures and generated artifacts do not use production data or databases.
+- HTTP/WebSocket test scripts: Verify authentication, device routing, encrypted pairing relay, receipt acknowledgments, and failure handling against local test instances and the deployed development environment.
+- Android and Windows clients connect to the deployed development environment: End-to-end acceptance and public-internet latency measurement before production release.
+- Container/service logs and deployment health checks: Troubleshooting and result verification. Logs exclude SMS/OTP plaintext, message ciphertext, client encryption keys, and secret values.
 
 ### Deployment
 
-- Cloudflare Workers free plan: Network service.
-- Cloudflare D1 free plan: Business configuration and status logs.
-- Durable Objects free SQLite mode + WebSocket Hibernation: Real-time connections and ciphertext delivery.
-- Wrangler: Deploy services, apply database migrations, and configure Workers Secrets.
-- Wrangler environments: Deploy separate `staging` and `production` environments with independent D1 databases, Durable Objects namespaces, and Secrets.
-- Deploy versions to `staging` for cloud testing before releasing to `production`.
-- Cloudflare Pages free plan: Future static product homepage.
+- Own Linux server + Docker Compose: Run the Go backend and PostgreSQL. The server pulls versioned Docker images rather than building application source on the host.
+- Repository deployment tool: Follow [helm-gateway's `install.sh` workflow](https://github.com/BuddyLabsCo/helm-gateway/blob/ba375819b98bcd76fc27d7a15b2523aa62837c6f/deploy/compose/README.md) for initial installation and updates.
+- Initial deployment: Prepare configuration and registry access, pull matching release images, start PostgreSQL, apply the schema with psqldef and initialize required data, then start the service and verify health.
+- Update deployment: Prepare and pull matching release images, stop application writes, back up PostgreSQL, run the ordered schema/data upgrade steps with psqldef apply/check, then restart the service and verify health. Preserve existing data and reject unsupported downgrades.
+- Separate `development` and `production` deployments: Independent Compose projects, PostgreSQL databases/volumes, endpoints, and protected secret configuration. Validate in `development` before releasing to `production`.
+- Deployment configuration supplies database credentials, WeChat credentials, and the permanent Bailian API key without putting secrets in images, source files, or logs. The operator's reverse proxy terminates HTTPS/WSS.
+- Future static product homepage: Owned by this repository and hosted on the project's own server; its UI and implementation timing are a separate effort.
+
+The deployment tool exposes the reference preparation and execution phases:
+
+```sh
+# First installation
+./install.sh --version X.Y.Z --prep --initial-install
+./install.sh --version X.Y.Z --initial-deploy
+
+# Update or same-version redeployment
+./install.sh --version X.Y.Z --prep
+./install.sh --version X.Y.Z --full-release
+```
 
 ## Windows
 
