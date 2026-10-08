@@ -47,6 +47,9 @@ Repository: `pin-glide-service`.
 ### Build
 
 - Go + Huma: Authentication, device management, configuration, and ciphertext routing HTTP APIs. Go handles authenticated WSS connections and live ciphertext delivery. Huma is the HTTP/API framework.
+- Export the complete client-facing HTTP contract as `openapi.yaml`, including operations, parameters, authentication requirements, request/response schemas, and errors.
+- Export the complete WSS contract as `asyncapi.yaml`, including endpoint addresses, handshake parameters and authentication, message directions and schemas, correlation/receipt semantics, and documented error/close behavior. Keep shared wire definitions consistent and bundle references so both descriptions are usable without a deployed service.
+- Service owns these descriptions and their release artifacts. Android and Windows own how they consume a pinned contract release, choose generation/conversion tools, and produce or adapt their clients.
 - Go Modules and Go build tooling: Dependency management and backend builds.
 - PostgreSQL + Jet: Persistent business data and schema-generated typed database queries/models.
 - psqldef: Deploy the declarative PostgreSQL schema. Keep versioned structural/data upgrade scripts distinct from target-schema application, following the reference deployment workflow.
@@ -57,6 +60,7 @@ Repository: `pin-glide-service`.
 ### Testing
 
 - Go tests and isolated local PostgreSQL instances: Business logic, database integration, schema evolution, and failure-path checks. Test fixtures and generated artifacts do not use production data or databases.
+- Validate both API descriptions, reference resolution, HTTP/WSS route and schema coverage, consistency with service behavior, and supported-client compatibility. Release descriptions and examples contain no operational credentials or user message data.
 - HTTP/WebSocket test scripts: Verify authentication, device routing, encrypted pairing relay, receipt acknowledgments, and failure handling against local test instances and the deployed development environment.
 - Android and Windows clients connect to the deployed development environment: End-to-end acceptance and public-internet latency measurement before production release.
 - Container/service logs and deployment health checks: Troubleshooting and result verification. Logs exclude SMS/OTP plaintext, message ciphertext, client encryption keys, and secret values.
@@ -69,6 +73,8 @@ Repository: `pin-glide-service`.
 - Update deployment: Prepare and pull matching release images, stop application writes, back up PostgreSQL, run the ordered schema/data upgrade steps with psqldef apply/check, then restart the service and verify health. Preserve existing data and reject unsupported downgrades.
 - Separate `development` and `production` deployments: Independent Compose projects, PostgreSQL databases/volumes, endpoints, and protected secret configuration. Validate in `development` before releasing to `production`.
 - Deployment configuration supplies database credentials, WeChat credentials, and the permanent Bailian API key without putting secrets in images, source files, or logs. The operator's reverse proxy terminates HTTPS/WSS.
+- Publish `openapi.yaml` and `asyncapi.yaml` as GitHub Release assets from the same service tag/source commit as the Docker release. Publish the release only after both descriptions are validated and attached.
+- Keep published description assets stable; corrections use a new release. Callers pin a service release tag and retrieve descriptions during development or builds, then select their own client generation/conversion workflow. Private-repository download credentials belong to the development/CI environment.
 - Future static product homepage: Owned by this repository and hosted on the project's own server; its UI and implementation timing are a separate effort.
 
 The deployment tool exposes the reference preparation and execution phases:
