@@ -1,6 +1,6 @@
 # Pin Glide Service Functional Specification
 
-Status: consolidated draft for final contract review. Functional decisions through Q41, including the standard business-error response and Sender lifecycle, are approved. Concrete v1 route/schema/crypto framing remains a draft for shared-contract review. Sender message-retry policy and repository performance testing are outside service scope. No service, client, database or deployment has been implemented or runtime-validated.
+Status: approved functional specification and shared v1 contract, adopted by the user in [the functional resolution](https://github.com/BuddyLabsCo/pin-glide-service/issues/2#issuecomment-6080960446). The agreed behavior includes the standard business-error response, Sender lifecycle and concrete route/schema/crypto framing. Sender message-retry policy and repository performance testing are outside service scope. Runtime implementation, generated YAML and cross-client interoperability remain future validation.
 
 Canonical planning context: [Wayfinder map: service requirements and shared protocol](https://github.com/BuddyLabsCo/pin-glide-service/issues/1) and [Clarify service functional requirements and shared client contracts](https://github.com/BuddyLabsCo/pin-glide-service/issues/2). The source baseline is service commit 566ec02e9c0a8a89b073f3f11cd1c3d68051c4e7.
 
@@ -97,7 +97,7 @@ If R is lost, a recover_receiver QR requires fresh WeChat Account-owner verifica
 
 ## 5. Cryptographic profile v1
 
-This is a concrete interoperability proposal implementing the selected primitives. Two-client interoperability and security validation remain required before contract release.
+This is the adopted interoperability profile for the selected primitives. Two-client interoperability and security validation remain required before contract release.
 
 ### QR and HPKE setup
 
@@ -122,7 +122,7 @@ Typed confirmation payloads cannot be displayed as verification messages. Do not
 
 Use AES-256-GCM with the per-Pairing message key, a fresh cryptographically random 96-bit nonce, full 128-bit tag, and zero-length AAD.
 
-Binary ciphertext encodes ciphertext followed by its 16-byte tag. Wire byte strings use standard padded Base64. This proposal uses no sequence field, replay bitmap or message AAD.
+Binary ciphertext encodes ciphertext followed by its 16-byte tag. Wire byte strings use standard padded Base64. This profile uses no sequence field, replay bitmap or message AAD.
 
 The encrypted UTF-8 JSON is:
 
@@ -199,7 +199,7 @@ The selected default is Beijing qwen3.7-flash, OpenAI-compatible Chat Completion
 
 The service returns the configured Workspace-specific Beijing base URL, https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1, with the model and inference settings. Android posts text-only messages to /chat/completions. Use enable_thinking=false explicitly; the provider enables thinking by default. Do not rely on a prompt instruction to disable it. The [regional endpoint guide](https://help.aliyun.com/zh/model-studio/regions/) recommends this host; do not invent a Workspace ID or switch region implicitly.
 
-Proposed extraction settings, excluding the Android-owned SMS prompt:
+Extraction settings, excluding the Android-owned SMS prompt:
 
 ~~~json
 {
@@ -233,7 +233,7 @@ No Account allowlist, invitation or project usage/billing quota. Provider-enforc
 
 ## 9. Wire conventions and operation inventory
 
-Proposed HTTP prefix is /v1; WSS subprotocol is pin-glide.v1. Names below are a draft contract, not a claim of existing routes.
+HTTP prefix is /v1; WSS subprotocol is pin-glide.v1. Required operations follow.
 
 IDs are opaque strings; callers do not infer identity or authority from them. Message IDs must be randomly generated and never reused for another SMS. Timestamps use RFC 3339 UTC. Binary values use padded Base64. Credentials use Authorization: Bearer for HTTP/WSS where applicable, never query strings.
 
@@ -256,9 +256,9 @@ IDs are opaque strings; callers do not infer identity or authority from them. Me
 | GET /v1/messages/{messageId} | U | Own metadata only, if retained; no ciphertext/history |
 | GET /health | none | Sanitized service/database health |
 
-### HTTP request and success contracts: v1 draft
+### HTTP request and success contracts: v1
 
-The following definitions make the approved flows concrete for contract review. Sender ID and Receiver ID are the deviceId of their respective registration roles. AppID and Account ownership are configured/derived by the service, not supplied as caller-controlled authority.
+The following definitions form the shared v1 contract. Sender ID and Receiver ID are the deviceId of their respective registration roles. AppID and Account ownership are configured/derived by the service, not supplied as caller-controlled authority.
 
 Common response objects:
 
@@ -291,7 +291,7 @@ Send credential-bearing success responses with Cache-Control: no-store. Tokens a
 
 Unknown or purged message metadata returns 404 resource_not_found. The metadata query contains admitted Delivery records rather than an upload-request history; rejected-only input without an admitted Delivery does not create a queryable Delivery. A request's HTTP 207 response still reports every rejected input. Live processing is observable as processing in this GET only; unavailable storage or an unconfirmable result returns the standard 503. Resolve orphaned work as interrupted under the existing lifecycle.
 
-### Pairing session state: v1 draft
+### Pairing session state: v1
 
 State is awaiting_authorization, awaiting_confirmation, credential_ready, credential_issued, completed, canceled, expired or superseded. The absolute session/B lifetime remains five minutes.
 
@@ -446,7 +446,7 @@ Delivery contains version, senderId, receiverId, pairingId, messageId, cryptoVer
 
 Pairing messages contain sessionId, side and opaque payload; derive allowed side from authentication. Control types include pairing_state, credential_ready, pairing_removed and device_revoked. No control response leaks R to Android or any client encryption key to the service.
 
-### Message definitions and directions: v1 draft
+### Message definitions and directions: v1
 
 Every application WSS message contains version: 1 and type. Native Ping/Pong and Close retain their WebSocket control-frame formats.
 
@@ -471,7 +471,7 @@ Client-only QR and handshake bytes are defined for interoperability:
 - Confirmation relay uses kind: key_confirmation, cryptoVersion: 1, nonce and ciphertext. Decrypted confirmation fields are the type/role/challenge fields defined in section 5. Challenges are padded Base64 of exactly 32 bytes. The service forwards these bytes without verifying client key material or decrypted challenges.
 - Delivery plaintext uses type: verification_message, smsText, otp and optional receivedAt as defined in section 5. A null model OTP never becomes a delivery payload.
 
-### v1 compatibility: draft
+### v1 compatibility
 
 Published release descriptions remain immutable. v1 permits compatible optional-field additions; recipients tolerate unknown optional fields. Existing required fields, field meanings, credentials and Receipt milestone remain stable. Because unknown application message types are protocol errors, a new server-initiated type requires a new negotiated protocol version rather than being sent to an old v1 client. Incompatible fields/semantics likewise require a new HTTP/WSS protocol version and separately versioned release contracts. Advertise supported versions and changes in release notes; client generation remains client-owned.
 
@@ -524,7 +524,7 @@ Export complete self-contained openapi.yaml and asyncapi.yaml with matching shar
 
 Keep the future static homepage owned/hosted here, but its content, UI and implementation timing are outside initial forwarding functionality.
 
-## 13. Traceability and remaining approvals
+## 13. Traceability and adoption
 
 | Baseline | Specification |
 | --- | --- |
@@ -545,6 +545,6 @@ Keep the future static homepage owned/hosted here, but its content, UI and imple
 
 Shared-boundary checkpoint: the current client maps contain no approved conflicting decision. Service-authority context pointers in [Android functional requirements](https://github.com/BuddyLabsCo/pin-glide-android/issues/2#issuecomment-6080124694) and [Windows functional requirements](https://github.com/BuddyLabsCo/pin-glide-windows/issues/2#issuecomment-6080125168) record the approved boundaries, supplemented by [Sender lifecycle and re-pairing](https://github.com/BuddyLabsCo/pin-glide-service/issues/2#issuecomment-6080579614). Their local HITL tickets remain open; the old source diagrams do not override the linked decisions.
 
-Remaining approval: final review of the concrete v1 route/schema/crypto framing, followed by updating the client context pointers with that agreed contract. The standard business-error response and Sender lifecycle are approved. Provider support for the selected settings is documented; actual account permissions, temporary-key/Workspace-endpoint use and inference remain integration checks. Local client behavior can remain with their owners; no completed three-repository specifications are being claimed.
+Adoption: the user approved the complete v1 route/schema/crypto framing in [the functional resolution](https://github.com/BuddyLabsCo/pin-glide-service/issues/2#issuecomment-6080960446). Client context pointers carry that shared contract into their local HITL discussions. Provider support for the selected settings is documented; actual account permissions, temporary-key/Workspace-endpoint use and inference remain integration checks. Local client behavior remains with its owners; completed client specifications and runtime interoperability are not claimed.
 
 S18-S20 code structure, static enforcement and persistence-evolution policy belong to the separate architecture child and its required root-level code-architecture.md. Do not implement or silently decide those here.
