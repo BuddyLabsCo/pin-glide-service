@@ -485,7 +485,9 @@ The architecture discussion clarified PostgreSQL retention into exactly three ta
 
 Use pg_cron in PostgreSQL, daily 03:00 Asia/Shanghai, to delete Delivery metadata older than 7 days. Deduplication depends on row existence, with no independent age filter. Normal row lifetime is about 7-8 days; missed/failed cleanup can extend it. No Go cleanup fallback.
 
-pg_cron directly deletes each designated PostgreSQL table's rows using its indexed timestamp predicate and seven/thirty-day threshold. Cleanup clocks must preserve still-valid credentials, sliding refresh families and operation-order guards; long-lived R and activated Pairings are separate from temporary session data. Historical identifiers/relationships must not let configuration deletion cascade into retained transaction/log data. Purge cron run history including interrupted rows without end_time.
+Cleanup has its own configuration table defining target schema/table, retention days and date-column name, with one policy per table. The pg_cron task reads the entries and uses dynamic SQL to directly delete each target's rows by its configured time filter. Date columns are selected/validated during implementation/configuration rather than fixed for every table in architecture planning. Their semantics must preserve valid credentials, sliding families and ordering guards; long-lived R and activated Pairings remain separate from temporary session data. Historical identifiers must not let configuration deletion cascade into retained transaction/log data.
+
+Interrupted cleanup reruns the filters on the next scheduled day without a progress checkpoint or new recovery mechanism. Native cron-history rows with missing timestamps require target-column coverage validation; another run does not make NULL dates comparable. No cron-history schema addition or special restore hook is selected.
 
 These retention periods apply only to PostgreSQL. Docker/container logs are operator-managed. Backups follow the Helm manual retention/recovery workflow; unfinished recovery dependencies must not be removed. Logical deletion is not immediate physical erasure from backups or storage.
 

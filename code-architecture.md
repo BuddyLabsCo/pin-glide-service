@@ -36,7 +36,7 @@ Existing artifacts are `AGENTS.md`, `GLOSSARY.md`, `docs/agents/`, `docs/specs/s
 | `generated/protocol/schemas.json` | Generated shared schema registry, including WSS-only types |
 | `generated/protocol/asyncapi.yaml` | Assembled AsyncAPI input with generated components |
 | `openapi.yaml`, `asyncapi.yaml` | Complete, self-contained generated contract outputs, committed and released together |
-| `db/schema/release/`, `db/schema/pin_glide/` | Sorted declarative desired-schema SQL, retaining Helm's object-file conventions |
+| `db/schema/release/`, `db/schema/pin_glide/` | Sorted desired-schema SQL, including cleanup configuration/function, retaining Helm conventions |
 | `db/migrations/release/`, `db/migrations/pin_glide/`, `db/scripts/` | Immutable structural scripts and Data Scripts; initial setup/explicit cron job changes |
 | `db/migrations/order.txt` | Exact-commit packaging output from full first-parent Git history; not a handwritten ordering list |
 | `scripts/quality/`, `scripts/db/`, `scripts/codegen/`, `scripts/release/` | Adapted Helm checks, disposable database, generation and packaging/publication machinery |
@@ -140,9 +140,9 @@ CI retains Helm's quality/generated/test/build separation. Explicit integration-
 
 ### One table, one scheduled cleanup policy
 
-There are exactly three tiers: no scheduled deletion, seven days, thirty days. **No table mixes tiers**, including active/historical variants. No per-row retention class, `status` exception, nullable time exemption or generic mixed event table is used. Business operations may physically delete no-scheduled-deletion rows when authorized; this is independent of cron retention. Configuration does not require universal soft deletion or a history of every field update.
+There are three adopted policy tiers: no scheduled deletion, seven days, thirty days. **No table mixes tiers**, including active/historical variants. Retention is configured once per target table, never per business row or status. Business operations may physically delete no-scheduled-deletion rows when authorized; this is independent of cron retention. Configuration does not require universal soft deletion or a history of every field update.
 
-The table names and timestamp choices below are concrete review proposals implementing that rule. Use the inherited SQL naming/comment rules and one desired object per appropriate source file. Every cleanup timestamp is non-null and indexed. Times are server-generated UTC instants, not client-provided SMS/display timestamps.
+The table names below are concrete review proposals implementing that rule. Use the inherited SQL naming/comment rules and one desired object per appropriate source file. Cleanup configuration owns each target's retention days and date column; this architecture does not preselect those column names. Select and validate the column with its target schema, including lifecycle semantics, nullability and indexing. Client-provided SMS/display timestamps are not authority for service cleanup.
 
 | Table | Owning module; key/constraint | Data and sensitivity | Scheduled cleanup |
 | --- | --- | --- | --- |
@@ -150,52 +150,50 @@ The table names and timestamp choices below are concrete review proposals implem
 | `pin_glide.identity_devices` | identity; device ID and Account ownership | Installation identity, role, revocation and Receiver issuance generation | None; preserve minimum permanently revoked identity needed for agreed 409/404 behavior |
 | `pin_glide.pairing_associations` | pairing; Pairing ID, unique active Sender/Receiver association | Effective authorization and own alias; no keys | None; authorized removal/replacement can physically remove old association |
 | `pin_glide.model_configurations` | model; config ID/revision and enabled-selection invariant | Non-secret Bailian settings and response snapshot | None |
+| `pin_glide.retention_policies` | deployment; unique target schema/table | Configured schema, table, retention days and date column | None; controls cleanup of other tables |
 | `pin_glide.identity_receiver_credentials` | identity; Receiver ID, unique digest/current generation | Long-lived R digest/revocation metadata only | None; separate from expiring credentials |
 | `release.release_migration_scripts` | release; schema/filename and checksum | Authoritative processed structural scripts, SQL snapshot/executor | None; retain Helm ledger semantics |
 | `release.release_data_scripts` | release; filename/checksum | Authoritative processed Data Scripts and snapshots | None |
 | `release.release_deploy_history` | release; append milestone ID | Database Release history, including latest required milestone | None |
 | `cron.job` and its extension metadata | deployment; stable job name/owner | Cleanup definitions, configured target and active state | None; extension owns its schema, explicit scripts manage jobs |
-| `pin_glide.identity_sender_credentials` | identity; digest, Sender/family/scope | M/U/F digest, issue/expiry/consumption/revocation metadata; no raw token | 7 days using `issued_at` |
-| `pin_glide.identity_login_families` | identity; family ID, Sender/current generation | Renewal/revocation state, latest accepted refresh time | 7 days using `last_refreshed_at`; every successful login/refresh updates it atomically |
-| `pin_glide.identity_refresh_operations` | identity; family/operation ID, accepted attempt | Predecessor/ordering guards; preserve old-operation semantics | 7 days using first `accepted_at`; later attempts do not reset it |
-| `pin_glide.pairing_sessions` | pairing; session ID, allocated Receiver/pending Pairing IDs | Fixed mode/participants, B digest/expiry, reservations, completion, issuance grant/attempt state; no relay payload | 7 days using `created_at` |
-| `pin_glide.delivery_transactions` | delivery; unique Sender/message/Receiver | Admission/dedup, metadata, processing deadline and terminal result | 7 days using `created_at` |
-| `pin_glide.delivery_rejections` | delivery; rejection ID/request/index | Per-entry safe metadata and internal reason; does not replace admitted Delivery | 7 days using `created_at` |
-| `pin_glide.service_logs` | runtime logging; event ID/request correlation | Sanitized runtime/provider/auth/connection diagnostic events | 30 days using `occurred_at` |
-| `release.release_schema_audits` | release; audit ID | psqldef apply/check output, exit, elapsed time, executor | 30 days using inherited `executed_at` |
-| `cron.job_run_details` | pg_cron | Job execution diagnostics, including interrupted runs | 30 days using proposed project-added `recorded_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP`, with an index |
+| `pin_glide.identity_sender_credentials` | identity; digest, Sender/family/scope | M/U/F digest, issue/expiry/consumption/revocation metadata; no raw token | 7-day tier; date column selected in cleanup configuration |
+| `pin_glide.identity_login_families` | identity; family ID, Sender/current generation | Renewal/revocation state; preserve sliding validity | 7-day tier; configure a column reflecting renewal semantics |
+| `pin_glide.identity_refresh_operations` | identity; family/operation ID, accepted attempt | Predecessor/ordering guards; preserve old-operation semantics | 7-day tier; date column selected in cleanup configuration |
+| `pin_glide.pairing_sessions` | pairing; session ID, allocated Receiver/pending Pairing IDs | Fixed mode/participants, B digest/expiry, reservations, completion, issuance grant/attempt state; no relay payload | 7-day tier; date column selected in cleanup configuration |
+| `pin_glide.delivery_transactions` | delivery; unique Sender/message/Receiver | Admission/dedup, metadata, processing deadline and terminal result | 7-day tier; date column selected in cleanup configuration |
+| `pin_glide.delivery_rejections` | delivery; rejection ID/request/index | Per-entry safe metadata and internal reason; does not replace admitted Delivery | 7-day tier; date column selected in cleanup configuration |
+| `pin_glide.service_logs` | runtime logging; event ID/request correlation | Sanitized runtime/provider/auth/connection diagnostic events | 30-day tier; date column selected in cleanup configuration |
+| `release.release_schema_audits` | release; audit ID | psqldef apply/check output, exit, elapsed time, executor | 30-day tier; date column selected in cleanup configuration |
+| `cron.job_run_details` | pg_cron | Job execution diagnostics | 30-day tier; validate the native column coverage when configuring |
 
-Do not put long-lived R into the seven-day credential table. Do not put authoritative migration ledgers into the audit table. A still-active login family may be older than seven days: its renewal timestamp slides with F validity, while every row in that table follows the same time predicate. Expiry/credential validity is enforced at request time; waiting for cron never extends authority.
+Do not put long-lived R into the seven-day credential table. Do not put authoritative migration ledgers into the audit table. A still-active login family may be older than seven days: its configured column must preserve sliding validity rather than impose an absolute age cap. Expiry/credential validity is enforced at request time; waiting for cron never extends authority.
 
 The pending Receiver and Pairing references live in the seven-day session until activation creates effective configuration records. Activated associations and R live independently of that session; deleting a session cannot revoke them. First valid R presentation can occur after the old grant/session has been purged and must still authenticate using the durable R/generation. Preserve the Receiver's current issuance-generation guard in its durable device state so old grants cannot affect new recovery. Public IDs alone never grant authority. Expired sessions release capacity and stop redemption at five minutes; retaining a row for seven days never extends that lifecycle.
 
 Configuration IDs stored in Delivery/log/control history are historical identifiers, not cascade-delete links. Business deletion of a Pairing/device must not erase seven/thirty-day records early. Avoid cross-tier `ON DELETE CASCADE`; use domain transactions for authorized lifecycle changes and non-cascading historical identifiers where necessary. Session/B cleanup must not cascade into R/Pairing configuration. Same-tier control rows must also remain safe when family/credential cleanup runs concurrently with refresh; serialize renewal/issuance/revocation with the relevant database locks. A delayed request cannot upsert a purged/expired family or recreate deleted operation authority; it affects only its original family, never a later fresh-login family.
 
-### Direct cron cleanup
+### Configuration-driven dynamic cleanup
 
-Reuse Data Scripts to register/update the jobs with a stable deployment owner/name and verify resulting `cron.job` state.
+`pin_glide.retention_policies` stores `schema_name`, `table_name`, `retention_days` and `date_column`, with one unique entry per target schema/table. It is configuration data and is not itself age-purged. A table without a cleanup entry is not a cleanup target. Initial configured values follow the adopted seven/thirty-day tiers; changes apply to the whole table. Do not hardcode a separate DELETE or date column for every target in the scheduler.
 
-Native pg_cron `start_time` and `end_time` can both be null before actual execution; `COALESCE` is not a complete cleanup clock. The concrete review proposal adds `recorded_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP` and an index to `cron.job_run_details` through an explicit immutable Data Script after extension setup; Data Scripts run on fresh installation too. Existing rows with unknown age receive the installation/backfill time once, retaining them for at most another thirty days plus daily scheduling lag without fabricating their age. This is a target-specific schema addition to extension-owned history, not psqldef management of the `cron` schema or an extension fork. Extension upgrades must preserve and test the column and index. Sources: [native nullable timestamps](https://github.com/citusdata/pg_cron/blob/v1.6.7/pg_cron--1.2--1.3.sql), [InsertJobRunDetail](https://github.com/citusdata/pg_cron/blob/v1.6.7/src/job_metadata.c).
+An application-schema cleanup function reads the entries, calculates each cutoff and sequentially executes direct time-filter DELETEs. Its proposed desired DDL belongs at `db/schema/pin_glide/40_functions/retention_fn_cleanup.sql`; the table belongs at `db/schema/pin_glide/20_tables/retention_policies.sql`. Reuse immutable Data Scripts to initialize/change configuration and register one named pg_cron job calling the function daily at 03:00 Asia/Shanghai. No application queue, progress checkpoint or Go cleanup fallback is introduced.
 
-The proposed application schema is `pin_glide`; examples are SQL contracts for the implementation, not executed migrations:
+The dynamic statement shape is illustrative, not an executed migration:
 
 ```sql
-DELETE FROM pin_glide.delivery_transactions
-WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days';
-
-DELETE FROM pin_glide.identity_login_families
-WHERE last_refreshed_at < CURRENT_TIMESTAMP - INTERVAL '7 days';
-
-DELETE FROM pin_glide.service_logs
-WHERE occurred_at < CURRENT_TIMESTAMP - INTERVAL '30 days';
-
-DELETE FROM cron.job_run_details
-WHERE recorded_at < CURRENT_TIMESTAMP - INTERVAL '30 days';
+EXECUTE format(
+    'DELETE FROM %I.%I WHERE %I < $1',
+    policy.schema_name, policy.table_name, policy.date_column
+) USING cutoff;
 ```
 
-Apply the corresponding simple timestamp filter to every seven/thirty-day table; no application job queue or Go cleanup fallback. Keep the adopted daily 03:00 Asia/Shanghai schedule; a missed run extends actual retention, and daily deletion gives an approximate 7-8/30-31-day online lifetime rather than exact second-level expiry. A transaction rollback can delay cleanup; monitor through thirty-day diagnostic data.
+Quote schema/table/column individually as identifiers and bind the cutoff as a value. Validate positive retention days, target relation/column existence and suitable date type; index the selected column. Configuration writes belong to trusted deployment/maintenance authority, never ordinary client input. Restrict the job role to required SELECT/DELETE/function permissions; protected configuration/ledger tables are not cleanup targets. Source: [PostgreSQL dynamic commands](https://www.postgresql.org/docs/17/plpgsql-statements.html#PLPGSQL-STATEMENTS-EXECUTING-DYN).
 
-Time-filter cleanup must preserve the sliding seven-day F lifetime: credentials/operations cannot be deleted while still needed for valid-token/replay/attempt evaluation. A new refresh cannot revive a logically expired family merely because cron has not deleted it. Received/failed Delivery rows use creation time, not last query/duplicate attempt, so status lookup does not extend dedup lifetime. Existing retained-row existence controls dedup, not an independent age filter.
+If cleanup is interrupted, rerun the same configured filters on the next scheduled day. Committed deletion needs no compensation; uncommitted work rolls back, leaving expired rows eligible next time. A function loop does not provide independent per-table commits: an uncaught error rolls back its transaction. No custom interruption/recovery state machine is required. Missed/failed runs extend actual retention; daily age purging is not exact second-level expiry.
+
+Date-column selection is an implementation/configuration task, not another architecture decision for every table now. Check that it preserves valid credentials, sliding families, ordering guards and retained-row deduplication. NULL dates do not match `< cutoff`; native pg_cron history may contain missing timestamps, a separate metadata-quality limitation rather than a reason for restart machinery. The earlier extension-history column and staged restore-hook proposal is withdrawn. Validate target-column coverage before claiming complete history expiry, without preselecting extension schema changes here.
+
+A new refresh cannot revive an expired family merely because cron has not deleted it; result lookup/duplicate attempts must not extend Delivery deduplication lifetime. Retained-row existence still controls deduplication, with no independent age filter.
 
 PostgreSQL owns diagnostic events via the adapter in `internal/adapters/postgres/logs.go`; standard Go slog can retain Helm's stdout output for operators. Persist only explicit sanitized fields. Diagnostic writes do not replace authoritative business-state transactions. Database log-write failure must avoid recursive logging and may fall back to operator-managed stderr; no impossible PostgreSQL logging guarantee is made during database failure. Docker/host logs are entirely operator-managed and have no application-selected TTL.
 
@@ -235,7 +233,7 @@ Applications remain stopped after failed/uncertain migration. Earlier scripts/ps
 
 For a failed migration with a verified stopped-writer backup, retain Helm's explicit cancel/restore: restore protected environment, recreate only the application database, restore the complete dump and start original service after required checks. There is no Redis cache to flush. No valid baseline authorizes no automated database deletion/restore. Keep cron paused through restoration; restored active jobs must not race incomplete data recovery.
 
-The proposed `recorded_at` addition requires an explicit restore prerequisite hook: a full dump's extension configuration data does not prove it recreates project-added extension-member table DDL. When the backup includes `recorded_at`, restore extension pre-data, apply the project-owned `recorded_at`/index DDL before restoring job-history data, then restore remaining data and post-data, keeping the scheduler paused throughout. Preserve whole-database restore and installer attempt-state semantics; this bounded pg_cron hook does not introduce a new restore framework. Verify the complete backup/restore round trip in isolated development before relying on this proposal.
+Cleanup interruption needs no additional restore hook. Retain Helm's complete-database restore mechanics and the already-required scheduling control during restore; no project-added cron-history column or staged restore prerequisite is selected.
 
 Once migration succeeds, cancel is forbidden even if startup fails. Use a documented equal/higher repair-release path; a manual downgrade is not an ordinary rollback. Standalone start remains Helm's intentional weaker escape hatch and must be documented as such. Database Release is not application readiness: health must exercise the declared database/service availability without claiming it checks release/schema/image compatibility automatically. Operator procedure verifies selected artifact identity and applied job state separately.
 
@@ -281,7 +279,7 @@ Reviewers can reject a change by citing these rules:
 - No server persistence/log carries prohibited payloads or raw secrets; sanitized errors preserve the accepted HTTP/207/WSS distinction.
 - Admission/dedup is atomic and prior authorization is frozen; late ACK, duplicate upload and interruption never initiate a second send.
 - Connection slots are owned/cleaned by connection ID; cancellation/deadlines/resources and shutdown are tested at the real seam.
-- Each PostgreSQL table has exactly one cleanup tier and one valid indexed time predicate; no status-based TTL exemption or cross-tier cascade deletes.
+- Each PostgreSQL table has one cleanup tier; each configured target has one trusted policy, a validated/indexed date column and safely quoted identifiers/bound cutoff. No per-row policy or cross-tier cascade deletes.
 - Long-lived R is separated from expiring credentials; session deletion does not delete activated authorization; sliding renewal and replay guards survive their valid lifetime.
 - Effective config is not cron-purged; business deletion is authorized and does not silently erase retained Delivery/log history.
 - Ledger/version records are not expiring logs; processed SQL/manifest checksums, phase order and safe rerun/error handling remain intact.
@@ -296,4 +294,6 @@ Update this document in the same change whenever module ownership, public comman
 
 Adopted: business-oriented modules, shared Go wire definitions/Huma HTTP plus explicit WSS description, released-v1 compatibility, Helm Go/SQL/deployment reuse, PostgreSQL-only three retention tiers, business physical deletion, per-table separation, direct timestamp-filter cron cleanup, manual backups and operator-managed Docker logs.
 
-For final review: the concrete proposed table names and cleanup clocks (especially sliding login-family renewal and project-added pg_cron history `recorded_at` with its restore prerequisite hook), exporter/validator command interface and target-specific pg_cron/protocol integration details above. No schema/tool/application/deployment implementation or successful runtime checks are claimed. The architecture issue remains open until the user adopts the complete artifact and its reviewable version is linked from the resolution.
+Adopted cleanup direction: a no-age-purge configuration table supplies targets, retention days and date columns; the cron function reads entries and runs dynamic time-filter DELETEs sequentially. Date columns are selected/validated during implementation and configuration. Normal interruption retries next scheduled day; no extension-history column or special restore hook is selected.
+
+For final review: the consolidated placement/tool/contract/evolution/review guide and concrete proposed table/command paths. No schema/tool/application/deployment implementation or successful runtime checks are claimed. The architecture issue remains open until the user adopts the complete artifact and its reviewable version is linked from the resolution.

@@ -55,3 +55,7 @@ _Avoid_: Database transaction, runtime log
 **Log Data**:
 Diagnostic records of execution and failures used to understand service operation, rather than to determine authority or whether work may execute again.
 _Avoid_: Credential state, migration ledger, Delivery result
+
+**Retention Policy**:
+A table-level configuration identifying the records' time field and how long to retain them before scheduled cleanup.
+_Avoid_: Per-message expiry, credential validity
