@@ -481,9 +481,13 @@ Document before release: successful/failed handshake HTTP responses, message dir
 
 Persist Accounts, device/credential-digest records, Pairing authorizations/aliases, model configuration, pairing/control metadata and processing/status/rejection metadata as needed. No SMS/OTP plaintext, client encryption key or message ciphertext in PostgreSQL or application logs.
 
+The architecture discussion clarified PostgreSQL retention into exactly three table-level policies: no scheduled deletion for configuration/durable authorization and release ledgers/version history; seven days for message-delivery transactions and temporary authentication/pairing control data; thirty days for service runtime logs, schema apply/check audits and pg_cron run history. Business operations may physically delete configuration where the functional lifecycle permits it; preserve minimal permanently revoked Device Registration identity for the agreed restoration behavior. A table must not mix no-cleanup/seven-day/thirty-day records. See [the retention decision](https://github.com/BuddyLabsCo/pin-glide-service/issues/3#issuecomment-6095218706); concrete table/clock proposals are in the architecture review draft.
+
 Use pg_cron in PostgreSQL, daily 03:00 Asia/Shanghai, to delete Delivery metadata older than 7 days. Deduplication depends on row existence, with no independent age filter. Normal row lifetime is about 7-8 days; missed/failed cleanup can extend it. No Go cleanup fallback.
 
-Non-Delivery logs retained one month. Configure a real age-retention mechanism in architecture/deployment planning; container size rotation alone is not that promise. Purge cron run history including interrupted rows without end_time. Backup retention/recovery belongs to persistence planning; logical deletion is not immediate physical erasure.
+pg_cron directly deletes each designated PostgreSQL table's rows using its indexed timestamp predicate and seven/thirty-day threshold. Cleanup clocks must preserve still-valid credentials, sliding refresh families and operation-order guards; long-lived R and activated Pairings are separate from temporary session data. Historical identifiers/relationships must not let configuration deletion cascade into retained transaction/log data. Purge cron run history including interrupted rows without end_time.
+
+These retention periods apply only to PostgreSQL. Docker/container logs are operator-managed. Backups follow the Helm manual retention/recovery workflow; unfinished recovery dependencies must not be removed. Logical deletion is not immediate physical erasure from backups or storage.
 
 Memory ciphertext release follows Delivery/request terminal processing, never the daily metadata schedule. Keep raw credentials and WeChat/Bailian secret-bearing requests/responses out of logs and published examples.
 

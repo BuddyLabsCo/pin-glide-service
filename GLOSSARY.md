@@ -43,3 +43,15 @@ _Avoid_: Message, batch
 **Receipt**:
 A Receiver's acknowledgment that a Message has arrived, without asserting successful validation, decryption, display, or copying.
 _Avoid_: Decryption success, display success
+
+**Configuration Data**:
+The service's authoritative identity, authorization, operational settings and release state, maintained through explicit business or deployment actions.
+_Avoid_: Immutable data, diagnostic history
+
+**Transaction Data**:
+Records of Message delivery or temporary authentication and Pairing workflows, including their processing state and results.
+_Avoid_: Database transaction, runtime log
+
+**Log Data**:
+Diagnostic records of execution and failures used to understand service operation, rather than to determine authority or whether work may execute again.
+_Avoid_: Credential state, migration ledger, Delivery result
