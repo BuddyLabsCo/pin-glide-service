@@ -1,152 +1,470 @@
 # Code Architecture
 
-Use this guide for code placement and review. Product behavior belongs in [service-requirements.md](docs/specs/service-requirements.md); decisions and open questions belong in the [architecture ticket](https://github.com/BuddyLabsCo/pin-glide-service/issues/3). Use [GLOSSARY.md](GLOSSARY.md) for names.
+This document is the placement contract for code changes in this repository. It
+defines where source, generated artifacts, schema, tests, and deployment support
+belong. Paths describe the target layout; create files as their code is needed.
 
-The paths below define the target layout. Create files when needed.
+Product requirements and decisions live in the [architecture ticket](https://github.com/BuddyLabsCo/pin-glide-service/issues/3)
+and [functional specification](docs/specs/service-requirements.md). Domain language
+is defined in [GLOSSARY.md](GLOSSARY.md).
 
-## Layout
+## 1. Non-negotiable runtime shape
 
-```text
-cmd/
-  pin-glide-api/         # Service composition; offline -openapi export
-  pin-glide-release/     # Deployment/migration CLI
-  pin-glide-contracts/   # Shared-schema and WSS contract exporter
-internal/
-  identity/             # Account, Device Registration, credential rules
-  pairing/              # Pairing and Pairing Session rules
-  model/                # Model configuration and temporary-key use cases
-  delivery/             # Admission, deduplication, delivery results
-  protocol/             # Shared HTTP/WSS wire types and error codes
-  adapters/
-    httpapi/            # Huma routes, DTO mapping, HTTP errors
-    wss/                # Connections, frame I/O, heartbeat, Receipt mapping
-    postgres/           # Jet stores and PostgreSQL log writer
-    wechat/             # WeChat HTTP client
-    bailian/            # Bailian HTTP client
-  db/                   # Connection setup
-    jetgen/             # Generated release/pin_glide SQL builders and models
-  config/               # Process configuration and secret handling
-  release/              # Helm-derived migration, ledger and audit code
-protocol/asyncapi.yaml   # WSS channel/operation definitions
-generated/             # Shared schemas and intermediate contract output
-db/                    # Desired schemas, migration scripts, Data Scripts
-scripts/               # dev/, db/, quality/, codegen/, release/
-test/                  # integration/, smoke/, fixtures/
-deploy/compose/        # docker-compose.yml, .env.example, Dockerfiles, README.md
-install.sh              # Helm-derived host installer
-openapi.yaml             # Generated HTTP release contract
-asyncapi.yaml            # Generated WSS release contract
-```
+Pin Glide has one long-running application unit:
 
-## Go boundaries
+| Unit | Entrypoint or artifact | Runtime responsibility | Allowed dependencies |
+| --- | --- | --- | --- |
+| `api` | `cmd/pin-glide-api` | HTTP APIs and authenticated WSS connections | PostgreSQL, WeChat, Bailian temporary-key API |
 
-- `cmd` wires dependencies. Put no business rules there.
-- Business modules own types, errors, use cases and required I/O interfaces. Adapters implement those interfaces.
-- Business modules do not import Huma, HTTP/WSS connection types, Jet, pgx or adapter packages. Keep cross-module calls acyclic.
-- Transport adapters decode/validate wire input, call a use case and map its result. No SQL or multi-step business logic in handlers.
-- Keep Jet models inside PostgreSQL/release code. Map them to business types; never expose them as domain objects or API DTOs.
-- `internal/protocol` owns wire types only. It imports neither business modules nor adapters. Put mapping at the transport edge.
-- Each PostgreSQL store owns its domain's relations. Cross-domain changes go through the owning module's interface.
-- Business use cases define transaction scope through a store operation. The PostgreSQL adapter executes it atomically; keep transaction objects inside the adapter.
-- Pass contexts through I/O. Give each goroutine an owner, cancellation path and shutdown/join path. Keep transport disconnection separate from the business operation lifetime defined by the spec.
-- Handle returned errors; preserve typed causes with `%w`. Map public errors at transport boundaries and redact secret-bearing input.
-- Use `lower_snake_case.go`, matching package/directory names, and colocated `*_test.go`. Split by use case; keep handwritten Go/shell files within the inherited 500-line limit.
-- Add interfaces at actual I/O seams. Avoid generic repositories, pass-through services and `common/utils/shared/misc` packages.
+The release CLI is a one-off deployment tool, not another application process.
 
-Import boundaries are review rules; Helm's standard lint set does not enforce them automatically.
-
-## PostgreSQL and Jet
-
-Use PostgreSQL schemas `pin_glide` for application data and `release` for deployment metadata. Extension-owned `cron` objects stay outside application schema generation.
+### 1.1 Legal call directions
 
 ```text
-db/schema/<schema>/
-  00_extensions.sql
-  10_enums/<object>.sql
-  20_tables/<table>.sql
-  30_views/<view>.sql
-  40_functions/<function>.sql
-  50_procs/<procedure>.sql
-db/migrations/<schema>/issue_<number>_<sequence>_<summary>.sql
-db/scripts/issue_<number>_<sequence>_<summary>.sql
+Android Sender ──HTTPS/WSS──► api
+Windows Receiver ──HTTPS/WSS──► api
+
+api ──► PostgreSQL          identity, authorization, configuration, metadata
+api ──► WeChat              identity verification
+api ──► Bailian             temporary-key acquisition
+api ──WSS──► Receiver       live ciphertext and control messages
+
+release CLI ──► PostgreSQL  schema sync and ordered scripts
+pg_cron ──► PostgreSQL      configured cleanup
 ```
 
-- One primary object per desired-schema file. Keep a table's columns, constraints, indexes and comments in its file.
-- Tables: `<domain>_<plural_noun>`. Views/functions/procedures: `<domain>_vw_*`, `<domain>_fn_*`, `<domain>_sp_*`.
-- Keys/indexes: `pk_<table>`, `fk_<referenced_table>_<referenced_columns>`, `idx_<table>_<key_columns>`, `uidx_<table>_<key_columns>`. Preserve column order; omit INCLUDE columns from names. Use unique indexes instead of unique constraints.
-- Checks/triggers: `chk_<description>`, `trg_<table>_<description>`. Use lowercase snake case identifiers.
-- Add `COMMENT ON` for tables, columns, views, enums and routines. Routine comments list `parameters:` and each parameter name.
-- Use Jet for normal queries. Parameterize raw SQL where required. Never concatenate values into SQL.
-- Edit desired SQL for target structure. Add structural transition scripts only when schema diff is insufficient; put initialization/backfill/repair in Data Scripts.
-- Scripts must be safe to rerun. Never edit, delete or reformat processed scripts. Generate `order.txt` during exact-commit packaging from full Git history.
-- Generate Jet from desired schema in disposable PostgreSQL. Commit generated output; never hand-edit it.
-- Add/backfill/validate before dropping or renaming data. Test every declared upgrade origin; a matching target schema alone does not prove a safe upgrade.
-- Give each table one retention policy. Separate durable configuration, temporary transactions and diagnostic logs; do not mix them by row status.
-- Keep long-lived Receiver credentials separate from expiring Sender/session data. Do not cascade configuration deletion into retained transactions/logs or session deletion into activated authorization.
-- Store cleanup targets, retention days and date columns in `pin_glide.retention_policies`. Put its table/function DDL in `20_tables/retention_policies.sql` and `40_functions/retention_fn_cleanup.sql`.
-- The cleanup function reads policy rows and runs sequential dynamic DELETEs. Quote schema/table/column separately with `%I`; bind cutoff values with `USING`. Validate targets/types and restrict configuration writes/job privileges. Do not hardcode per-table date columns or add restart checkpoints.
-- Keep message payloads, client keys and raw credentials out of database rows/logs. Use historical scalar IDs where mutable configuration must not control history retention.
+### 1.2 Forbidden dependencies
 
-## Generated contracts
+Reject changes that introduce:
 
-| Edit source | Generate output |
-| --- | --- |
-| `internal/protocol` Go wire types | `generated/protocol/schemas.json` |
-| Actual Huma registrations in `internal/adapters/httpapi` | Root `openapi.yaml` |
-| `protocol/asyncapi.yaml` plus generated shared schemas | Root `asyncapi.yaml` |
-| `db/schema/{release,pin_glide}` | `internal/db/jetgen/{release,pin_glide}` |
+- Business packages importing transport adapters, Jet/pgx, `cmd`, or deployment code.
+- HTTP/WSS handlers executing SQL or business state transitions.
+- Provider or WSS network calls inside a PostgreSQL transaction.
+- Generated Jet models used as domain types or API DTOs.
+- A second database or a database-per-domain split.
+- PostgreSQL/log persistence of message payloads, client encryption keys or raw credentials.
 
-- Export HTTP with `go run ./cmd/pin-glide-api -openapi`; export shared/WSS definitions with `go run ./cmd/pin-glide-contracts`. Wire both into `scripts/codegen/generate.sh`.
-- Register descriptions for raw WSS HTTP handshakes as well as Huma routes. Keep message directions, authentication, errors and Close behavior in AsyncAPI.
-- Export WSS-only types directly from the registry; Huma may prune types unused by HTTP. Validate the shared JSON Schema subset across OpenAPI/AsyncAPI.
-- Bundle root YAML to internal references only. Edit sources, never generated YAML/Jet files.
-- Check actual route/message inventory and wire behavior against both descriptions. Keep compatibility fixtures for supported contract releases.
-- Regenerate and inspect both tracked drift and unexpected untracked output.
+## 2. Repository layout
 
-## Checks and tests
+```text
+pin-glide-service/
+├── cmd/
+│   ├── pin-glide-api/         # API process entrypoint; offline HTTP export
+│   ├── pin-glide-release/     # Release CLI entrypoint
+│   └── pin-glide-contracts/   # Shared-schema and WSS contract export
+├── internal/
+│   ├── adapters/
+│   │   ├── httpapi/           # Huma routes and HTTP server lifecycle
+│   │   ├── wss/               # Upgrade, frame I/O and connection lifecycle
+│   │   ├── postgres/          # Domain-owned Jet stores and log sink
+│   │   ├── wechat/            # WeChat HTTP client
+│   │   └── bailian/           # Bailian HTTP client
+│   ├── identity/              # Account, devices and credentials
+│   ├── pairing/               # Pairing and Pairing Session use cases
+│   ├── model/                 # Model configuration and temporary credentials
+│   ├── delivery/              # Admission, deduplication and delivery results
+│   ├── protocol/              # Canonical HTTP/WSS wire types
+│   ├── config/                # Environment configuration
+│   ├── db/                    # Connection/executor support and Jet output
+│   ├── observability/         # Structured logs, correlation and redaction
+│   └── release/               # Release manifest, ledger and migration execution
+├── db/
+│   ├── schema/
+│   │   ├── pin_glide/         # Desired application schema
+│   │   └── release/           # Desired release metadata schema
+│   ├── migrations/
+│   │   ├── pin_glide/         # Application schema transition scripts
+│   │   └── release/           # Release schema transition scripts
+│   └── scripts/               # Post-sync initialization and data repairs
+├── protocol/
+│   └── asyncapi.yaml          # Handwritten channel/operation definitions
+├── generated/
+│   └── protocol/              # Shared schemas and contract assembly output
+├── openapi.yaml               # Generated HTTP release contract
+├── asyncapi.yaml              # Generated WSS release contract
+├── deploy/
+│   └── compose/               # Compose, Dockerfiles and operator runbook
+├── test/
+│   ├── integration/           # Go tests using one-off PostgreSQL
+│   ├── contract/              # Public HTTP/WSS contract harnesses
+│   ├── smoke/                 # Compose and release smoke tests
+│   ├── fakes/                 # Controllable WeChat and Bailian clients
+│   └── fixtures/              # Frozen wire and database fixtures
+├── scripts/                   # Tooling grouped by function; see section 8
+├── .github/workflows/
+├── Makefile
+├── install.sh
+├── go.mod
+└── docs/
+```
 
-Copy Go/SQL checks and pinned dependencies from [Helm Gateway at ba375819](https://github.com/BuddyLabsCo/helm-gateway/tree/ba375819b98bcd76fc27d7a15b2523aa62837c6f). Use the [reuse inventory](docs/research/helm-gateway-go-sql-deployment-reuse.md) when bringing over tooling. Remove unrelated frontend/Redis/River steps; preserve root npm for Schemalint.
+Do not create `common`, `utils`, `shared`, or `misc` packages. Name helpers by
+responsibility, such as `config`, `db`, or `observability`.
 
-These are the target command interfaces; add their scripts/configs with the tooling implementation.
+General naming rules:
 
-| Command | Checks/configuration |
+- Go files use `lower_snake_case.go`; package names match their directories.
+- Go tests are colocated as `*_test.go`.
+- SQL object names follow section 4.2.
+- Workflows/scripts use `kebab-case` or the tool-required filename.
+- Generated output belongs only in the locations listed in section 6.
+- Apply Helm's 500-line handwritten-source check. Split by aggregate, use case or
+  transport operation, not arbitrary line count.
+
+## 3. Backend package rules
+
+### 3.1 Domain package template
+
+Each domain owns its types, invariants, state transitions and I/O interfaces:
+
+```text
+internal/<domain>/
+├── <domain>.go       # Concepts, states, value objects and errors
+├── service.go        # Business operations
+└── ports.go          # Required I/O interfaces; add only when needed
+
+internal/adapters/postgres/<domain>/
+└── store.go          # Jet queries for this domain's relations
+```
+
+Keep the agreed business/adapters separation: Helm's domain `store.go` role is
+implemented in the PostgreSQL adapter, not imported into the business package.
+
+When several aggregates need separate files, split by aggregate:
+
+```text
+internal/identity/
+├── identity.go
+├── service_login.go
+├── service_refresh.go
+├── service_revocation.go
+└── ports.go
+
+internal/adapters/postgres/identity/
+├── store_devices.go
+├── store_credentials.go
+└── store_refresh.go
+```
+
+Rules:
+
+- `service.go` or `service_<aggregate>.go` owns the business operation and its
+  atomicity requirements. The store interface exposes the required atomic I/O;
+  the PostgreSQL adapter owns `*sql.Tx` and query execution.
+- `store.go` or `store_<aggregate>.go` in the adapter is the normal place for Jet.
+  Accept the shared executor so queries work with `*sql.DB` or `*sql.Tx`.
+- Domain types live in the domain package. Map generated result structs inside
+  the adapter; never expose them through a domain interface or public DTO.
+- WeChat/Bailian clients contain HTTP protocol handling, not SQL or domain state
+  transitions.
+- A cross-domain workflow belongs to the domain owning the visible outcome.
+  Compose explicit domain interfaces; do not create a generic orchestrator.
+  Resolve cycles by placing the shared invariant in its owning domain.
+- Pass contexts through I/O. Each goroutine has an owner, cancellation path and
+  shutdown/join path. Handle errors and preserve typed causes with `%w`.
+
+### 3.2 API package
+
+Inbound HTTP belongs in `internal/adapters/httpapi`. Domain packages do not import
+`net/http` or know that Huma calls them.
+
+```text
+internal/adapters/httpapi/
+├── server.go
+├── router.go
+├── middleware.go
+├── errors.go
+├── identity/
+│   ├── routes.go
+│   └── dto.go
+├── pairing/
+│   ├── routes.go
+│   └── dto.go
+├── model/
+│   ├── routes.go
+│   └── dto.go
+└── delivery/
+    ├── routes.go
+    └── dto.go
+```
+
+Naming and ownership:
+
+- `<domain>/routes.go` registers Huma operations.
+- `<domain>/dto.go` owns HTTP parameter wrappers and domain-to-wire mapping.
+  Shared JSON payload types stay in `internal/protocol`; do not redeclare them.
+- Handlers adapt transport to a domain service call. No SQL or multi-step
+  business rules in handlers.
+- Operation IDs are stable `VerbResource` names. Every operation has one stable
+  domain tag.
+- Middleware, routing fallbacks and pre-upgrade rejections use the shared error
+  mapping. Do not duplicate error-envelope definitions per route.
+
+### 3.3 WebSocket adapter
+
+`internal/adapters/wss` owns WebSocket transport and connection coordination:
+
+```text
+internal/adapters/wss/
+├── router.go         # Upgrade registration and handshake mapping
+├── connection.go     # Owned slots, reads/writes, heartbeat and shutdown
+├── delivery.go       # Delivery frame and Receipt mapping
+└── pairing.go        # Opaque relay and Pairing Session notifications
+```
+
+These files translate frames to domain calls and map results back to protocol
+messages. They do not contain SQL or duplicate authorization/state transitions.
+Use connection-ID ownership for cleanup. Business-operation lifetimes remain
+independent of an individual HTTP connection as specified by the use case.
+
+### 3.4 File splitting
+
+When handwritten code approaches 500 lines, split at a natural boundary:
+
+- Domain: aggregate, then use case, such as `service_login.go` and `service_refresh.go`.
+- PostgreSQL adapter: aggregate, such as `store_devices.go` and `store_credentials.go`.
+- HTTP: domain, then operation.
+- WSS: channel or connection responsibility.
+- Do not split one invariant across files merely to satisfy the limit.
+
+## 4. PostgreSQL, migrations, and Jet
+
+### 4.1 Database and schema boundaries
+
+Use one physical PostgreSQL database. Application relations live in `pin_glide`;
+release metadata lives in `release`. A domain is not a database/schema boundary.
+
+`internal/release` owns release metadata and orchestrates application Schema Sync.
+The `cron` schema belongs to pg_cron; do not include extension objects in
+application Jet generation or naming checks.
+
+### 4.2 Source schema and explicit migrations
+
+```text
+db/
+├── schema/
+│   ├── pin_glide/
+│   │   ├── 00_extensions.sql
+│   │   ├── 10_enums/<enum>.sql
+│   │   ├── 20_tables/<table>.sql
+│   │   ├── 30_views/<view>.sql
+│   │   ├── 40_functions/<function>.sql
+│   │   └── 50_procs/<procedure>.sql
+│   └── release/
+├── migrations/
+│   ├── pin_glide/issue_<number>_<sequence>_<summary>.sql
+│   └── release/issue_<number>_<sequence>_<summary>.sql
+└── scripts/
+    └── issue_<number>_<sequence>_<summary>.sql
+```
+
+Derive separate desired-schema inputs from `db/schema/pin_glide` and
+`db/schema/release`; do not commit concatenated inputs.
+
+Keep each primary database object in its own file. A table file owns its columns,
+constraints, keys, indexes and comments. The owning domain's PostgreSQL adapter is
+the normal writer for its relations.
+
+Normal structural changes edit desired SQL. Add a Migration Script only to bridge
+a transition declarative Schema Sync cannot handle; place it under the schema it
+prepares.
+
+Initialization, repairs and versioned data transformations belong in Data Scripts.
+If structural preparation includes data changes, also represent the required data
+logic in a Data Script: a fresh database skips Migration Scripts and must still
+receive its data.
+
+Every script must be safe to rerun without duplicated effects or corruption.
+Ledger deduplication does not replace this requirement. Never edit, delete or
+reformat a script already recorded as executed or skipped. Files introduced in one
+commit run in filename order; use ordered sequence suffixes.
+
+SQL naming, comments and formatting follow [docs/sql-conventions.md](docs/sql-conventions.md).
+Run `make lint-sql` before committing schema changes.
+
+Storage rules:
+
+- Each table has one retention policy. Do not mix durable configuration,
+  temporary transactions or diagnostic logs in one table.
+- Keep long-lived Receiver credentials separate from expiring session data.
+  Session deletion cannot delete activated Pairings or credentials.
+- Configuration deletion cannot cascade into retained transaction/log records.
+  Use historical scalar identifiers where a live foreign key would violate this.
+- Cleanup policies identify target tables, retention days and date columns. The
+  cleanup function reads them and executes sequential time-filter DELETEs.
+  Quote identifiers separately and bind cutoff values; validate configuration
+  and restrict write/execution privileges.
+- Add no per-table hardcoded cleanup clock or progress-checkpoint mechanism.
+- Persist no message payloads, client encryption keys or raw credentials.
+
+### 4.3 Jet generation and generated Go types
+
+The release executable reads bundled `db/schema/release` and `db/schema/pin_glide`
+SQL directly, so Schema Sync uses the matching release artifact.
+
+Jet generation loads desired schemas into one-off PostgreSQL, never development
+or production, and overwrites:
+
+```text
+internal/db/jetgen/{pin_glide,release}/
+├── table/   # SQL builder objects
+├── view/    # SQL builder objects
+├── enum/    # Enum values
+└── model/   # Result-mapping structs
+```
+
+Generated `table.*` objects are SQL builders, not domain objects or ownership
+declarations. Generated `model.*` structs are query results. PostgreSQL adapters
+map them to types declared in `internal/<domain>`.
+
+Database access rules:
+
+- `internal/db/db.go` opens the shared pgx-stdlib `*sql.DB`.
+- Keep transaction/executor support in `internal/db`; prevent accidental nested
+  transactions. Do not leak those types into business interfaces.
+- Use Jet by default; use parameterized raw SQL where necessary.
+- Keep business rules in Go. Use SQL functions/procedures only for database-local
+  work that needs them, including the configured cleanup function.
+- No generic repository, DAO or shared-query package.
+- Generate both schemas with the same disposable-schema loader used by SQL checks.
+  Never hand-edit generated Go files.
+
+## 5. Domain ownership map
+
+This table defines code ownership. Schema prefixes are relation-name prefixes,
+not separate PostgreSQL schemas.
+
+| Domain | Go package | Owns | API files | Store files | Schema prefix |
+| --- | --- | --- | --- | --- | --- |
+| Identity | `internal/identity` | Accounts, Device Registrations and credential lifecycle | `httpapi/identity` | `postgres/identity` | `identity_` |
+| Pairing | `internal/pairing` | Pairings, Pairing Sessions and authorization completion | `httpapi/pairing`, `wss/pairing.go` | `postgres/pairing` | `pairing_` |
+| Model | `internal/model` | Enabled model configuration and temporary-key use case | `httpapi/model` | `postgres/model` | `model_` |
+| Delivery | `internal/delivery` | Admission, deduplication, results and result queries | `httpapi/delivery`, `wss/delivery.go` | `postgres/delivery` | `delivery_` |
+| Protocol | `internal/protocol` | Shared wire types and errors | All HTTP/WSS adapters | none | none |
+| Provider clients | `internal/adapters/{wechat,bailian}` | External HTTP protocols | Called through domain interfaces | none | none |
+| Observability | `internal/observability` | Structured logging, correlation and redaction | Adapter middleware | `postgres/observability` | `service_` |
+| Retention | none; SQL-owned | Cleanup function and policy table | none | Data Scripts configure it | `retention_` |
+| Release | `internal/release` | Manifest, ledgers, schema sync and audits | Release CLI only | Release package | `release_` |
+
+API/store paths in the table are relative to `internal/adapters/`. A domain's store
+writes its relations; diagnostic logs do not replace authoritative domain state.
+
+## 6. Generated artifacts and modification boundaries
+
+`make generate` performs generation in this order:
+
+1. Start one-off PostgreSQL.
+2. Load desired `release` and `pin_glide` schemas.
+3. Run Jet for both schemas and replace their generated packages.
+4. Export HTTP OpenAPI from actual Huma registrations.
+5. Export shared wire schemas and assemble/bundle explicit WSS definitions.
+
+Commit generated output and mark it generated where the format permits. CI
+regenerates it and fails on tracked drift or unexpected untracked output.
+
+| Artifact | Source of truth | Output | Modification boundary |
+| --- | --- | --- | --- |
+| HTTP OpenAPI | Huma routes in `internal/adapters/httpapi` | Root `openapi.yaml` | Edit routes/types; never edit generated YAML |
+| WSS AsyncAPI | `protocol/asyncapi.yaml` and Go wire types | Root `asyncapi.yaml` | Edit channel definitions/types; never edit generated YAML |
+| Shared schemas | `internal/protocol` | `generated/protocol/schemas.json` | Export all required types, including WSS-only types |
+| Jet builders/models | `db/schema/{pin_glide,release}` | `internal/db/jetgen/{pin_glide,release}` | Edit desired SQL; never edit generated Go |
+
+Generation rules:
+
+- `cmd/pin-glide-api -openapi` registers real routes without starting runtime
+  database/provider connections. `cmd/pin-glide-contracts` exports shared/WSS schemas.
+- Raw WSS handshakes need HTTP descriptions; Huma alone does not describe frames.
+  Keep channel directions, authentication, errors and Close semantics in AsyncAPI.
+- Do not recover WSS-only schemas from Huma's pruned HTTP output. Validate the shared
+  JSON Schema subset across OpenAPI and AsyncAPI.
+- Bundle root YAML to internal references. Test descriptions against actual
+  registration and public wire behavior.
+- Android/Windows client generation belongs to their repositories; generate no
+  client SDK here.
+
+## 7. Test placement
+
+| Test kind | Location | Rule |
+| --- | --- | --- |
+| Go unit test | Colocated `internal/<package>/*_test.go` | Pure invariants and small helpers; do not mirror every function |
+| Go integration test | `test/integration/<domain>/<scenario>_test.go` | One-off PostgreSQL; assert domain facts |
+| HTTP/WSS contract test | `test/contract/{http,wss}/` | Public protocol boundaries and frozen fixtures |
+| Compose/release smoke | `test/smoke/` | Images, migration, restore and service health |
+| Fakes | `test/fakes/{wechat,bailian}/` | Controllable external dependencies; no real credentials |
+| Fixtures | `test/fixtures/` | Raw wire and database fixtures |
+
+Test rules:
+
+- Prefer public HTTP/WSS/domain behavior over SDK-private or private SQL details.
+- Integration tests may establish inputs or inspect durable domain facts in
+  PostgreSQL; do not assert how a private query is written.
+- A test needing Compose belongs in `test/smoke`; one needing only PostgreSQL
+  belongs in `test/integration`.
+- Keep supported-contract fixtures for compatibility changes.
+- Tests/generation never use deployed development or production databases.
+  Cross-client development acceptance uses the separately configured smoke harness.
+
+## 8. Local development, Compose, and release files
+
+These are support-file locations, not additional runtime units.
+
+```text
+Makefile
+install.sh                    # Host-side Compose release orchestration
+deploy/compose/
+├── docker-compose.yml
+├── .env.example
+├── api.Dockerfile
+├── migrate.Dockerfile
+├── postgres.Dockerfile        # pg_cron-capable database image
+└── README.md                  # Operator procedures
+.github/workflows/
+└── *.yml
+scripts/
+├── dev/                      # Local infrastructure and development processes
+├── codegen/                  # Jet, OpenAPI and AsyncAPI generation
+├── db/                       # Disposable PostgreSQL and schema loading
+├── quality/                  # Format, lint, tests and SQL rules
+└── release/                  # Packaging and publication
+cmd/pin-glide-release/
+internal/release/             # In-image migration implementation
+```
+
+Reuse Helm Gateway's tooling and pinned dependencies at commit
+[`ba375819`](https://github.com/BuddyLabsCo/helm-gateway/tree/ba375819b98bcd76fc27d7a15b2523aa62837c6f).
+Copy installer, release engine, manifest packaging and regression tests together;
+substitute product identity and remove unrelated frontend/Redis/River steps. Keep
+root npm for Schemalint. The [reuse report](docs/research/helm-gateway-go-sql-deployment-reuse.md)
+records the exact source/configuration inventory.
+
+| Command | Tooling/configuration |
 | --- | --- |
 | `make format-check` / `make format` | gofmt; `scripts/quality/format.sh` |
-| `make lint` | `.golangci.yml`: standard errcheck/govet/ineffassign/staticcheck/unused; source-size script |
-| `make lint-sql` / `make format-sql` | Disposable schema load, catalog checks, Schemalint, SQLFluff; `.schemalintrc.js`, `.sqlfluff`, `scripts/quality/` |
-| `make generate` | Disposable PostgreSQL/Jet and both contract exports; `scripts/codegen/generate.sh` |
-| `make check-contracts` | Validators, references, coverage and compatibility; `scripts/quality/check-contracts.sh`, `.redocly.yaml` |
-| `make test` | Node script tests and `go test ./...` |
+| `make lint` | `.golangci.yml` standard set and handwritten-source size check |
+| `make lint-sql` / `make format-sql` | PostgreSQL load, catalog rules, Schemalint and SQLFluff |
+| `make generate` | `scripts/codegen/generate.sh`; Jet and both contract exports |
+| `make check-contracts` | `scripts/quality/check-contracts.sh`; references, coverage and compatibility |
+| `make test` | Script tests and `go test ./...` |
 | `make build` | `go build ./...` |
-| `go test -tags=integration ./test/integration/release` | Database evolution and migration fixtures |
-| `go test -tags=integration ./test/integration/contracts` | HTTP/WSS contract fixtures |
+| `go test -tags=integration ./test/integration/...` | Explicit database integration tests |
 
-- Pin Go tools in `go.mod`/`go.sum`; Node tools in root `package.json`/lockfile. Add `@asyncapi/cli@6.2.0` and `@redocly/cli@2.62.1` for contract validation.
-- Contract validator commands: `npm exec -- redocly lint openapi.yaml` and `npm exec -- asyncapi validate asyncapi.yaml --fail-severity error`.
-- Keep quality/generated/test/build CI jobs separate. Fail on violations/drift; require a scoped reason and maintainer review for suppressions.
-- Run `make format-sql` only on desired schema; historical scripts are immutable.
-- Put pure-rule tests beside Go code, database tests under `test/integration/<domain>/`, public wire fixtures under `test/integration/contracts/`, and Compose/development harnesses under `test/smoke/`.
-- Test public behavior, not private SQL/helper structure. Use disposable local databases and synthetic fixtures; never production data/credentials.
-- Default `make test` does not run integration-tag or deployment smoke tests. Run those explicitly for relevant schema/release changes.
+Keep quality/generated/test/build CI jobs separate. Helm's standard Go linters are
+errcheck, govet, ineffassign, staticcheck and unused; dependency directions remain
+review rules. Fail on violations/drift. Suppressions require a scoped reason and
+maintainer review.
 
-## Deployment code
+Go/tool versions belong in `go.mod`/`go.sum`; Node tools in root npm manifest/lock.
+Use `@asyncapi/cli@6.2.0` and `@redocly/cli@2.62.1` for contract validation. Their
+commands are `npm exec -- asyncapi validate asyncapi.yaml --fail-severity error`
+and `npm exec -- redocly lint openapi.yaml`.
 
-- Adapt Helm's `install.sh`, `internal/release`, manifest packaging, migration image, publisher and regression tests together. Keep artifact/source/version identity checks and recovery semantics.
-- Use `deploy/compose/{api,migrate,postgres}.Dockerfile`; keep Compose and its runbook beside them. Put tooling under `scripts/{dev,db,codegen,quality,release}`.
-- Bundle desired SQL, immutable scripts, manifest and pinned psqldef in the matching migration image.
-- Keep `release` ledger/version records separate from expiring schema audits. Preserve phase ordering and replay-safe bootstrap.
-- Manage cron jobs through Data Scripts; configure the pg_cron image/preload separately from application DDL. Preserve scheduler state during upgrade/restore.
-- Publish matching images and both validated YAML assets from the same source commit. Attach both before publishing a Release; published assets are immutable.
-- Keep operational install/backup/retry/restore commands in `deploy/compose/README.md`, not in this guide. Add no custom cleanup recovery mechanism.
-
-## Review
-
-- Correct module owns the change; imports respect the boundaries above.
-- No business rules/SQL in transport and no generated models outside PostgreSQL/release code.
-- Authorization and atomic state changes remain at their owning seam; contexts/errors/resources are handled.
-- Schema, scripts, Jet and contract outputs change together where required.
-- One table has one retention policy; cleanup cannot erase durable authorization or retained history by cascade.
-- No payload/secret leakage, duplicated wire schema, destructive untested upgrade or edited migration history.
-- Relevant checks and public-behavior tests pass; generated output is reproducible.
-
-Update this guide when ownership, dependency direction, public tooling interfaces or generated-artifact placement changes. Keep product rules, storage inventories, acceptance scenarios, decision history and open questions in the specification/ticket.
+- `make format-sql` changes desired schemas only. Processed scripts are immutable.
+- Integration-tag and Compose smoke tests are not implied by default `make test`.
+- Bundle desired SQL, immutable scripts, manifest and pinned psqldef in the
+  matching migration image. Preserve Helm's ledger/phase/recovery behavior.
+- Manage cron definitions through Data Scripts; image/preload configuration and
+  scheduler control belong to deployment support.
+- Publish matching images and both validated YAML assets from one source commit;
+  attach both before Release publication. Published artifacts are immutable.
+- Keep operator installation/backup/retry/restore procedures in the Compose runbook;
+  keep product acceptance and decisions in the architecture ticket.
