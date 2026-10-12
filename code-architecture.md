@@ -146,7 +146,7 @@ follow [docs/sql-conventions.md](docs/sql-conventions.md).
 
 Keep configuration, transaction and log data in separate tables with one retention
 policy per table. Cleanup SQL and its policy table belong in desired schema; cron
-job registration belongs in Data Scripts. Retention requirements live in the architecture ticket.
+job registration belongs in Data Scripts.
 
 ### 4.3 Jet generation and generated Go types
 
@@ -228,5 +228,3 @@ cmd/pin-glide-release/
 internal/release/
 └── *.go                      # In-image migration implementation
 ```
-
-Tool selection, quality gates and deployment acceptance live in the architecture ticket.
