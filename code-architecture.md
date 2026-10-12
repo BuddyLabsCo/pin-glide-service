@@ -13,9 +13,8 @@ wires domain services, adapters and lifecycle. The release CLI runs only during 
 ```text
 pin-glide-service/
 ├── cmd/
-│   ├── pin-glide-api/         # API entrypoint and offline OpenAPI export
-│   ├── pin-glide-release/     # Release CLI
-│   └── pin-glide-contracts/   # Shared-schema and WSS contract export
+│   ├── pin-glide-api/         # API entrypoint and offline HTTP/WSS contract export
+│   └── pin-glide-release/     # Release CLI
 ├── internal/
 │   ├── identity/             # Accounts, devices and credentials
 │   ├── pairing/              # Pairings and Pairing Sessions
@@ -187,11 +186,15 @@ Each domain's store writes its relations. Shared wire types belong in
 | Shared schemas | `internal/protocol` | `generated/protocol/schemas.json` |
 | Jet builders/models | `db/schema/{pin_glide,release}` | `internal/db/jetgen/{pin_glide,release}/` |
 
-Commit generated output; edit its source. Export HTTP through the API's offline
-registration path without runtime database/provider connections. Export shared
-schemas through `cmd/pin-glide-contracts`, including WSS-only types; Huma's HTTP
-output does not cover them. WSS directions, authentication, errors and Close
-semantics live in the handwritten AsyncAPI source. Bundle root YAML with internal references.
+Commit generated output; edit its source. `cmd/pin-glide-api` owns both offline
+export modes: `-openapi` writes HTTP OpenAPI to stdout; `-asyncapi` writes WSS
+AsyncAPI to stdout. Each exits without starting the server or connecting to
+databases/providers. Export diagnostics go to stderr.
+
+HTTP export uses actual Huma registrations. WSS export assembles the handwritten
+AsyncAPI definitions with schemas from `internal/protocol`, including WSS-only
+types. WSS directions, authentication, errors and Close semantics live in the
+handwritten source. Bundle each root YAML independently with internal references.
 
 Client SDK generation belongs in the Android and Windows repositories.
 
