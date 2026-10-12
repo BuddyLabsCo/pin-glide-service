@@ -25,8 +25,9 @@ pin-glide-service/
 │   │   ├── server.go         # HTTP/WSS server composition and lifecycle
 │   │   ├── httpapi/           # Huma routes, middleware and HTTP mapping
 │   │   └── wss/               # Upgrades, frames and connection lifecycle
-│   ├── wechat/               # WeChat HTTP client
-│   ├── bailian/              # Bailian HTTP client
+│   ├── adapters/             # Third-party system clients
+│   │   ├── wechat/           # WeChat HTTP client
+│   │   └── bailian/          # Bailian HTTP client
 │   ├── protocol/             # Shared HTTP/WSS wire types and errors
 │   ├── config/               # Environment configuration
 │   ├── db/                   # Connections, transactions and Jet output
@@ -76,7 +77,7 @@ A service may call stores from multiple domains in one transaction. Each domain'
 Jet models stay out of public DTOs and domain types.
 
 Place cross-domain workflows in the domain owning the outcome. External HTTP
-clients live in `internal/wechat` and `internal/bailian`; they contain no SQL or
+clients live in `internal/adapters/{wechat,bailian}`; they contain no SQL or
 business state transitions. Add small client interfaces where needed. Pass
 contexts through I/O, preserve error causes with `%w`, and give each goroutine a
 cancellation and shutdown path.
@@ -178,7 +179,7 @@ Store files live in the owning Go package.
 | Release | `internal/release` | Owned by release package | `release_` |
 
 Each domain's store writes its relations. Shared wire types belong in
-`internal/protocol`; external clients belong in `internal/wechat` and `internal/bailian`.
+`internal/protocol`; external clients belong in `internal/adapters/{wechat,bailian}`.
 
 ## 6. Generated artifacts and modification boundaries
 
