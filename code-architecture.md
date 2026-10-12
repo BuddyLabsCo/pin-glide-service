@@ -62,49 +62,48 @@ helpers by responsibility; avoid catch-all `common`, `utils`, `shared` or `misc`
 
 ## 3. Backend package rules
 
-### 3.1 Domain package template
+### 3.1 Domain package
 
 ```text
-internal/<domain>/
-├── <domain>.go       # Types, states, invariants and errors
-├── service.go        # Business operations and transaction boundaries
-└── store.go          # Jet queries for this domain's relations
+internal/identity/
+├── identity.go       # Domain types, states and errors
+├── service.go        # Business operations and PostgreSQL transactions
+└── store.go          # Domain-owned Jet queries and result mapping
 ```
-
-Domain services own business operations and PostgreSQL transaction boundaries.
-A service may call stores from multiple domains in one transaction. Each domain's
-`store.go` owns its Jet queries and maps query results to domain types; generated
-Jet models stay out of public DTOs and domain types.
-
-Place cross-domain workflows in the domain owning the outcome. External HTTP
-clients live in `internal/adapters/{wechat,bailian}`; they contain no SQL or
-business state transitions. Add small client interfaces where needed. Pass
-contexts through I/O, preserve error causes with `%w`, and give each goroutine a
-cancellation and shutdown path.
 
 ### 3.2 API package
 
-`internal/api/server.go` composes the HTTP server and WSS routes and owns lifecycle.
-`internal/api/httpapi` owns `router.go`, `middleware.go` and `errors.go`. Each domain
-has `<domain>/routes.go` for Huma registrations and `<domain>/dto.go` for HTTP
-wrappers and domain-to-wire mapping.
+```text
+internal/api/
+├── server.go         # HTTP/WSS composition and lifecycle
+├── httpapi/
+│   ├── router.go     # Huma route registration
+│   ├── middleware.go
+│   ├── errors.go     # Shared HTTP error mapping
+│   └── identity/     # Repeat for other domains
+│       ├── routes.go # HTTP input -> domain service -> response
+│       └── dto.go    # HTTP wrappers; shared payloads in internal/protocol
+└── wss/
+    ├── router.go     # Upgrade and handshake
+    ├── connection.go # Frame I/O, heartbeat and connection-ID-owned cleanup
+    ├── delivery.go   # Delivery service calls and frame mapping
+    └── pairing.go    # Pairing service calls and frame mapping
+```
 
-Handlers validate/map transport input, call domain services and map results.
-Shared payloads belong in `internal/protocol`. Use shared error mapping, stable
-`VerbResource` operation IDs and one domain tag per operation.
+### 3.3 Adapter package
 
-### 3.3 WebSocket package
-
-`internal/api/wss` owns `router.go` for upgrades, `connection.go` for frame I/O,
-heartbeat and shutdown, and `delivery.go` / `pairing.go` for domain-to-wire mapping.
-
-Keep authorization and state transitions in domain services. Connection cleanup
-uses connection-ID ownership; an HTTP connection does not own a business operation's lifetime.
+```text
+internal/adapters/
+├── wechat/
+│   └── client.go     # WeChat HTTP protocol
+└── bailian/
+    └── client.go     # Bailian HTTP protocol
+```
 
 ### 3.4 File splitting
 
-Split handwritten files approaching 500 lines by aggregate, use case or transport
-operation: `service_login.go`, `store_credentials.go`. Keep each invariant together.
+- Split handwritten files approaching 500 lines by aggregate, use case or API operation.
+- Use names such as `service_login.go`, `store_credentials.go`; keep each invariant together.
 
 ## 4. PostgreSQL, migrations, and Jet
 
