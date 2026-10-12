@@ -481,9 +481,15 @@ Document before release: successful/failed handshake HTTP responses, message dir
 
 Persist Accounts, device/credential-digest records, Pairing authorizations/aliases, model configuration, pairing/control metadata and processing/status/rejection metadata as needed. No SMS/OTP plaintext, client encryption key or message ciphertext in PostgreSQL or application logs.
 
+The architecture discussion clarified PostgreSQL retention into exactly three table-level policies: no scheduled deletion for configuration/durable authorization and release ledgers/version history; seven days for message-delivery transactions and temporary authentication/pairing control data; thirty days for service runtime logs, schema apply/check audits and pg_cron run history. Business operations may physically delete configuration where the functional lifecycle permits it; preserve minimal permanently revoked Device Registration identity for the agreed restoration behavior. A table must not mix no-cleanup/seven-day/thirty-day records. See [the retention decision](https://github.com/BuddyLabsCo/pin-glide-service/issues/3#issuecomment-6095218706) and [the architecture ticket](https://github.com/BuddyLabsCo/pin-glide-service/issues/3) for classification and discussion.
+
 Use pg_cron in PostgreSQL, daily 03:00 Asia/Shanghai, to delete Delivery metadata older than 7 days. Deduplication depends on row existence, with no independent age filter. Normal row lifetime is about 7-8 days; missed/failed cleanup can extend it. No Go cleanup fallback.
 
-Non-Delivery logs retained one month. Configure a real age-retention mechanism in architecture/deployment planning; container size rotation alone is not that promise. Purge cron run history including interrupted rows without end_time. Backup retention/recovery belongs to persistence planning; logical deletion is not immediate physical erasure.
+Cleanup has its own configuration table defining target schema/table, retention days and date-column name, with one policy per table. The pg_cron task reads the entries and uses dynamic SQL to directly delete each target's rows by its configured time filter. Date columns are selected/validated during implementation/configuration rather than fixed for every table in architecture planning. Their semantics must preserve valid credentials, sliding families and ordering guards; long-lived R and activated Pairings remain separate from temporary session data. Historical identifiers must not let configuration deletion cascade into retained transaction/log data.
+
+Interrupted cleanup reruns the filters on the next scheduled day without a progress checkpoint or new recovery mechanism. Date-column coverage is checked when implementing/configuring each target.
+
+These retention periods apply only to PostgreSQL. Docker/container logs are operator-managed. Backups follow the Helm manual retention/recovery workflow; unfinished recovery dependencies must not be removed. Logical deletion is not immediate physical erasure from backups or storage.
 
 Memory ciphertext release follows Delivery/request terminal processing, never the daily metadata schedule. Keep raw credentials and WeChat/Bailian secret-bearing requests/responses out of logs and published examples.
 
@@ -514,13 +520,13 @@ No current test results are claimed.
 
 ## 12. Engineering and release baseline
 
-Preserve S13-S16: Go/Huma HTTP, authenticated Go WSS, PostgreSQL/Jet, pinned Jet/psqldef generation/tooling, separate business logic and transport/persistence adapters, versioned Docker images and own Linux Docker Compose deployment. Keep development/production projects, databases/volumes, endpoints and secrets independent.
+Preserve S13-S16: Go/Huma HTTP, authenticated Go WSS, PostgreSQL/Jet, pinned Jet/psqldef generation/tooling, domain-owned business logic, transactions and Jet stores with separate HTTP/WSS handling, versioned Docker images and own Linux Docker Compose deployment. Keep development/production projects, databases/volumes, endpoints and secrets independent.
 
 Generate target-schema Jet artifacts against disposable local PostgreSQL. Declarative psqldef schemas and ordered structural/data upgrade scripts remain distinct. Never run tests/generation against production data.
 
 First installation prepares configuration/images/database/schema/initial data and starts healthy service. Updates stop application writes, back up PostgreSQL, apply/check ordered schema/data evolution, restart and verify health. Reject unsupported downgrade. pg_cron extension/job permissions, scheduling during upgrades and restore cleanup must be covered in downstream persistence planning.
 
-Export complete self-contained openapi.yaml and asyncapi.yaml with matching shared schemas and the explicit business-error descriptions above. Validate syntax/references, operation/route/message coverage, authentication/directions, errors/receipts, behavior and supported-client compatibility. Attach both validated assets to the GitHub Release matching service source commit/tag and images; publish only when both are complete. Published assets are stable; corrections use a new release. Clients retrieve pinned releases and own their generation/conversion.
+Export complete self-contained generated/protocol/openapi.yaml and generated/protocol/asyncapi.yaml with matching embedded schemas and the explicit business-error descriptions above. Validate syntax/references, operation/route/message coverage, authentication/directions, errors/receipts, behavior and supported-client compatibility. Attach both validated assets to the GitHub Release matching service source commit/tag and images; publish only when both are complete. Published assets are stable; corrections use a new release. Clients retrieve pinned releases and own their generation/conversion.
 
 Keep the future static homepage owned/hosted here, but its content, UI and implementation timing are outside initial forwarding functionality.
 

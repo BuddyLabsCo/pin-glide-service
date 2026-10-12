@@ -20,3 +20,11 @@ Use the five default triage labels. Read `docs/agents/triage-labels.md` before a
 ### Domain docs
 
 Use single-context domain docs. Read `docs/agents/domain.md` before exploring domain concepts or architecture.
+
+### Code architecture
+
+For code standard, follow `code-architecture.md`.
+
+### Code review
+
+For code reviews, follow `docs/agents/code-review.md`.
