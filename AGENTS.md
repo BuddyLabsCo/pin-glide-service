@@ -1,11 +1,14 @@
 # Project instructions
 
-## Language
+## Contribution Workflow
 
-- Respond in Chinese; retain original technical terms when useful.
-- Write local files in English.
-- For issue tracker content, match the language of existing items. If none exist, ask the user before writing.
-- Explicit user language instructions override these defaults.
+1. Every change must have a GitHub issue.
+2. Immediately before creating the issue branch, fetch `origin/main`.
+3. Create `issue-<number>` from the fetched `origin/main` commit and make the
+   change there.
+4. Open a pull request to this repository's `main` branch unless explicitly told otherwise.
+5. Leave the pull request open after previous steps finished. Merge it only when the user 
+   explicitly requests the merge.
 
 ## Agent skills
 
