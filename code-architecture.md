@@ -165,20 +165,21 @@ stores without a generic repository/DAO layer.
 
 ## 5. Domain ownership map
 
-Store files live in the owning Go package.
+Each row identifies the owning package, its responsibilities and API entrypoints.
+Schema prefixes name relations within the shared database.
 
-| Domain | Go package | Store | Relation prefix |
-| --- | --- | --- | --- |
-| Identity | `internal/identity` | `store.go` | `identity_` |
-| Pairing | `internal/pairing` | `store.go` | `pairing_` |
-| Model | `internal/model` | `store.go` | `model_` |
-| Delivery | `internal/delivery` | `store.go` | `delivery_` |
-| Observability | `internal/observability` | `store.go` | `service_` |
-| Retention | SQL function and policy table | Data Scripts configure it | `retention_` |
-| Release | `internal/release` | Owned by release package | `release_` |
-
-Each domain's store writes its relations. Shared wire types belong in
-`internal/protocol`; external clients belong in `internal/adapters/{wechat,bailian}`.
+| Domain | Go package | Owns | API files | Schema prefix |
+| --- | --- | --- | --- | --- |
+| Identity | `internal/identity` | Accounts, Device Registrations, login/refresh sessions and credential lifecycle | `internal/api/httpapi/identity/` | `identity_` |
+| Pairing | `internal/pairing` | Pairings, Pairing Sessions, authorization and recovery completion | `internal/api/httpapi/pairing/`, `internal/api/wss/pairing.go` | `pairing_` |
+| Model | `internal/model` | Enabled model configuration and temporary-key acquisition | `internal/api/httpapi/model/` | `model_` |
+| Delivery | `internal/delivery` | Delivery admission, deduplication, Receipt handling and terminal results | `internal/api/httpapi/delivery/`, `internal/api/wss/delivery.go` | `delivery_` |
+| WeChat adapter | `internal/adapters/wechat` | WeChat requests, responses and provider errors | Called by identity service | none |
+| Bailian adapter | `internal/adapters/bailian` | Bailian temporary-key API requests, responses and provider errors | Called by model service | none |
+| Protocol | `internal/protocol` | Shared HTTP/WSS payload types and error definitions | Used by HTTP/WSS packages | none |
+| Observability | `internal/observability` | Structured logs, correlation, redaction and PostgreSQL log writes | API middleware and WSS connection logging | `service_` |
+| Retention | none; SQL-owned | Cleanup policy table and cleanup function | none | `retention_` |
+| Release | `internal/release` | Release manifest, migration ledgers, Schema Sync and schema audits | Release CLI only | `release_` |
 
 ## 6. Generated artifacts and modification boundaries
 
@@ -187,19 +188,6 @@ Each domain's store writes its relations. Shared wire types belong in
 | HTTP OpenAPI | Huma registrations and wire types | `generated/protocol/openapi.yaml` |
 | WSS AsyncAPI | `protocol/asyncapi.yaml` and wire types | `generated/protocol/asyncapi.yaml` |
 | Jet builders/models | `db/schema/{pin_glide,release}` | `internal/db/jetgen/{pin_glide,release}/` |
-
-Commit generated output; edit its source. `cmd/pin-glide-api` owns both offline
-export modes: `-openapi` writes HTTP OpenAPI to stdout; `-asyncapi` writes WSS
-AsyncAPI to stdout. Each exits without starting the server or connecting to
-databases/providers. Export diagnostics go to stderr.
-
-HTTP export uses actual Huma registrations. WSS export assembles the handwritten
-AsyncAPI definitions with schemas from `internal/protocol`, including WSS-only
-types. WSS directions, authentication, errors and Close semantics live in the
-handwritten source. Embed schemas in each YAML and use internal references; no
-separate `schemas.json` artifact is needed.
-
-Client SDK generation belongs in the Android and Windows repositories.
 
 ## 7. Test placement
 
@@ -217,14 +205,28 @@ credentials. Keep compatibility fixtures for supported contracts.
 
 ## 8. Local development, Compose, and release files
 
-`deploy/compose/` owns `docker-compose.yml`, `.env.example`, `api.Dockerfile`,
-`migrate.Dockerfile`, `postgres.Dockerfile` and the operator `README.md`.
-`install.sh` orchestrates host deployment; `internal/release` implements in-image
-migration using bundled SQL and the release manifest.
+```text
+Makefile                      # Local development and check entrypoints
+install.sh                    # Host-side Compose release orchestration
+deploy/compose/
+├── docker-compose.yml        # API, PostgreSQL and one-off migration service
+├── .env.example              # Deployment configuration template
+├── api.Dockerfile            # API image
+├── migrate.Dockerfile        # Release CLI, SQL and manifest
+├── postgres.Dockerfile       # PostgreSQL with pg_cron
+└── README.md                 # Installation, backup, retry and restore procedures
+.github/workflows/
+└── *.yml                     # CI and GitHub Release publication
+scripts/
+├── dev/                      # Local infrastructure and development processes
+├── codegen/                  # Jet, OpenAPI and AsyncAPI generation
+├── db/                       # Disposable PostgreSQL and schema loading
+├── quality/                  # Formatting, lint and tests
+└── release/                  # Packaging and publication
+cmd/pin-glide-release/
+└── main.go                   # Release CLI entrypoint
+internal/release/
+└── *.go                      # In-image migration implementation
+```
 
-Group scripts under `scripts/{dev,codegen,db,quality,release}/`. Root `Makefile`
-exposes development tasks; `.github/workflows/` owns CI. Dependency versions live
-in Go/npm manifests and lockfiles.
-
-Tool selection, quality gates and deployment acceptance live in the architecture
-ticket. Installation, backup, retry and restore procedures belong in the Compose runbook.
+Tool selection, quality gates and deployment acceptance live in the architecture ticket.
