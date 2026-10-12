@@ -520,13 +520,13 @@ No current test results are claimed.
 
 ## 12. Engineering and release baseline
 
-Preserve S13-S16: Go/Huma HTTP, authenticated Go WSS, PostgreSQL/Jet, pinned Jet/psqldef generation/tooling, separate business logic and transport/persistence adapters, versioned Docker images and own Linux Docker Compose deployment. Keep development/production projects, databases/volumes, endpoints and secrets independent.
+Preserve S13-S16: Go/Huma HTTP, authenticated Go WSS, PostgreSQL/Jet, pinned Jet/psqldef generation/tooling, domain-owned business logic, transactions and Jet stores with separate HTTP/WSS handling, versioned Docker images and own Linux Docker Compose deployment. Keep development/production projects, databases/volumes, endpoints and secrets independent.
 
 Generate target-schema Jet artifacts against disposable local PostgreSQL. Declarative psqldef schemas and ordered structural/data upgrade scripts remain distinct. Never run tests/generation against production data.
 
 First installation prepares configuration/images/database/schema/initial data and starts healthy service. Updates stop application writes, back up PostgreSQL, apply/check ordered schema/data evolution, restart and verify health. Reject unsupported downgrade. pg_cron extension/job permissions, scheduling during upgrades and restore cleanup must be covered in downstream persistence planning.
 
-Export complete self-contained openapi.yaml and asyncapi.yaml with matching shared schemas and the explicit business-error descriptions above. Validate syntax/references, operation/route/message coverage, authentication/directions, errors/receipts, behavior and supported-client compatibility. Attach both validated assets to the GitHub Release matching service source commit/tag and images; publish only when both are complete. Published assets are stable; corrections use a new release. Clients retrieve pinned releases and own their generation/conversion.
+Export complete self-contained generated/protocol/openapi.yaml and generated/protocol/asyncapi.yaml with matching embedded schemas and the explicit business-error descriptions above. Validate syntax/references, operation/route/message coverage, authentication/directions, errors/receipts, behavior and supported-client compatibility. Attach both validated assets to the GitHub Release matching service source commit/tag and images; publish only when both are complete. Published assets are stable; corrections use a new release. Clients retrieve pinned releases and own their generation/conversion.
 
 Keep the future static homepage owned/hosted here, but its content, UI and implementation timing are outside initial forwarding functionality.
 

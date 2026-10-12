@@ -6,7 +6,8 @@ It defines where source, generated artifacts, schema, tests, and deployment supp
 ## 1. Non-negotiable runtime shape
 
 One Go module, one long-running `api` process for HTTP and WSS. `cmd/pin-glide-api`
-wires domain services, adapters and lifecycle. The release CLI runs only during deployment.
+wires the API server, domain services and external clients. The release CLI runs
+only during deployment.
 
 ## 2. Repository layout
 
@@ -20,12 +21,12 @@ pin-glide-service/
 │   ├── pairing/              # Pairings and Pairing Sessions
 │   ├── model/                # Model configuration and temporary credentials
 │   ├── delivery/             # Admission, deduplication and results
-│   ├── adapters/
-│   │   ├── httpapi/           # Huma routes and HTTP lifecycle
-│   │   ├── wss/               # Frames and connection lifecycle
-│   │   ├── postgres/          # Domain stores and log sink
-│   │   ├── wechat/            # WeChat client
-│   │   └── bailian/           # Bailian client
+│   ├── api/
+│   │   ├── server.go         # HTTP/WSS server composition and lifecycle
+│   │   ├── httpapi/           # Huma routes, middleware and HTTP mapping
+│   │   └── wss/               # Upgrades, frames and connection lifecycle
+│   ├── wechat/               # WeChat HTTP client
+│   ├── bailian/              # Bailian HTTP client
 │   ├── protocol/             # Shared HTTP/WSS wire types and errors
 │   ├── config/               # Environment configuration
 │   ├── db/                   # Connections, transactions and Jet output
@@ -36,9 +37,10 @@ pin-glide-service/
 │   ├── migrations/{pin_glide,release}/
 │   └── scripts/
 ├── protocol/asyncapi.yaml     # Handwritten WSS definitions
-├── generated/protocol/       # Shared schemas
-├── openapi.yaml              # Generated HTTP contract
-├── asyncapi.yaml              # Generated WSS contract
+├── generated/
+│   └── protocol/
+│       ├── openapi.yaml       # Generated HTTP contract
+│       └── asyncapi.yaml      # Generated WSS contract
 ├── deploy/compose/
 ├── test/
 │   ├── integration/
@@ -64,34 +66,35 @@ helpers by responsibility; avoid catch-all `common`, `utils`, `shared` or `misc`
 ```text
 internal/<domain>/
 ├── <domain>.go       # Types, states, invariants and errors
-├── service.go        # Business operations
-└── ports.go          # Required I/O interfaces, when needed
-
-internal/adapters/postgres/<domain>/
-└── store.go          # Jet queries and domain/result mapping
+├── service.go        # Business operations and transaction boundaries
+└── store.go          # Jet queries for this domain's relations
 ```
 
-Domain services own business operations and their atomicity requirements. Keep
-transport and database types in adapters. Expose small I/O interfaces owned by the
-consuming domain; the PostgreSQL adapter implements atomic operations with `*sql.Tx`.
+Domain services own business operations and PostgreSQL transaction boundaries.
+A service may call stores from multiple domains in one transaction. Each domain's
+`store.go` owns its Jet queries and maps query results to domain types; generated
+Jet models stay out of public DTOs and domain types.
 
-Place cross-domain workflows in the domain owning the outcome. Provider adapters
-handle external protocols. Pass contexts through I/O, preserve error causes with
-`%w`, and give each goroutine a cancellation and shutdown path.
+Place cross-domain workflows in the domain owning the outcome. External HTTP
+clients live in `internal/wechat` and `internal/bailian`; they contain no SQL or
+business state transitions. Add small client interfaces where needed. Pass
+contexts through I/O, preserve error causes with `%w`, and give each goroutine a
+cancellation and shutdown path.
 
 ### 3.2 API package
 
-`internal/adapters/httpapi` owns `server.go`, `router.go`, `middleware.go` and
-`errors.go`. Each domain has `<domain>/routes.go` for Huma registrations and
-`<domain>/dto.go` for HTTP wrappers and domain-to-wire mapping.
+`internal/api/server.go` composes the HTTP server and WSS routes and owns lifecycle.
+`internal/api/httpapi` owns `router.go`, `middleware.go` and `errors.go`. Each domain
+has `<domain>/routes.go` for Huma registrations and `<domain>/dto.go` for HTTP
+wrappers and domain-to-wire mapping.
 
 Handlers validate/map transport input, call domain services and map results.
 Shared payloads belong in `internal/protocol`. Use shared error mapping, stable
 `VerbResource` operation IDs and one domain tag per operation.
 
-### 3.3 WebSocket adapter
+### 3.3 WebSocket package
 
-`internal/adapters/wss` owns `router.go` for upgrades, `connection.go` for frame I/O,
+`internal/api/wss` owns `router.go` for upgrades, `connection.go` for frame I/O,
 heartbeat and shutdown, and `delivery.go` / `pairing.go` for domain-to-wire mapping.
 
 Keep authorization and state transitions in domain services. Connection cleanup
@@ -149,7 +152,7 @@ job registration belongs in Data Scripts. Retention requirements live in the arc
 
 Generate both schemas using disposable PostgreSQL. Output goes to
 `internal/db/jetgen/{pin_glide,release}/{table,view,enum,model}/`.
-PostgreSQL adapters map generated result structs to domain types.
+Each domain's store maps generated result structs to domain types.
 
 `internal/db/db.go` opens the shared pgx-stdlib `*sql.DB`; transaction/executor
 support stays in `internal/db`. Store queries accept an executor usable with
@@ -162,28 +165,27 @@ stores without a generic repository/DAO layer.
 
 ## 5. Domain ownership map
 
-Store paths below are relative to `internal/adapters/postgres/`.
+Store files live in the owning Go package.
 
 | Domain | Go package | Store | Relation prefix |
 | --- | --- | --- | --- |
-| Identity | `internal/identity` | `identity/` | `identity_` |
-| Pairing | `internal/pairing` | `pairing/` | `pairing_` |
-| Model | `internal/model` | `model/` | `model_` |
-| Delivery | `internal/delivery` | `delivery/` | `delivery_` |
-| Observability | `internal/observability` | `observability/` | `service_` |
+| Identity | `internal/identity` | `store.go` | `identity_` |
+| Pairing | `internal/pairing` | `store.go` | `pairing_` |
+| Model | `internal/model` | `store.go` | `model_` |
+| Delivery | `internal/delivery` | `store.go` | `delivery_` |
+| Observability | `internal/observability` | `store.go` | `service_` |
 | Retention | SQL function and policy table | Data Scripts configure it | `retention_` |
 | Release | `internal/release` | Owned by release package | `release_` |
 
 Each domain's store writes its relations. Shared wire types belong in
-`internal/protocol`; provider clients belong in `internal/adapters/{wechat,bailian}`.
+`internal/protocol`; external clients belong in `internal/wechat` and `internal/bailian`.
 
 ## 6. Generated artifacts and modification boundaries
 
 | Artifact | Edit source | Generated output |
 | --- | --- | --- |
-| HTTP OpenAPI | Huma registrations and wire types | `openapi.yaml` |
-| WSS AsyncAPI | `protocol/asyncapi.yaml` and wire types | `asyncapi.yaml` |
-| Shared schemas | `internal/protocol` | `generated/protocol/schemas.json` |
+| HTTP OpenAPI | Huma registrations and wire types | `generated/protocol/openapi.yaml` |
+| WSS AsyncAPI | `protocol/asyncapi.yaml` and wire types | `generated/protocol/asyncapi.yaml` |
 | Jet builders/models | `db/schema/{pin_glide,release}` | `internal/db/jetgen/{pin_glide,release}/` |
 
 Commit generated output; edit its source. `cmd/pin-glide-api` owns both offline
@@ -194,7 +196,8 @@ databases/providers. Export diagnostics go to stderr.
 HTTP export uses actual Huma registrations. WSS export assembles the handwritten
 AsyncAPI definitions with schemas from `internal/protocol`, including WSS-only
 types. WSS directions, authentication, errors and Close semantics live in the
-handwritten source. Bundle each root YAML independently with internal references.
+handwritten source. Embed schemas in each YAML and use internal references; no
+separate `schemas.json` artifact is needed.
 
 Client SDK generation belongs in the Android and Windows repositories.
 
