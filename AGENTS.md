@@ -23,4 +23,8 @@ Use single-context domain docs. Read `docs/agents/domain.md` before exploring do
 
 ### Code architecture
 
-Use `code-architecture.md` for code placement, Go/SQL conventions, generation, and test placement. Requirements, tooling, quality gates, and decisions live in the linked specification and architecture ticket.
+For code standard, follow `code-architecture.md`.
+
+### Code review
+
+For code reviews, follow `docs/agents/code-review.md`.
