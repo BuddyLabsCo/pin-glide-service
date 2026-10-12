@@ -1,11 +1,7 @@
 # Code Architecture
 
-Code placement and implementation conventions for this repository. Paths describe
-the target layout; create files when needed.
-
-Requirements and decisions live in the [architecture ticket](https://github.com/BuddyLabsCo/pin-glide-service/issues/3)
-and [functional specification](docs/specs/service-requirements.md). Use the terms in
-[GLOSSARY.md](GLOSSARY.md).
+This document is the executable placement contract for all code changes in this repository. 
+It defines where source, generated artifacts, schema, tests, and deployment support belong.
 
 ## 1. Non-negotiable runtime shape
 
