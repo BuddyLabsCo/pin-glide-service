@@ -136,6 +136,64 @@ work, take a stopped-writer recovery backup, migrate, start and restore the
 intended scheduling state. `deploy/compose/README.md` documents the operator
 prerequisites, commands and recovery procedure.
 
+## Release publication
+
+`CI` runs on every pull request and `main` push. Publication is a separate,
+human-controlled step, so the merged source, the tag, the images and both
+contract assets always come from one commit.
+
+1. A release-eligible push to `main` (anything except `version.json`,
+   documentation and workflow files) makes the `auto-release` workflow open or
+   refresh the release pull request against `main`, bumping the patch version in
+   `version.json`.
+2. Merging that pull request with squash or rebase, never a merge commit, starts
+   the `publish-release` workflow, which:
+   - re-runs the complete `CI` workflow at the merged commit: format, static
+     checks, SQL checks, generated drift, tests and both published contracts;
+   - exports both descriptions from that commit, validates them with the pinned
+     validators and proves they are the committed descriptions the contract
+     tests cover;
+   - publishes `ghcr.io/buddylabsco/pin-glide-api:<version>` and
+     `ghcr.io/buddylabsco/pin-glide-migrate:<version>` from the exact commit;
+   - publishes `ghcr.io/buddylabsco/pin-glide-postgres:<tag>` from
+     `deploy/compose/postgres.Dockerfile` when that image is missing, and reuses
+     it otherwise, because `deploy/compose/docker-compose.yml` is the authority
+     for that distribution;
+   - creates the `v<version>` tag and the GitHub Release, attaching
+     `openapi.yaml` and `asyncapi.yaml` while the Release is still a draft and
+     publishing it only once both are attached.
+
+Re-running the same merged pull request reuses the tag, the images and the
+Release assets after checking each one still matches the release commit and
+carries the validated descriptions. A conflicting tag, image or published asset
+fails instead of being overwritten, and corrections to a published contract use
+a new release.
+
+### Release automation configuration
+
+| Item | Value |
+| --- | --- |
+| Repository secrets | `APP_ID` and `APP_PRIVATE_KEY` of the release GitHub App |
+| App permissions | Contents read/write and Pull requests read/write: it pushes the `auto-release` branch and manages its pull request |
+| `auto-release` token | The App installation token for `gh`; the checkout's workflow `GITHUB_TOKEN` remains the branch push credential |
+| `publish-release` token | The automatic workflow `GITHUB_TOKEN` with `contents: write`, `pull-requests: read` and `packages: write`; no personal token |
+| Deployment pull credential | A personal access token (classic) with at least `read:packages`; GHCR package access does not accept fine-grained tokens |
+| Pins | Node.js 24, `@redocly/cli` 2.62.1, `@asyncapi/cli` 6.2.0, Go from `go.mod` |
+
+The automation has its own local checks:
+
+```sh
+node --test scripts/release/auto-release-pr.test.mjs
+node --test scripts/release/publish-release.test.mjs
+```
+
+Both run as part of `make test` and fake only `gh` and Docker, so they need no
+credentials and no registry. Real PostgreSQL migration behavior stays in
+`go test -tags=integration ./test/integration/...`, and the real Compose
+install/upgrade/restore journey stays in
+`node test/smoke/release-install.mjs --integration-ready`; neither suite is a
+publication gate.
+
 The repository is implemented ticket by ticket, and the published descriptions
 describe only the surface delivered so far: the WSS definitions declare no
 channel until a feature ticket serves one.

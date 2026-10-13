@@ -208,6 +208,7 @@ credentials. Keep compatibility fixtures for supported contracts.
 ```text
 Makefile                      # Local development and check entrypoints
 install.sh                    # Host-side Compose release orchestration
+version.json                  # Release version the auto-release pull request bumps
 deploy/compose/
 ├── docker-compose.yml        # API, PostgreSQL and one-off migration service
 ├── .env.example              # Deployment configuration template

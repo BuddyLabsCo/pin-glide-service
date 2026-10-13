@@ -14,7 +14,10 @@ database image:
 Git tag / GitHub Release `v0.1.0` maps to literal `RELEASE=0.1.0` in `.env` and
 to image tag `:0.1.0`, not `:v0.1.0`. Both release images must be published
 before that release is ready; redeploying a version reuses its immutable
-artifacts. Hosts pull packaged artifacts and never build the service.
+artifacts. The `publish-release` release workflow publishes both release images
+from the merged release commit, the PostgreSQL/pg_cron image under its own tag,
+and both validated contract descriptions. Hosts pull packaged artifacts and
+never build the service.
 
 `pin-glide-postgres` is built from `postgres.Dockerfile`: the official
 PostgreSQL 18 Debian (trixie) distribution, pg_cron 1.6.8 from the PGDG apt
@@ -33,15 +36,16 @@ release CLI.
 Prerequisites: Docker Engine, Docker Compose v2 or later with `up --wait` and
 `config --format json`, Bash, `jq`, `flock`, and common Linux tools such as
 `awk`, `sed`, `grep`, `mktemp`, `date`, `ln`, `mv`, and `rm`. The account
-running the installer needs Docker access and read access to both private GHCR
-packages:
+running the installer needs Docker access and read access to all three private
+GHCR packages:
 
 ```sh
 docker login ghcr.io -u YOUR_GITHUB_USER
 ```
 
-Supply a credential with package read access at the password prompt; never put a
-token in the script, Compose file, or `.env`.
+Supply a personal access token (classic) with at least `read:packages` at the
+password prompt; GHCR package access does not accept fine-grained tokens. Never
+put a token in the script, Compose file, or `.env`.
 
 Place `docker-compose.yml`, `.env`, and a copy of the repository-root
 `install.sh` in the same directory on the server:

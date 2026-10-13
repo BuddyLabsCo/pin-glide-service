@@ -1,0 +1,104 @@
+# Publishes the two private application images, the shared PostgreSQL/pg_cron
+# image and both validated contract assets after a human merges the auto-release
+# pull request that the auto-release workflow opened. Only a squash or rebase
+# merge of that branch into main is accepted: scripts/release/publish-release.mjs
+# rejects every other source or merge method before it writes a tag or a release.
+#
+# The path filter keeps every other merged pull request from starting a run at
+# all, since the release proposal is the only writer of the version file. The
+# head-ref condition on the jobs remains the authority on what may publish.
+name: publish-release
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+    paths:
+      - version.json
+
+permissions:
+  contents: write
+  pull-requests: read
+  packages: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: Re-run CI
+    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'auto-release' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+  publish:
+    name: Publish the merged release
+    needs: ci
+    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'auto-release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the merged release commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Export the release contracts
+        run: |
+          mkdir -p release-assets
+          go run ./cmd/pin-glide-api -openapi > release-assets/openapi.yaml
+          go run ./cmd/pin-glide-api -asyncapi > release-assets/asyncapi.yaml
+
+      - name: Validate the release contracts
+        env:
+          SUPPRESS_NO_CONFIG_WARNING: 1
+          REDOCLY_SUPPRESS_UPDATE_NOTICE: true
+          ASYNCAPI_METRICS_CONFIG_PATH: ${{ runner.temp }}/asyncapi-analytics.json
+        run: |
+          printf '{"analyticsEnabled":"false","infoMessageShown":"true","userID":"pin-glide-service"}\n' \
+            > "$ASYNCAPI_METRICS_CONFIG_PATH"
+          npx --no-install redocly lint release-assets/openapi.yaml
+          npx --no-install asyncapi validate release-assets/asyncapi.yaml --fail-severity=error
+          diff -u generated/protocol/openapi.yaml release-assets/openapi.yaml
+          diff -u generated/protocol/asyncapi.yaml release-assets/asyncapi.yaml
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the merged release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          OPENAPI_ASSET: release-assets/openapi.yaml
+          ASYNCAPI_ASSET: release-assets/asyncapi.yaml
+        run: node scripts/release/publish-release.mjs
