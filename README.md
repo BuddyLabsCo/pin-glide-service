@@ -7,8 +7,9 @@ to Windows Receivers and owns the shared HTTP/WSS contract.
 ## Local build and tests
 
 Prerequisites: the Go toolchain from `go.mod`, Node.js 24 for the shell-helper
-tests, Docker for the disposable database checks, and the root npm dependencies
-(`npm ci`) with `uvx` for the SQL checks.
+tests, Docker for the disposable database checks and the tagged PostgreSQL
+integration tests, and the root npm dependencies (`npm ci`) with `uvx` for the
+SQL checks.
 
 ```sh
 make build          # compile every Go package

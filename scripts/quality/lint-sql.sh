@@ -60,6 +60,9 @@ schemalint_check
 "$SQLFLUFF" lint db/schema/release db/schema/pin_glide db/migrations db/scripts
 
 docker exec -i "$POSTGRES_CONTAINER" psql -U pin_glide -d pin_glide -v ON_ERROR_STOP=1 < "$violations"
+# The expected reports are the observable output of each check: the rule
+# messages in scripts/quality/sql-lint.sql, the rule names .schemalintrc.js
+# configures, and SQLFluff's rule codes.
 expect_failure 'the catalog naming check' \
   'SQL lint found|primary key must be named|foreign key must be named|unique constraints are not allowed|index must be named' \
   catalog_check
