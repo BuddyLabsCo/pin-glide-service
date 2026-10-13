@@ -19,10 +19,10 @@ import (
 // routing fallbacks: one stable code, the actual status, validation locations
 // and messages without rejected values, and the operation's request identifier.
 func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
-	server := newFailureTestServer(t)
+	server, api := newFailureTestServer(t)
 
 	t.Run("validation failure", func(t *testing.T) {
-		status, contentType, body := postJSON(t, server, `{"name":"secret-rejected-value"}`)
+		status, contentType, body := requestJSON(t, server, http.MethodPost, "/test-echo", `{"name":"secret-rejected-value"}`)
 		if status != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want %d: %s", status, http.StatusUnprocessableEntity, body)
 		}
@@ -58,7 +58,7 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 	})
 
 	t.Run("typed handler failure", func(t *testing.T) {
-		status, _, body := postJSON(t, server, `{"name":"bad"}`)
+		status, _, body := requestJSON(t, server, http.MethodPost, "/test-echo", `{"name":"bad"}`)
 		if status != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d: %s", status, http.StatusBadRequest, body)
 		}
@@ -88,7 +88,7 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 		{name: "panic", payload: "pan"},
 	} {
 		t.Run("unexpected "+failure.name, func(t *testing.T) {
-			status, _, body := postJSON(t, server, `{"name":"`+failure.payload+`"}`)
+			status, _, body := requestJSON(t, server, http.MethodPost, "/test-echo", `{"name":"`+failure.payload+`"}`)
 			if status != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want %d: %s", status, http.StatusInternalServerError, body)
 			}
@@ -117,14 +117,44 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 		})
 	}
 
-	t.Run("documented error schema", func(t *testing.T) {
-		response, err := server.Client().Get(server.URL + "/openapi.json")
-		if err != nil {
-			t.Fatalf("GET /openapi.json: %v", err)
+	// Authentication hooks report through the same model, and their failure text
+	// is as untrusted as any other internal error.
+	t.Run("authentication hook failure", func(t *testing.T) {
+		status, _, body := requestJSON(t, server, http.MethodPut, "/test-auth-hook", `{}`)
+		if status != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d: %s", status, http.StatusUnprocessableEntity, body)
 		}
-		defer func() { _ = response.Body.Close() }()
 
-		var document struct {
+		var decoded struct {
+			Code      string            `json:"code"`
+			Detail    string            `json:"detail"`
+			RequestID string            `json:"requestId"`
+			Errors    []json.RawMessage `json:"errors"`
+		}
+		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+			t.Fatalf("decode problem: %v: %s", err, body)
+		}
+		if decoded.Code != string(protocol.ValidationFailed) {
+			t.Errorf("code = %q, want %q", decoded.Code, protocol.ValidationFailed)
+		}
+		if decoded.RequestID == "" {
+			t.Error("requestId is empty")
+		}
+		if strings.Contains(body, "secret provider response") {
+			t.Errorf("hook failure response leaks internal text: %s", body)
+		}
+		if len(decoded.Errors) != 0 {
+			t.Errorf("errors = %s, want none for a failure without a validation location", decoded.Errors)
+		}
+	})
+
+	t.Run("documented error schema", func(t *testing.T) {
+		document, err := json.Marshal(api.OpenAPI())
+		if err != nil {
+			t.Fatalf("marshal OpenAPI document: %v", err)
+		}
+
+		var decoded struct {
 			Components struct {
 				Schemas map[string]struct {
 					Required   []string `json:"required"`
@@ -134,12 +164,12 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 				} `json:"schemas"`
 			} `json:"components"`
 		}
-		if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		if err := json.Unmarshal(document, &decoded); err != nil {
 			t.Fatalf("decode OpenAPI document: %v", err)
 		}
 
 		var found bool
-		for _, schema := range document.Components.Schemas {
+		for _, schema := range decoded.Components.Schemas {
 			if schema.Properties["type"].Format != "uri-reference" {
 				continue
 			}
@@ -157,9 +187,9 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 }
 
 // newFailureTestServer builds the service API on a real listener and adds the
-// handler failure modes a JSON route can produce, so the shared error model is
-// exercised the way production routes will use it.
-func newFailureTestServer(t *testing.T) *httptest.Server {
+// failure modes a JSON route or authentication hook can produce, so the shared
+// error model is exercised the way production routes will use it.
+func newFailureTestServer(t *testing.T) (*httptest.Server, huma.API) {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -184,18 +214,39 @@ func newFailureTestServer(t *testing.T) *httptest.Server {
 		}
 		return nil, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "TestAuthHook",
+		Method:      http.MethodPut,
+		Path:        "/test-auth-hook",
+	}, func(ctx context.Context, input *secretCredential) (*struct{}, error) {
+		return nil, nil
+	})
 
 	server := httptest.NewServer(withRequestID(withRecovery(mux, logger)))
 	t.Cleanup(server.Close)
-	return server
+	return server, api
 }
 
-func postJSON(t *testing.T, server *httptest.Server, body string) (int, string, string) {
+// secretCredential is an authentication hook that fails the way a provider or
+// storage call does: with plain error text the client must never receive.
+type secretCredential struct{}
+
+func (c *secretCredential) Resolve(ctx huma.Context) []error {
+	return []error{errors.New("secret provider response")}
+}
+
+func requestJSON(t *testing.T, server *httptest.Server, method string, path string, body string) (int, string, string) {
 	t.Helper()
 
-	response, err := server.Client().Post(server.URL+"/test-echo", "application/json", strings.NewReader(body))
+	request, err := http.NewRequest(method, server.URL+path, strings.NewReader(body))
 	if err != nil {
-		t.Fatalf("POST /test-echo: %v", err)
+		t.Fatalf("build request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 

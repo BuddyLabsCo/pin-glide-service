@@ -55,11 +55,17 @@ func newAPI(mux *http.ServeMux, database *sql.DB, logger *slog.Logger) huma.API 
 
 // apiConfig returns the Huma configuration for the shared HTTP contract. The
 // default link transformer is removed because it injects $schema fields and
-// Link headers that the contract does not define.
+// Link headers that the contract does not define. The schema and documentation
+// routes are disabled because both contracts are release artifacts produced by
+// the entrypoint's offline export modes, so the running process serves only its
+// documented operations.
 func apiConfig() huma.Config {
 	config := huma.DefaultConfig(apiTitle, apiVersion)
 	config.CreateHooks = nil
 	config.Transformers = nil
+	config.OpenAPIPath = ""
+	config.DocsPath = ""
+	config.SchemasPath = ""
 	return config
 }
 

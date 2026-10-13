@@ -140,8 +140,12 @@ func problemForStatus(status int, requestID string, errs []error) *Problem {
 	return problem
 }
 
-// codeForStatus maps statuses Huma or the router emit without an explicit
-// business code onto the documented code vocabulary. Unmapped 4xx statuses
+// codeForStatus names the code reported when the service has only an HTTP
+// status, such as a Huma validation failure. errorCodeDefinitions stays the
+// authority for each code's status; this representative map is separate and
+// deliberate because several business codes share one status in the v1
+// vocabulary, so the reported code cannot be derived from that table. Add a
+// representative here whenever a new status joins it. Unmapped 4xx statuses
 // keep their actual status and report the closest documented code.
 func codeForStatus(status int) protocol.ErrorCode {
 	switch status {
@@ -163,24 +167,22 @@ func codeForStatus(status int) protocol.ErrorCode {
 	}
 }
 
-// errorItems keeps validation locations and messages, dropping rejected values
-// and any internal error detail.
+// errorItems keeps validation locations and messages, dropping rejected values.
+// An error that cannot state where it failed is dropped as well: its text may
+// be a provider response, SQL detail, credential or other internal description
+// that must never become client-visible.
 func errorItems(errs []error) []protocol.ErrorItem {
 	var items []protocol.ErrorItem
 	for _, err := range errs {
-		if err == nil {
-			continue
-		}
 		var detailed huma.ErrorDetailer
-		if errors.As(err, &detailed) {
-			detail := detailed.ErrorDetail()
-			if detail == nil {
-				continue
-			}
-			items = append(items, protocol.ErrorItem{Location: detail.Location, Message: detail.Message})
+		if err == nil || !errors.As(err, &detailed) {
 			continue
 		}
-		items = append(items, protocol.ErrorItem{Message: err.Error()})
+		detail := detailed.ErrorDetail()
+		if detail == nil {
+			continue
+		}
+		items = append(items, protocol.ErrorItem{Location: detail.Location, Message: detail.Message})
 	}
 	return items
 }
