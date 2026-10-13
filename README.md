@@ -97,9 +97,29 @@ configuration from the environment:
 | `PIN_GLIDE_API_ADDRESS` | `:8080` | Listen address of the API process |
 | `PIN_GLIDE_DATABASE_URL` | local development DSN | PostgreSQL connection string; required in production |
 
+## Running the release CLI
+
+`cmd/pin-glide-release` applies one Database Release from the packaged migration
+image: it holds one database lock, synchronizes the `release` and `pin_glide`
+desired schemas with the pinned psqldef, appends the Database Release and then
+runs the Data Scripts.
+
+| Variable | Meaning |
+| --- | --- |
+| `PIN_GLIDE_ENV` | `production` for a real release |
+| `PIN_GLIDE_DATABASE_URL` | Database to migrate; required in production |
+| `PIN_GLIDE_RELEASE_VERSION` | Target `X.Y.Z`, literal and without `v` |
+| `PIN_GLIDE_RELEASE_INITIAL` | `true` only for a verified fresh database |
+| `PIN_GLIDE_RELEASE_INITIAL_RETRY` | `true` to retry that initial version |
+
+Scripts run in the order of the `db/migrations/order.txt` manifest packaged with
+the release. Without that manifest, a checkout derives the same order from its
+complete first-parent Git history; shallow history and SQL outside the
+supported migration streams are rejected.
+
 ## Not available yet
 
-The repository is implemented ticket by ticket. The release CLI, Compose
-installation and local development arrive with their own tickets, and the
-published descriptions describe only the surface delivered so far: the WSS
-definitions declare no channel until a feature ticket serves one.
+The repository is implemented ticket by ticket. Compose installation and local
+development arrive with their own tickets, and the published descriptions
+describe only the surface delivered so far: the WSS definitions declare no
+channel until a feature ticket serves one.
