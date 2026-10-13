@@ -184,6 +184,8 @@ The existing release automation is reusable as a complete chain:
 
 Sources: [publisher][publisher], [publish workflow][publish-workflow], [auto-release workflow][auto-release-workflow]. Hardcoded organization, source URL, image prefix and four-service list need target substitutions. Image builds use an exact-commit `git archive` and generated migration manifest. The existing GitHub Release has notes/tag, **no OpenAPI/AsyncAPI attachments**, and no deployment job. The current repository Release list was empty when queried; the successful [auto-release run][auto-release-run] only proves the release-PR step ran, not publication or production deployment.
 
+Delivered in this repository: `scripts/release/auto-release-pr.mjs` and `scripts/release/publish-release.mjs` carry the same chain with the pin-glide-service identity, the `api`/`migrate` release images and the derived `pin-glide-postgres` distribution the Compose file names. The publisher keeps its Helm behavior for version progression, merge/tag/source identity, private package policy, same-source reuse and no-overwrite refusal, and adds what Helm had no counterpart for: both `openapi.yaml` and `asyncapi.yaml` are exported and validated at the release commit and attached to the Release before it is published, with a conflicting published asset failing instead of being replaced.
+
 ## 10. Direct-reuse matrix for Pin Glide
 
 | Area | Preserve from Helm | Necessary target adaptation or gap |
@@ -195,7 +197,7 @@ Sources: [publisher][publisher], [publish workflow][publish-workflow], [auto-rel
 | Release SQL | Manifest, checksums, immutable scripts, AST validation, audits, ledger and transaction/replay behavior | Remove River and nonexistent Helm legacy migration streams; update names consistently |
 | Installer | Same attempt state, version checks, locks, frozen backup, reconciliation and recovery | One service instead of web/api/worker; remove Redis startup/cache flush; update matching CLI messages/fixtures |
 | Runtime artifacts | Separate service and one-off migrate images, persistent PostgreSQL volume, Compose workflow | Module/image/env names; no Redis/River/Console/worker solely for script compatibility |
-| Publishing | Existing release PR, same-SHA image/tag checks and retry/no-overwrite chain | Repository/image identities and service list; YAML attachment chain is absent |
+| Publishing | Existing release PR, same-SHA image/tag checks and retry/no-overwrite chain | Repository/image identities and service list; the YAML attachment chain is delivered in this repository rather than inherited |
 | Tests | Existing script and migration regression coverage | Update fixtures together with all renamed/removed dependencies; migrated tests must remain runnable |
 
 The following **existing Pin Glide requirements cannot be met by an unchanged copy**:
