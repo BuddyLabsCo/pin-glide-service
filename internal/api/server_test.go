@@ -110,6 +110,17 @@ func TestServeAnswersRoutingFallbacksWithProblems(t *testing.T) {
 			t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
 		}
 	})
+
+	// The published contract travels as an offline release artifact, so the
+	// process must not re-expose Huma's schema or documentation routes.
+	t.Run("contract routes are not served", func(t *testing.T) {
+		for _, path := range []string{"/openapi.json", "/docs", "/schemas/Problem"} {
+			decoded := service.problem(t, http.MethodGet, path, "")
+			if decoded.Status != http.StatusNotFound || decoded.Code != string(protocol.ResourceNotFound) {
+				t.Fatalf("%s problem = %+v, want 404 resource_not_found", path, decoded)
+			}
+		}
+	})
 }
 
 func TestServeStopsWithinItsShutdownWindow(t *testing.T) {

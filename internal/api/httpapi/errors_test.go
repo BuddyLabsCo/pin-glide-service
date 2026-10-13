@@ -117,25 +117,27 @@ func TestHandlerFailuresUseTheSharedProblemModel(t *testing.T) {
 		})
 	}
 
-	// Authentication hooks report through the same model, and their failure text
-	// is as untrusted as any other internal error.
+	// An authentication hook failure reports through the same model with its
+	// status and code intact, and its text is as untrusted as any other internal
+	// error, so it never becomes a client-visible validation item.
 	t.Run("authentication hook failure", func(t *testing.T) {
-		status, _, body := requestJSON(t, server, http.MethodPut, "/test-auth-hook", `{}`)
-		if status != http.StatusUnprocessableEntity {
-			t.Fatalf("status = %d, want %d: %s", status, http.StatusUnprocessableEntity, body)
+		status, contentType, body := requestJSON(t, server, http.MethodPut, "/test-auth-hook", `{}`)
+		if contentType != "application/problem+json" {
+			t.Fatalf("content type = %q, want application/problem+json", contentType)
 		}
 
 		var decoded struct {
+			Type      string            `json:"type"`
+			Status    int               `json:"status"`
 			Code      string            `json:"code"`
-			Detail    string            `json:"detail"`
 			RequestID string            `json:"requestId"`
 			Errors    []json.RawMessage `json:"errors"`
 		}
 		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 			t.Fatalf("decode problem: %v: %s", err, body)
 		}
-		if decoded.Code != string(protocol.ValidationFailed) {
-			t.Errorf("code = %q, want %q", decoded.Code, protocol.ValidationFailed)
+		if decoded.Code == "" || decoded.Status != status || decoded.Type != "/problems/"+decoded.Code {
+			t.Errorf("problem = %+v, want code, type and status to describe response %d", decoded, status)
 		}
 		if decoded.RequestID == "" {
 			t.Error("requestId is empty")
