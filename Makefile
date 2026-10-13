@@ -1,4 +1,4 @@
-.PHONY: build test generate check-contracts format format-check lint lint-sql format-sql
+.PHONY: build test generate check-contracts format format-check lint lint-sql format-sql dev
 
 build:
 	go build ./...
@@ -27,3 +27,6 @@ lint-sql:
 
 format-sql:
 	./scripts/quality/sqlfluff.sh fix db/schema/release db/schema/pin_glide
+
+dev:
+	./scripts/dev/dev.sh

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { toolFixture } from '../quality/tool-fixture.mjs';
 
 const fixture = (t) => toolFixture(t, {
-  copy: ['scripts/db/psqldef.sh', 'scripts/db/postgres.sh'],
+  copy: ['scripts/db/psqldef.sh', 'scripts/db/postgres.sh', 'scripts/db/postgres-image.sh'],
   files: {
     'db/schema/release/00_extensions.sql': 'CREATE SCHEMA release;\n',
     'db/schema/pin_glide/00_extensions.sql': 'CREATE SCHEMA pin_glide;\n',

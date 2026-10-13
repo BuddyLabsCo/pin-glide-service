@@ -16,7 +16,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,10 +29,43 @@ import (
 )
 
 const (
-	postgresImage  = "postgres:18-alpine"
 	postgresUser   = "pin_glide"
 	postgresDBName = "pin_glide"
 )
+
+var (
+	postgresImageOnce sync.Once
+	postgresImageRef  string
+	postgresImageErr  error
+)
+
+// postgresImage returns the derived server distribution from the build script
+// every database consumer shares, so integration tests run the same
+// PostgreSQL/pg_cron image as Compose, lint/codegen and local development.
+func postgresImage(t *testing.T) string {
+	t.Helper()
+
+	postgresImageOnce.Do(func() {
+		_, source, _, ok := runtime.Caller(0)
+		if !ok {
+			postgresImageErr = errors.New("cannot locate the repository root")
+			return
+		}
+		root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", ".."))
+		command := exec.Command("bash", filepath.Join(root, "scripts", "db", "postgres-image.sh"))
+		command.Stderr = os.Stderr
+		output, err := command.Output()
+		if err != nil {
+			postgresImageErr = fmt.Errorf("build the derived PostgreSQL image: %w", err)
+			return
+		}
+		postgresImageRef = strings.TrimSpace(string(output))
+	})
+	if postgresImageErr != nil {
+		t.Fatal(postgresImageErr)
+	}
+	return postgresImageRef
+}
 
 // Postgres is a disposable PostgreSQL instance owned by one test.
 type Postgres struct {
@@ -54,7 +90,7 @@ func StartPostgres(t *testing.T) *Postgres {
 		"--env", "POSTGRES_USER="+postgresUser,
 		"--env", "POSTGRES_PASSWORD="+password,
 		"--env", "POSTGRES_DB="+postgresDBName,
-		postgresImage,
+		postgresImage(t),
 	)
 	postgres := &Postgres{container: container}
 	t.Cleanup(func() {
