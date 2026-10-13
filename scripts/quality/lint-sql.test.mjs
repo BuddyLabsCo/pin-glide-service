@@ -11,6 +11,7 @@ const fixture = (t) => toolFixture(t, {
     'package.json',
     'scripts/db/psqldef.sh',
     'scripts/db/postgres.sh',
+    'scripts/db/postgres-image.sh',
     'scripts/quality/lint-sql.sh',
     'scripts/quality/sqlfluff.sh',
     'scripts/quality/sql-lint.sql',

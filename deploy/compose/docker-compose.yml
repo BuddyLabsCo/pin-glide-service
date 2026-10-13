@@ -1,0 +1,56 @@
+name: pin-glide
+
+services:
+  postgres:
+    # Built from postgres.Dockerfile and published independently of RELEASE:
+    # PostgreSQL runs the same image across ordinary application releases.
+    image: ghcr.io/buddylabsco/pin-glide-postgres:18-1.6.8
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: pin_glide
+    volumes:
+      - pin-glide-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    container_name: ${COMPOSE_PROJECT_NAME}-migrate
+    image: ghcr.io/buddylabsco/pin-glide-migrate:${RELEASE:?Set RELEASE in .env}
+    entrypoint: ["/pin-glide-release"]
+    command: ["migrate"]
+    environment:
+      PIN_GLIDE_ENV: production
+      PIN_GLIDE_DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/pin_glide?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: ghcr.io/buddylabsco/pin-glide-api:${RELEASE:?Set RELEASE in .env}
+    environment:
+      PIN_GLIDE_ENV: production
+      PIN_GLIDE_API_ADDRESS: :8080
+      PIN_GLIDE_DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/pin_glide?sslmode=disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # The API drains admitted work within its five-second shutdown window; the
+    # grace period lets that finish before Docker sends SIGKILL.
+    stop_grace_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pin-glide-postgres-data:

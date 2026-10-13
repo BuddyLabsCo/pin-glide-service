@@ -16,7 +16,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,10 +29,42 @@ import (
 )
 
 const (
-	postgresImage  = "postgres:18-alpine"
 	postgresUser   = "pin_glide"
 	postgresDBName = "pin_glide"
+	// Local tag for the derived server distribution built from
+	// deploy/compose/postgres.Dockerfile, the only image that ships pg_cron.
+	postgresImageTag = "pin-glide-postgres:integration"
 )
+
+var (
+	postgresImageOnce sync.Once
+	postgresImageErr  error
+)
+
+// postgresImage builds the pinned server distribution once per test binary so
+// integration tests run the same PostgreSQL/pg_cron image as every other
+// database consumer.
+func postgresImage(t *testing.T) string {
+	t.Helper()
+
+	postgresImageOnce.Do(func() {
+		_, source, _, ok := runtime.Caller(0)
+		if !ok {
+			postgresImageErr = errors.New("cannot locate the repository root")
+			return
+		}
+		root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", ".."))
+		command := exec.Command("docker", "build", "--quiet", "--tag", postgresImageTag,
+			"--file", filepath.Join(root, "deploy", "compose", "postgres.Dockerfile"), root)
+		if output, err := command.CombinedOutput(); err != nil {
+			postgresImageErr = fmt.Errorf("build %s: %w: %s", postgresImageTag, err, strings.TrimSpace(string(output)))
+		}
+	})
+	if postgresImageErr != nil {
+		t.Fatal(postgresImageErr)
+	}
+	return postgresImageTag
+}
 
 // Postgres is a disposable PostgreSQL instance owned by one test.
 type Postgres struct {
@@ -54,7 +89,7 @@ func StartPostgres(t *testing.T) *Postgres {
 		"--env", "POSTGRES_USER="+postgresUser,
 		"--env", "POSTGRES_PASSWORD="+password,
 		"--env", "POSTGRES_DB="+postgresDBName,
-		postgresImage,
+		postgresImage(t),
 	)
 	postgres := &Postgres{container: container}
 	t.Cleanup(func() {

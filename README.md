@@ -20,11 +20,18 @@ make format-check   # gofmt check over handwritten Go sources
 make lint           # pinned golangci-lint, then the source-size check
 make lint-sql       # disposable PostgreSQL load, catalog, Schemalint, SQLFluff
 make format-sql     # SQLFluff fixes for the desired schemas
+make dev            # disposable PostgreSQL, migrations, then the api on loopback
 ```
 
 The default tests need no credentials and no database. They start the composed
 service on a real loopback listener and assert the sanitized `/health` contract,
 routing fallbacks, the shared problem-details error model and bounded shutdown.
+
+Every disposable database in those commands runs the derived PostgreSQL 18 +
+pg_cron image built from `deploy/compose/postgres.Dockerfile`, because pg_cron
+needs a preloaded extension the base image does not ship. `make dev` starts only
+that database from the same Compose file with its own project, volume, port and
+Database Release, runs `cmd/pin-glide-release` against it, then runs the api.
 
 `make lint-sql` loads `db/schema/release` and `db/schema/pin_glide` into a
 disposable loopback PostgreSQL container, runs the native catalog naming checks,
@@ -117,9 +124,18 @@ the release. Without that manifest, a checkout derives the same order from its
 complete first-parent Git history; shallow history and SQL outside the
 supported migration streams are rejected.
 
-## Not available yet
+## Local development and installation
 
-The repository is implemented ticket by ticket. Compose installation and local
-development arrive with their own tickets, and the published descriptions
+`make dev` starts a disposable local PostgreSQL with pg_cron, runs the packaged
+release CLI against it and then runs the api on loopback; it refuses
+non-development configuration and cannot reach a deployment installation.
+
+`install.sh` with `deploy/compose` installs and upgrades one Pin Glide instance
+from published images: prepare, pull, stop the api and its scheduled database
+work, take a stopped-writer recovery backup, migrate, start and restore the
+intended scheduling state. `deploy/compose/README.md` documents the operator
+prerequisites, commands and recovery procedure.
+
+The repository is implemented ticket by ticket, and the published descriptions
 describe only the surface delivered so far: the WSS definitions declare no
 channel until a feature ticket serves one.
