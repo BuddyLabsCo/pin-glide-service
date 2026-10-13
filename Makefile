@@ -1,10 +1,16 @@
-.PHONY: build test format format-check lint lint-sql format-sql
+.PHONY: build test generate check-contracts format format-check lint lint-sql format-sql
 
 build:
 	go build ./...
 
 test:
 	./scripts/quality/test.sh
+
+generate:
+	./scripts/codegen/generate.sh
+
+check-contracts:
+	./scripts/quality/check-contracts.sh
 
 format:
 	./scripts/quality/format.sh

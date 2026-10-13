@@ -2,6 +2,8 @@
   "name": "pin-glide-service-tools",
   "private": true,
   "devDependencies": {
+    "@asyncapi/cli": "6.2.0",
+    "@redocly/cli": "2.62.1",
     "schemalint": "2.3.2"
   }
 }

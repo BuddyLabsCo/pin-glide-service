@@ -30,12 +30,15 @@ type healthOutput struct {
 func registerHealth(api huma.API, database *sql.DB, logger *slog.Logger) {
 	huma.Register(api, huma.Operation{
 		OperationID: "GetHealth",
-		Tags:        []string{"system"},
+		Tags:        []string{TagSystem},
 		Method:      http.MethodGet,
 		Path:        "/health",
 		Summary:     "Report sanitized service health",
 		Description: "Reports ok while the service and its database are available, and a sanitized 503 otherwise.",
 		Errors:      []int{http.StatusServiceUnavailable},
+		// An empty requirement states that health is deliberately anonymous; a
+		// later credential-protected operation cannot inherit it silently.
+		Security: []map[string][]string{},
 	}, func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
 		if err := databaseReady(ctx, database); err != nil {
 			logger.WarnContext(ctx, "health check failed",

@@ -45,6 +45,12 @@ func New(dependencies Dependencies) (http.Handler, *Admission) {
 	return handler, admission
 }
 
+// discardLogger returns the logger of a surface that only produces a document:
+// nothing it does may reach the diagnostics of the caller that asked for it.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 // newAPI registers the service operations on mux with the shared error model.
 func newAPI(mux *http.ServeMux, database *sql.DB, logger *slog.Logger) huma.API {
 	configureErrorModel()
@@ -66,6 +72,17 @@ func apiConfig() huma.Config {
 	config.OpenAPIPath = ""
 	config.DocsPath = ""
 	config.SchemasPath = ""
+	config.Info.Description = "The Pin Glide service HTTP surface. Whole-request failures carry an RFC 9457 problem detail with a stable machine-readable code; credentials belong in the Authorization header, never in a URL."
+	config.Servers = []*huma.Server{{
+		URL:         "https://{serviceHost}",
+		Description: "The public origin supplied by the installation.",
+		Variables: map[string]*huma.ServerVariable{
+			"serviceHost": {
+				Default:     "localhost:8080",
+				Description: "Host and port of the public HTTPS origin.",
+			},
+		},
+	}}
 	return config
 }
 
