@@ -44,6 +44,12 @@ VALUES ('pin_glide.some_table.idx_legacy_name');
 Schemalint violations use its built-in `ignores` facility when exceptions are
 needed.
 
+Both mechanisms are scoped exemptions, not blanket disables: the exemption names
+the exact object, states why the rule cannot be followed, and needs maintainer
+review. The catalog, Schemalint and SQLFluff checks cover names, comments and
+formatting; they do not prove object ownership, migration safety or business
+behavior.
+
 ## Comments
 
 Every table, view, enum, user function, and stored procedure has a non-empty
@@ -70,3 +76,9 @@ schemas; format new migration and data scripts explicitly before their first
 release. Run
 `make lint-sql` to validate the disposable PostgreSQL load, native rules,
 Schemalint rules, and formatting together.
+
+`make lint-sql` finishes by applying
+`test/fixtures/sql/desired_schema_violations.sql` to the disposable database and
+requiring the native naming rules, both Schemalint rules and both SQLFluff rule
+families to report their violation. A check that silently stopped reporting
+therefore fails the command instead of passing it.
