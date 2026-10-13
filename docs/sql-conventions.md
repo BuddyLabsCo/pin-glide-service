@@ -44,6 +44,12 @@ VALUES ('pin_glide.some_table.idx_legacy_name');
 Schemalint violations use its built-in `ignores` facility when exceptions are
 needed.
 
+Both mechanisms are scoped exemptions, not blanket disables: the exemption names
+the exact object, states why the rule cannot be followed, and needs maintainer
+review. The catalog, Schemalint and SQLFluff checks cover names, comments and
+formatting; they do not prove object ownership, migration safety or business
+behavior.
+
 ## Comments
 
 Every table, view, enum, user function, and stored procedure has a non-empty

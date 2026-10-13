@@ -1,0 +1,7 @@
+{
+  "name": "pin-glide-service-tools",
+  "private": true,
+  "devDependencies": {
+    "schemalint": "2.3.2"
+  }
+}

@@ -14,11 +14,21 @@ make build          # compile every Go package
 make test           # node helper tests, then go test ./...
 make format-check   # gofmt check over handwritten Go sources
 make lint           # pinned golangci-lint, then the source-size check
+make lint-sql       # disposable PostgreSQL load, catalog, Schemalint, SQLFluff
+make format-sql     # SQLFluff fixes for the desired schemas
 ```
 
 The default tests need no credentials and no database. They start the composed
 service on a real loopback listener and assert the sanitized `/health` contract,
 routing fallbacks, the shared problem-details error model and bounded shutdown.
+
+`make lint-sql` loads `db/schema/release` and `db/schema/pin_glide` into a
+disposable loopback PostgreSQL container, runs the native catalog naming checks,
+Schemalint with the repository rules and SQLFluff, then removes the container.
+It needs Docker, the root npm dependencies (`npm ci`) and `uvx`, and never
+connects to a development or production database. `make format-sql` formats
+only the desired schemas; migration and data scripts are linted but never
+reformatted automatically.
 
 PostgreSQL-backed integration tests are explicit and use a disposable,
 loopback-only database:
@@ -26,6 +36,25 @@ loopback-only database:
 ```sh
 go test -tags=integration ./test/integration/...
 ```
+
+## Check scope and suppressions
+
+`make format-check`, `make lint` and `make lint-sql` cover the scopes below.
+Everything else in `code-architecture.md` remains a code-review responsibility;
+these checks do not prove domain ownership, migration safety or runtime
+behavior.
+
+| Command | Scope |
+| --- | --- |
+| `make format-check` / `make format` | gofmt over tracked and nonignored untracked handwritten `*.go`; Jet output and `generated/` are excluded |
+| `make lint` | pinned golangci-lint standard set and the 500-line limit for handwritten Go, TypeScript/TSX, CSS and shell files; generated files are exempt |
+| `make lint-sql` | both desired schemas, the native catalog checks and the Schemalint/SQLFluff rules described in `docs/sql-conventions.md` |
+
+Suppressions are scoped and reviewable: a Go `//nolint` suppression states its
+reason and needs maintainer review, native SQL rules accept an exact three-part
+identifier in `scripts/quality/sql-lint-ignore.sql`, and Schemalint uses its
+`ignores` facility. Executed or skipped migration and data scripts keep their
+bytes, so they are never reformatted automatically.
 
 ## Running the API process
 
@@ -40,7 +69,6 @@ configuration from the environment:
 
 ## Not available yet
 
-The repository is implemented ticket by ticket. SQL quality checks, schema
-generation, the release CLI, Compose installation and local development, CI
-workflows and the published HTTP/WSS contract assets arrive with their own
-tickets; `make build` and `make test` are the documented entrypoints today.
+The repository is implemented ticket by ticket. Schema generation, the release
+CLI, Compose installation and local development, CI workflows and the published
+HTTP/WSS contract assets arrive with their own tickets.
