@@ -1,89 +1,90 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
+import { repoRoot, toolFixture, violationMarker } from './tool-fixture.mjs';
 
-// Exercise the shell entry point. Only toolchain/container boundaries are faked;
-// all child processes, temporary files, exit statuses, and cleanup are real.
-const toolCLI = String.raw`#!/usr/bin/env node
-const fs = require('node:fs'), path = require('node:path');
-const tool = path.basename(process.argv[1]), args = process.argv.slice(2);
-const entry = { tool, args };
-if (tool === 'go' && args[1] === 'psqldef') {
-  entry.sql = fs.readFileSync(0, 'utf8');
-  entry.config = fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8');
-}
-if (tool === 'docker' && args[0] === 'exec' && args.includes('psql')) {
-  entry.sql = fs.readFileSync(0, 'utf8');
-}
-fs.appendFileSync(process.env.TOOL_LOG, JSON.stringify(entry) + '\n');
-if (tool === 'docker') {
-  if (args[0] === 'run') console.log('disposable-postgres');
-  if (args[0] === 'port') console.log('127.0.0.1:15432');
-  if (args.includes('psql') && process.env.TOOL_FAIL === 'catalog') process.exit(31);
-}
-if (tool === 'npx' && process.env.TOOL_FAIL === 'schemalint') process.exit(32);
-if (tool === 'uvx' && process.env.TOOL_FAIL === 'sqlfluff') process.exit(33);
-`;
+const pinnedSchemalint = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).devDependencies.schemalint;
 
-function fixture(t) {
-  const cwd = mkdtempSync(join(tmpdir(), 'pin-glide-lint-sql-'));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const write = (path, contents) => {
-    mkdirSync(dirname(join(cwd, path)), { recursive: true });
-    writeFileSync(join(cwd, path), contents);
-  };
-  for (const name of ['quality/lint-sql.sh', 'quality/sql-lint.sql', 'quality/sql-lint-ignore.sql', 'db/psqldef.sh', 'db/postgres.sh']) {
-    write(`scripts/${name}`, '');
-    copyFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), join(cwd, 'scripts', name));
-  }
-  write('db/schema/release/00_extensions.sql', 'CREATE SCHEMA release;\n');
-  write('db/schema/pin_glide/00_extensions.sql', 'CREATE SCHEMA pin_glide;\n');
-  write('commands.jsonl', '');
-  for (const tool of ['docker', 'go', 'npx', 'uvx']) {
-    write(`bin/${tool}`, toolCLI);
-    chmodSync(join(cwd, 'bin', tool), 0o755);
-  }
-  const env = { ...process.env, PATH: `${join(cwd, 'bin')}:${process.env.PATH}`, TOOL_LOG: join(cwd, 'commands.jsonl') };
-  return {
-    cwd,
-    run: (extra = {}) => spawnSync('bash', ['scripts/quality/lint-sql.sh'], {
-      cwd, env: { ...env, ...extra }, encoding: 'utf8', timeout: 15000,
-    }),
-    calls: () => readFileSync(join(cwd, 'commands.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),
-  };
-}
-
-test('SQL checks load both schemas, then run the catalog, Schemalint and pinned SQLFluff checks', (t) => {
-  const f = fixture(t), result = f.run();
-  assert.equal(result.status, 0, result.stderr);
-  const calls = f.calls();
-  const psql = calls.find((call) => call.tool === 'docker' && call.args.includes('psql'));
-  assert.ok(psql, result.stderr);
-  assert.ok(psql.args.includes('pin_glide'));
-  assert.ok(psql.args.includes('ON_ERROR_STOP=1'));
-  assert.match(psql.sql, /lint_ignore_object/);
-  assert.match(psql.sql, /'pin_glide', 'release'/);
-  const schemalint = calls.find((call) => call.tool === 'npx');
-  assert.deepEqual(schemalint.args, ['--no-install', 'schemalint']);
-  const sqlfluff = calls.find((call) => call.tool === 'uvx');
-  assert.deepEqual(sqlfluff.args, [
-    '--from', 'sqlfluff==4.3.0', 'sqlfluff', 'lint',
-    'db/schema/release', 'db/schema/pin_glide', 'db/migrations', 'db/scripts',
-  ]);
-  assert.ok(calls.indexOf(psql) < calls.indexOf(schemalint), result.stderr);
-  assert.ok(calls.indexOf(schemalint) < calls.indexOf(sqlfluff), result.stderr);
-  assert.deepEqual(calls.at(-1), { tool: 'docker', args: ['rm', '-f', 'disposable-postgres'] });
+const fixture = (t) => toolFixture(t, {
+  copy: [
+    'package.json',
+    'scripts/db/psqldef.sh',
+    'scripts/db/postgres.sh',
+    'scripts/quality/lint-sql.sh',
+    'scripts/quality/sqlfluff.sh',
+    'scripts/quality/sql-lint.sql',
+    'scripts/quality/sql-lint-ignore.sql',
+    'test/fixtures/sql/desired_schema_violations.sql',
+  ],
+  files: {
+    'db/schema/release/00_extensions.sql': 'CREATE SCHEMA release;\n',
+    'db/schema/pin_glide/00_extensions.sql': 'CREATE SCHEMA pin_glide;\n',
+  },
+  tools: ['docker', 'go', 'npx', 'uvx'],
 });
 
-for (const [failure, code, stopped] of [['catalog', 31, 'npx'], ['schemalint', 32, 'uvx'], ['sqlfluff', 33, null]]) {
+const run = (f, extra = {}) => f.run('bash', ['scripts/quality/lint-sql.sh'], {
+  TOOL_VERSION: pinnedSchemalint, ...extra,
+});
+
+test('SQL checks pass the desired schemas before proving each rule family rejects the violating fixture', (t) => {
+  const f = fixture(t), result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+
+  const catalog = f.calls('docker').filter((call) => call.args.includes('psql'));
+  assert.equal(catalog.length, 3, result.stderr);
+  assert.match(catalog[0].sql, /lint_ignore_object/);
+  assert.ok(catalog[1].sql.includes(violationMarker), result.stderr);
+  assert.match(catalog[2].sql, /lint_ignore_object/);
+
+  const [version, ...schemalint] = f.calls('npx');
+  assert.deepEqual(version.args, ['--no-install', 'schemalint', '--version']);
+  assert.deepEqual(schemalint.map((call) => call.args), [
+    ['--no-install', 'schemalint'],
+    ['--no-install', 'schemalint'],
+  ]);
+
+  const sqlfluff = f.calls('uvx');
+  assert.equal(sqlfluff.length, 2, result.stderr);
+  const pins = sqlfluff.map((call) => call.args[1]);
+  assert.match(pins[0], /^sqlfluff==/, result.stderr);
+  assert.ok(pins.every((pin) => pin === pins[0]), result.stderr);
+  assert.deepEqual(sqlfluff.map((call) => call.args.at(-1).replace(`${f.cwd}/`, '')), [
+    'db/scripts',
+    'test/fixtures/sql/desired_schema_violations.sql',
+  ]);
+
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+});
+
+test('the SQL checks stop on an installed Schemalint that does not match the pin', (t) => {
+  const f = fixture(t), result = run(f, { TOOL_VERSION: '0.0.1' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, new RegExp(`schemalint ${pinnedSchemalint} is required; found 0\\.0\\.1\\.`));
+  assert.equal(f.calls('uvx').length, 0, result.stderr);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+});
+
+for (const [failure, code, stopped] of [['catalog', 31, 'uvx'], ['schemalint', 32, 'uvx'], ['sqlfluff', 33, null]]) {
   test(`a ${failure} failure fails the SQL check, stops later checks and removes the disposable database`, (t) => {
-    const f = fixture(t), result = f.run({ TOOL_FAIL: failure });
+    const f = fixture(t), result = run(f, { TOOL_FAIL: failure });
     assert.equal(result.status, code, result.stderr);
-    if (stopped) assert.ok(!f.calls().some((call) => call.tool === stopped), result.stderr);
-    assert.deepEqual(f.calls().at(-1), { tool: 'docker', args: ['rm', '-f', 'disposable-postgres'] });
+    if (stopped) assert.equal(f.calls(stopped).length, 0, result.stderr);
+    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
   });
 }
+
+test('the SQL checks fail when a checker accepts the violating fixture', (t) => {
+  const f = fixture(t), result = run(f, { TOOL_ACCEPT_FIXTURE: '1' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /the catalog naming check accepted the violating fixture\./);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+});
+
+test('the SQL checks fail when a checker fails without reporting the violation', (t) => {
+  const f = fixture(t), result = run(f, { TOOL_SILENT_FIXTURE_FAILURE: '1' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /the catalog naming check failed without reporting SQL lint found\./);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+});

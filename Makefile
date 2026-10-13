@@ -20,4 +20,4 @@ lint-sql:
 	./scripts/quality/lint-sql.sh
 
 format-sql:
-	uvx --from sqlfluff==4.3.0 sqlfluff fix db/schema/release db/schema/pin_glide
+	./scripts/quality/sqlfluff.sh fix db/schema/release db/schema/pin_glide

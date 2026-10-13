@@ -76,3 +76,8 @@ schemas; format new migration and data scripts explicitly before their first
 release. Run
 `make lint-sql` to validate the disposable PostgreSQL load, native rules,
 Schemalint rules, and formatting together.
+
+`make lint-sql` finishes by applying
+`test/fixtures/sql/desired_schema_violations.sql` to the disposable database and
+requiring the catalog check, Schemalint and SQLFluff to reject it. A rule that
+silently stopped checking therefore fails the command instead of passing it.

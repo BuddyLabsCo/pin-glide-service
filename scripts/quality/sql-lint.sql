@@ -1,10 +1,6 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
-CREATE TEMP TABLE IF NOT EXISTS lint_ignore_object (
-    identifier text PRIMARY KEY
-) ON COMMIT DROP;
-
 CREATE TEMP TABLE lint_violations (
     identifier text NOT NULL,
     violation text NOT NULL
