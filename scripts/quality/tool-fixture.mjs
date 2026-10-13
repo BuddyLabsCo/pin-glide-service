@@ -44,16 +44,25 @@ if (tool === 'docker') {
   if (args[0] === 'port') console.log('127.0.0.1:15432');
   if (args.includes('psql') && violating && !loading) {
     if (process.env.TOOL_SILENT_FIXTURE_FAILURE) process.exit(1);
-    console.log('ERROR: SQL lint found 3 violation(s)');
+    console.log('primary key must be named pk_<table>');
+    console.log('foreign key must be named fk_delivery_receivers_id');
+    console.log('unique constraints are not allowed; use a unique index');
+    console.log('index must be named idx_receiversbad_receiver_id');
+    console.log('ERROR: SQL lint found 4 violation(s)');
     process.exit(1);
   }
   if (args.includes('psql') && fails('catalog')) process.exit(31);
 }
 if (tool === 'npx') {
+  if (fails('npx')) {
+    console.error('npm error could not determine executable to run');
+    process.exit(1);
+  }
   if (args.includes('--version')) console.log(process.env.TOOL_VERSION ?? '0.0.0');
   else if (violating) {
     if (process.env.TOOL_SILENT_FIXTURE_FAILURE) process.exit(1);
     console.error('pin_glide.receiversbad: error pin-glide-object-naming : name must match');
+    console.error('pin_glide.receiversbad: error pin-glide-comments : object must have a non-empty COMMENT ON');
     process.exit(1);
   } else if (fails('schemalint')) process.exit(32);
 }
@@ -61,6 +70,7 @@ if (tool === 'uvx') {
   if (violating) {
     if (process.env.TOOL_SILENT_FIXTURE_FAILURE) process.exit(1);
     console.log('L:   4 | P:   1 | CP01 | Keywords must be upper case.');
+    console.log('L:  14 | P:   1 | LT02 | Expected indent of 4 spaces.');
     process.exit(1);
   }
   if (fails('sqlfluff')) process.exit(33);

@@ -1,8 +1,8 @@
 /** @type {import('schemalint').Config} */
 
-// scripts/db/psqldef.sh exports these for the disposable database. Refusing to
-// guess keeps a schemalint run outside `make lint-sql` from silently linting a
-// developer's own database.
+// scripts/db/psqldef.sh exports these for the disposable database it starts.
+// Inventing no default keeps an accidental direct run from connecting wherever
+// the environment happens to point.
 const disposable = (name) => {
   const value = process.env[name];
   if (!value) {

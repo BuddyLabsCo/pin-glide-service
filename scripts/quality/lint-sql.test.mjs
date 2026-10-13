@@ -66,6 +66,14 @@ test('the SQL checks stop on an installed Schemalint that does not match the pin
   assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
 });
 
+test('the SQL checks report an uninstalled Schemalint instead of npm resolving it', (t) => {
+  const f = fixture(t), result = run(f, { TOOL_FAIL: 'npx' });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, new RegExp(`schemalint ${pinnedSchemalint} is required; found nothing\\. Run npm ci\\.`));
+  assert.equal(f.calls('uvx').length, 0, result.stderr);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+});
+
 for (const [failure, code, stopped] of [['catalog', 31, 'uvx'], ['schemalint', 32, 'uvx'], ['sqlfluff', 33, null]]) {
   test(`a ${failure} failure fails the SQL check, stops later checks and removes the disposable database`, (t) => {
     const f = fixture(t), result = run(f, { TOOL_FAIL: failure });
@@ -85,6 +93,6 @@ test('the SQL checks fail when a checker accepts the violating fixture', (t) => 
 test('the SQL checks fail when a checker fails without reporting the violation', (t) => {
   const f = fixture(t), result = run(f, { TOOL_SILENT_FIXTURE_FAILURE: '1' });
   assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /the catalog naming check failed without reporting SQL lint found\./);
+  assert.match(result.stderr, /the catalog naming check failed without reporting SQL lint found\|/);
   assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
 });

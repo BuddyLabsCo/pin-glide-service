@@ -79,5 +79,6 @@ Schemalint rules, and formatting together.
 
 `make lint-sql` finishes by applying
 `test/fixtures/sql/desired_schema_violations.sql` to the disposable database and
-requiring the catalog check, Schemalint and SQLFluff to reject it. A rule that
-silently stopped checking therefore fails the command instead of passing it.
+requiring the native naming rules, both Schemalint rules and both SQLFluff rule
+families to report their violation. A check that silently stopped reporting
+therefore fails the command instead of passing it.

@@ -7,8 +7,8 @@ to Windows Receivers and owns the shared HTTP/WSS contract.
 ## Local build and tests
 
 Prerequisites: the Go toolchain from `go.mod`, Node.js 24 for the shell-helper
-tests, and Docker with the root npm dependencies (`npm ci`) and `uvx` for the
-disposable SQL checks and the tagged PostgreSQL integration tests.
+tests, Docker for the disposable database checks, and the root npm dependencies
+(`npm ci`) with `uvx` for the SQL checks.
 
 ```sh
 make build          # compile every Go package
@@ -27,8 +27,11 @@ routing fallbacks, the shared problem-details error model and bounded shutdown.
 disposable loopback PostgreSQL container, runs the native catalog naming checks,
 Schemalint with the repository rules and SQLFluff, then removes the container.
 It never connects to a development or production database, and it finishes by
-loading `test/fixtures/sql/desired_schema_violations.sql` and requiring each
-rule family to reject it, so a check that stopped checking fails the command.
+loading `test/fixtures/sql/desired_schema_violations.sql` and requiring the
+native naming rules, both Schemalint rules and both SQLFluff rule families to
+report violations in it, so a check that quietly stopped reporting fails the
+command.
+
 `make format-sql` formats only the desired schemas; migration and data scripts
 are linted but never reformatted automatically.
 
