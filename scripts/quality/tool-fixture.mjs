@@ -22,6 +22,7 @@ const path = require('node:path');
 const tool = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 const entry = { tool, args };
+const flag = (name) => (args.find((arg) => arg.startsWith(name + '=')) ?? name + '=').slice(name.length + 1);
 if (tool === 'go' && args[1] === 'psqldef' && args.includes('--config')) {
   entry.sql = fs.readFileSync(0, 'utf8');
   entry.config = fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8');
@@ -58,6 +59,16 @@ if (tool === 'npx') {
     console.error('npm error could not determine executable to run');
     process.exit(1);
   }
+  // The contract validators reject only the deliberately violating fixtures,
+  // so a green run proves the entrypoint passed them the exported documents.
+  const contractFixture = { redocly: 'violating_openapi.yaml', asyncapi: 'violating_asyncapi.yaml' }[args[1]];
+  if (contractFixture && args.some((arg) => arg.endsWith(contractFixture)) && !process.env.TOOL_ACCEPT_FIXTURE) {
+    if (process.env.TOOL_SILENT_FIXTURE_FAILURE) process.exit(1);
+    console.error(contractFixture.includes('openapi')
+      ? 'no-unresolved-refs: $ref points to a schema that does not exist'
+      : 'asyncapi-document-resolved: the document is missing a required field');
+    process.exit(1);
+  }
   if (args.includes('--version')) console.log(process.env.TOOL_VERSION ?? '0.0.0');
   else if (violating) {
     if (process.env.TOOL_SILENT_FIXTURE_FAILURE) process.exit(1);
@@ -74,6 +85,23 @@ if (tool === 'uvx') {
     process.exit(1);
   }
   if (fails('sqlfluff')) process.exit(33);
+}
+// The jet invocation writes <path>/<database>/<schema> only for the schemas
+// listed in TOOL_JET_SCHEMAS, the way Jet succeeds without output when a
+// schema has no tables, views or enums.
+if (tool === 'go' && args[1] === 'jet') {
+  if (fails('jet')) process.exit(41);
+  const schema = flag('-schema');
+  if ((process.env.TOOL_JET_SCHEMAS ?? '').split(',').includes(schema)) {
+    const table = path.join(flag('-path'), process.env.PGDATABASE ?? 'pin_glide', schema, 'table');
+    fs.mkdirSync(table, { recursive: true });
+    fs.writeFileSync(path.join(table, 'receivers.go'), 'package table\n');
+  }
+}
+// The offline export modes write the requested description to stdout.
+if (tool === 'go' && args[0] === 'run') {
+  if (fails('export')) process.exit(42);
+  console.log('# stub description for ' + args.slice(1).join(' '));
 }
 if (tool === 'go' && args[1] === 'psqldef' && fails('apply')) process.exit(43);
 `;

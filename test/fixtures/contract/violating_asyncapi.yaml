@@ -1,0 +1,8 @@
+# Deliberately invalid: the information object has no title. `make
+# check-contracts` requires the pinned AsyncAPI validator to reject this file, so
+# a validator that silently stopped checking document structure cannot pass.
+asyncapi: 3.1.0
+info:
+  version: 0.1.0
+channels: {}
+operations: {}

@@ -1,0 +1,30 @@
+# Handwritten WSS definitions. `make generate` assembles them with the shared
+# wire schemas from internal/protocol into generated/protocol/asyncapi.yaml, so
+# edit this file rather than the generated description.
+asyncapi: 3.1.0
+
+info:
+  title: Pin Glide Service Realtime API
+  version: 0.1.0
+  description: |-
+    The Pin Glide v1 WebSocket surface. A client connects with the
+    `pin-glide.v1` subprotocol and presents its Bearer credential on the
+    upgrade request, never in a URL.
+
+    Only the operations this service release implements are described here.
+    Each feature ticket adds its channels, messages, shared schemas, error
+    semantics and coverage together with the code that serves them.
+
+servers:
+  service:
+    host: '{serviceHost}'
+    protocol: wss
+    pathname: /
+    description: The deployed service origin, supplied by the installation.
+    variables:
+      serviceHost:
+        default: localhost:8080
+        description: Host and port of the public HTTPS/WSS origin.
+
+channels: {}
+operations: {}

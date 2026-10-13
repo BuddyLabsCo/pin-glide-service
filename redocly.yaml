@@ -1,0 +1,14 @@
+# Validation rules for the published HTTP description, used by
+# `make check-contracts`. `recommended` stays the baseline; the exceptions
+# below record facts about this service instead of weakening the contract
+# checks.
+extends:
+  - recommended
+
+rules:
+  # The service repository is private and publishes no license text.
+  info-license: off
+  # Health is anonymous and answers no 4xx. Business operations document their
+  # own failure codes when they are registered, so a blanket rule would only
+  # demand a response that cannot occur.
+  operation-4xx-response: off

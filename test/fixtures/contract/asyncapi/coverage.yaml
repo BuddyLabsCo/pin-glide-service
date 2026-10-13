@@ -1,0 +1,60 @@
+# A declared WSS surface used by the contract tests: one authenticated channel,
+# messages whose payloads come from the shared wire schemas, a reply and an
+# error message. It proves the coverage checks have something to hold, because
+# the surface this release implements declares no channel yet.
+asyncapi: 3.1.0
+
+info:
+  title: Pin Glide Service Realtime API
+  version: 0.1.0
+  description: Fixture for the published WSS description shape.
+
+servers:
+  service:
+    host: '{serviceHost}'
+    protocol: wss
+    pathname: /
+    description: The deployed service origin.
+    variables:
+      serviceHost:
+        default: localhost:8080
+        description: Host and port of the public HTTPS/WSS origin.
+
+channels:
+  receiverEvents:
+    address: /v1/receiver/events
+    title: Receiver delivery and control
+    messages:
+      delivery:
+        $ref: '#/components/messages/delivery'
+      error:
+        $ref: '#/components/messages/error'
+
+operations:
+  deliver:
+    action: send
+    channel:
+      $ref: '#/channels/receiverEvents'
+    security:
+      - receiverToken: []
+    messages:
+      - $ref: '#/channels/receiverEvents/messages/delivery'
+    reply:
+      messages:
+        - $ref: '#/channels/receiverEvents/messages/error'
+
+components:
+  securitySchemes:
+    receiverToken:
+      type: http
+      scheme: bearer
+      description: The Receiver credential of the authenticated connection.
+  messages:
+    delivery:
+      name: delivery
+      payload:
+        $ref: '#/components/schemas/ErrorItem'
+    error:
+      name: error
+      payload:
+        $ref: '#/components/schemas/ErrorItem'

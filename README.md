@@ -14,6 +14,8 @@ SQL checks.
 ```sh
 make build          # compile every Go package
 make test           # node helper tests, then go test ./...
+make generate       # Jet types and both published descriptions
+make check-contracts # pinned protocol validators, then the contract tests
 make format-check   # gofmt check over handwritten Go sources
 make lint           # pinned golangci-lint, then the source-size check
 make lint-sql       # disposable PostgreSQL load, catalog, Schemalint, SQLFluff
@@ -36,6 +38,25 @@ command.
 `make format-sql` formats only the desired schemas; migration and data scripts
 are linted but never reformatted automatically.
 
+`make generate` loads both desired schemas into the same disposable PostgreSQL
+container `make lint-sql` uses, generates the Jet types into
+`internal/db/jetgen/{pin_glide,release}` and writes the published HTTP and WSS
+descriptions from the API entrypoint's offline modes into `generated/protocol`.
+An empty schema is legitimate: pinned Jet succeeds without writing anything, so
+generation installs nothing and removes the schema's stale output instead of
+moving a directory that does not exist. Commit the regenerated artifacts; `git
+diff` plus `./scripts/quality/check-generated.sh` fail on tracked drift and on
+uncommitted output.
+
+`make check-contracts` exports both descriptions without a listener, a database
+or a provider, validates them with the pinned `@redocly/cli` and `@asyncapi/cli`
+versions, then runs the HTTP and WSS contract tests: stable `VerbResource`
+operation identifiers, one domain tag, the shared problem schema on every
+failure response, embedded shared wire schemas and stated authentication. The
+pinned validators must also reject the violating fixtures under
+`test/fixtures/contract`, so a validator that silently stopped reporting cannot
+pass.
+
 PostgreSQL-backed integration tests are explicit and use a disposable,
 loopback-only database:
 
@@ -43,18 +64,21 @@ loopback-only database:
 go test -tags=integration ./test/integration/...
 ```
 
+`make test` does not run them.
+
 ## Check scope and suppressions
 
-`make format-check`, `make lint` and `make lint-sql` cover the scopes below.
-Everything else in `code-architecture.md` remains a code-review responsibility;
-these checks do not prove domain ownership, migration safety or runtime
-behavior.
+`make format-check`, `make lint`, `make lint-sql` and `make check-contracts`
+cover the scopes below. Everything else in `code-architecture.md` remains a
+code-review responsibility; these checks do not prove domain ownership,
+migration safety or runtime behavior.
 
 | Command | Scope |
 | --- | --- |
 | `make format-check` / `make format` | gofmt over tracked and nonignored untracked handwritten `*.go`; Jet output and `generated/` are excluded |
 | `make lint` | pinned golangci-lint standard set and the 500-line limit for handwritten Go, TypeScript/TSX, CSS and shell files; generated files are exempt |
 | `make lint-sql` | both desired schemas, the native catalog checks and the Schemalint/SQLFluff rules described in `docs/sql-conventions.md`, plus the violating fixture those rules must reject |
+| `make check-contracts` | syntax, resolved references and the reported route, message, authentication and error coverage of both published descriptions, plus the violating fixtures the pinned validators must reject |
 
 Suppressions are scoped and reviewable: a Go `//nolint` suppression states its
 reason and needs maintainer review, native SQL rules accept an exact three-part
@@ -75,6 +99,7 @@ configuration from the environment:
 
 ## Not available yet
 
-The repository is implemented ticket by ticket. Schema generation, the release
-CLI, Compose installation and local development, CI workflows and the published
-HTTP/WSS contract assets arrive with their own tickets.
+The repository is implemented ticket by ticket. The release CLI, Compose
+installation and local development arrive with their own tickets, and the
+published descriptions describe only the surface delivered so far: the WSS
+definitions declare no channel until a feature ticket serves one.

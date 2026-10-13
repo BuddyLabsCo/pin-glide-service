@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kept": {
+      "type": "string"
+    },
+    "bounded": {
+      "type": "integer",
+      "exclusiveMinimum": 7
+    },
+    "nested": {
+      "$ref": "#/$defs/Nested"
+    }
+  },
+  "$defs": {
+    "Nested": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

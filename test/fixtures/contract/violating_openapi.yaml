@@ -1,0 +1,29 @@
+# Deliberately invalid: the schema reference has no target. `make
+# check-contracts` requires the pinned OpenAPI validator to reject this file, so
+# a validator that silently stopped resolving references cannot pass.
+openapi: 3.1.0
+info:
+  title: Pin Glide Service API
+  version: 0.1.0
+servers:
+  - url: https://{serviceHost}
+    variables:
+      serviceHost:
+        default: localhost:8080
+paths:
+  /health:
+    get:
+      operationId: GetHealth
+      summary: Report sanitized service health
+      tags:
+        - system
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Missing'
+components:
+  schemas: {}
