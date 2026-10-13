@@ -174,7 +174,7 @@ a new release.
 | Item | Value |
 | --- | --- |
 | Repository secrets | `APP_ID` and `APP_PRIVATE_KEY` of the release GitHub App |
-| App permissions | Contents read/write and Pull requests read/write: it pushes the `auto-release` branch and manages its pull request |
+| App permissions | Pull requests read/write: the App opens and refreshes the release pull request, never the branch push |
 | `auto-release` token | The App installation token for `gh`; the checkout's workflow `GITHUB_TOKEN` remains the branch push credential |
 | `publish-release` token | The automatic workflow `GITHUB_TOKEN` with `contents: write`, `pull-requests: read` and `packages: write`; no personal token |
 | Deployment pull credential | A personal access token (classic) with at least `read:packages`; GHCR package access does not accept fine-grained tokens |
