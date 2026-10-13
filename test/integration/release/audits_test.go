@@ -3,15 +3,12 @@
 package release_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // Regression: an outer CLI error must not replace the child's raw exit status,
@@ -20,30 +17,12 @@ import (
 // normal schema synchronization are real, only selected child failures are injected.
 func TestSchemaAuditFailures(t *testing.T) {
 	_, work, bin, pool, dsn := releaseDatabase(t)
-	write := func(path, content string) {
-		t.Helper()
-		must(t, os.MkdirAll(filepath.Dir(filepath.Join(work, path)), 0755))
-		must(t, os.WriteFile(filepath.Join(work, path), []byte(content), 0644))
-	}
-	write("db/schema/pin_glide/20_tables/release_probe.sql", probeSchema)
-	write("db/scripts/issue_11_1_release_probe.sql", probeSeed)
-	must(t, os.WriteFile(filepath.Join(work, "db/migrations/order.txt"), []byte("db/scripts/issue_11_1_release_probe.sql\n"), 0644))
-	initial := "true"
-	migrate := func(success bool, want string) string {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, filepath.Join(bin, "pin-glide-release"), "migrate")
-		cmd.Dir = work
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "PIN_GLIDE_ENV=production", "PIN_GLIDE_DATABASE_URL="+dsn, "PIN_GLIDE_RELEASE_VERSION=2.0.0", "PIN_GLIDE_RELEASE_INITIAL="+initial, "PIN_GLIDE_RELEASE_INITIAL_RETRY=false")
-		output, err := cmd.CombinedOutput()
-		if (err == nil) != success || !strings.Contains(string(output), want) {
-			t.Fatalf("success=%v want=%q error=%v\n%s", success, want, err, output)
-		}
-		return string(output)
-	}
-	migrate(true, "complete")
-	initial = "false"
+	process := releaseProcess{work: work, bin: bin, dsn: dsn, version: "2.0.0", initial: "true", retry: "false"}
+	writeWorkFile(t, work, "db/schema/pin_glide/20_tables/release_probe.sql", probeSchema)
+	writeWorkFile(t, work, "db/scripts/issue_11_1_release_probe.sql", probeSeed)
+	writeWorkFile(t, work, "db/migrations/order.txt", "db/scripts/issue_11_1_release_probe.sql\n")
+	process.migrate(t, true, "complete")
+	process.initial = "false"
 	must(t, os.Rename(filepath.Join(bin, "psqldef"), filepath.Join(bin, "psqldef-real")))
 	inject := func(schema, mode string, code int) {
 		t.Helper()
@@ -66,7 +45,7 @@ exec "$(dirname "$0")/psqldef-real" "$@"
 			var before int
 			must(t, pool.QueryRow("SELECT count(*) FROM release.release_schema_audits").Scan(&before))
 			inject(c.schema, c.mode, c.code)
-			output := migrate(false, fmt.Sprintf("exit status %d", c.code))
+			output := process.migrate(t, false, fmt.Sprintf("exit status %d", c.code))
 			var after, exit, duration int
 			var schema, mode, stdout, stderr, executor string
 			must(t, pool.QueryRow("SELECT count(*) FROM release.release_schema_audits").Scan(&after))
@@ -91,7 +70,7 @@ exec "$(dirname "$0")/psqldef-real" "$@"
 	_, err := pool.Exec("CREATE SCHEMA audit_test; ALTER TABLE release.release_schema_audits SET SCHEMA audit_test")
 	must(t, err)
 	inject("release", "apply", 0)
-	output := migrate(false, "persist schema audit")
+	output := process.migrate(t, false, "persist schema audit")
 	if strings.Contains(output, "phase psqldef release --check") {
 		t.Fatal("audit loss did not stop the pipeline")
 	}
