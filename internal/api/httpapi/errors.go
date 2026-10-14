@@ -288,6 +288,7 @@ var businessOutcomes = []struct {
 	{pairing.ErrIssuanceInvalid, protocol.ValidationFailed},
 	{pairing.ErrInvalidMode, protocol.ValidationFailed},
 	{pairing.ErrReceiverNotOwned, protocol.ResourceNotFound},
+	{pairing.ErrAssociationNotFound, protocol.ResourceNotFound},
 	{pairing.ErrFreshIdentityRequired, protocol.FreshIdentityRequired},
 	{pairing.ErrWeChatAuthorizationInvalid, protocol.WeChatAuthorizationInvalid},
 	{pairing.ErrIdentityProvider, protocol.IdentityProviderError},

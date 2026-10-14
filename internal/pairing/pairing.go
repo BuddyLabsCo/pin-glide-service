@@ -114,6 +114,17 @@ type View struct {
 	PairingID         string
 }
 
+// Association is one of a Sender's own active associations as the domain
+// holds it: which Receiver the Pairing forwards to and the Sender's own alias.
+// A pending reservation is not an association yet and appears only as its
+// Pairing Session; the Receiver's presence is transport state and joins this
+// shape at the HTTP boundary.
+type Association struct {
+	ReceiverID string
+	PairingID  string
+	Alias      string
+}
+
 // Expired reports whether the session is past its absolute lifetime. The
 // stored state of an unclaimed session is not rewritten when it lapses.
 func (s Session) Expired(now time.Time) bool {
@@ -236,6 +247,11 @@ var (
 	ErrInvalidMode = errors.New("pairing session mode is not usable for this request")
 	// ErrReceiverNotOwned marks a Receiver that is not visible to this Sender.
 	ErrReceiverNotOwned = errors.New("receiver not owned by this sender")
+	// ErrAssociationNotFound marks a Pairing that is not this Sender's own
+	// active association. An unknown, foreign, pending or already removed
+	// Pairing is deliberately indistinguishable, so a caller cannot confirm
+	// another Sender's or another Account's association.
+	ErrAssociationNotFound = errors.New("pairing association not found")
 	// ErrPairingNotReady marks a session that cannot perform the requested step
 	// yet, for example because a participant has not reported key confirmation.
 	ErrPairingNotReady = errors.New("pairing session not ready")
@@ -282,6 +298,14 @@ type Provider interface {
 // family it authorizes instead of restating them.
 type Authenticator interface {
 	Authenticate(ctx context.Context, rawCredential string, scope string) (string, error)
+}
+
+// DeliveryNotifier reports a removed association to the Receiver's live
+// delivery connection, so an online Receiver learns that a Sender withdrew
+// forwarding authority without polling. The transport owns the message shape,
+// and a Receiver that is not connected simply receives nothing.
+type DeliveryNotifier interface {
+	PairingRemoved(senderID, receiverID, pairingID string)
 }
 
 // WeChatProof is one verified WeChat identity and the Account it belongs to.

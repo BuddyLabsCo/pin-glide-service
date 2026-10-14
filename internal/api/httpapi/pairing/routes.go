@@ -18,6 +18,9 @@ type Handlers struct {
 	// Senders resolves a Sender management credential, so /authorize can fix
 	// the claiming Sender before the domain decides capacity.
 	Senders SenderCredentials
+	// Presence reports each Receiver's current published liveness, which the
+	// Sender's own Receiver list states.
+	Presence ReceiverPresence
 }
 
 // SenderCredentials resolves one Sender management credential.
@@ -32,6 +35,7 @@ func Register(api huma.API, handlers Handlers) {
 	registerComplete(api, handlers)
 	registerRedeem(api, handlers)
 	registerCancel(api, handlers)
+	registerAssociations(api, handlers)
 }
 
 // registerCreate installs POST /v1/pairing-sessions. The Receiver side creates

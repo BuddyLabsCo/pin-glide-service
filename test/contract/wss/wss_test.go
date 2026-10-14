@@ -209,15 +209,95 @@ func TestPublishedWSSDescriptionAssemblesFromTheShippedDefinitions(t *testing.T)
 	}
 }
 
+// The delivery channel must publish the pairing_removed control the service
+// sends when a Sender removes its own association: a released client reads the
+// direction, the message name and its exact payload fields from the
+// description instead of guessing them from the service.
+func TestPublishedWSSDescriptionDeclaresThePairingRemovedControl(t *testing.T) {
+	definitions, err := os.ReadFile(definitionsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", definitionsPath, err)
+	}
+	description := published(t, definitions)
+
+	channels, _ := description["channels"].(map[string]any)
+	channelName, declared := channelNamed(channels, "/v1/receiver/events")
+	if !declared {
+		t.Fatalf("the shipped WSS description does not declare the delivery channel: %v", channels)
+	}
+	channel, _ := channels[channelName].(map[string]any)
+	descriptions, _ := description["components"].(map[string]any)["messages"].(map[string]any)
+	controlRef := ""
+	for name, value := range descriptions {
+		control, _ := value.(map[string]any)
+		payload, _ := control["payload"].(map[string]any)
+		if payload["$ref"] == protocol.SchemaPrefix+"PairingRemoved" {
+			controlRef = "#/components/messages/" + name
+		}
+	}
+	if controlRef == "" {
+		t.Fatalf("the description declares no message of the shared PairingRemoved schema: %v", descriptions)
+	}
+
+	// The delivery channel carries it, so a client subscribes knowing the
+	// control can arrive there.
+	messages, _ := channel["messages"].(map[string]any)
+	controlKey := ""
+	for name, value := range messages {
+		reference, _ := value.(map[string]any)["$ref"].(string)
+		if reference == controlRef {
+			controlKey = name
+		}
+	}
+	if controlKey == "" {
+		t.Fatalf("the delivery channel does not carry %s: %v", controlRef, messages)
+	}
+
+	// The direction that sends it must name it, so a generator reading the send
+	// operation carries the control instead of inferring it from the channel.
+	controlChannelRef := "#/channels/" + channelName + "/messages/" + controlKey
+	sent := false
+	operations, _ := description["operations"].(map[string]any)
+	for name, value := range operations {
+		operation, _ := value.(map[string]any)
+		reference, _ := operation["channel"].(map[string]any)["$ref"].(string)
+		if operation["action"] != "send" || reference != "#/channels/"+channelName {
+			continue
+		}
+		sent = true
+		named := false
+		messageList, _ := operation["messages"].([]any)
+		for _, message := range messageList {
+			referenced, _ := message.(map[string]any)["$ref"].(string)
+			if referenced == controlChannelRef {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("operation %s sends on the delivery channel without naming %s", name, controlChannelRef)
+		}
+	}
+	if !sent {
+		t.Error("no send operation on the delivery channel publishes pairing_removed")
+	}
+}
+
 // channelWithAddress reports whether the description declares a channel at one
 // served address, so a release cannot document a channel the service does not
 // serve or omit one it does.
 func channelWithAddress(channels map[string]any, address string) bool {
-	for _, value := range channels {
+	_, declared := channelNamed(channels, address)
+	return declared
+}
+
+// channelNamed returns the declared key of the channel at one served address,
+// so a test can follow the references that name its messages.
+func channelNamed(channels map[string]any, address string) (string, bool) {
+	for name, value := range channels {
 		channel, _ := value.(map[string]any)
 		if channel["address"] == address {
-			return true
+			return name, true
 		}
 	}
-	return false
+	return "", false
 }

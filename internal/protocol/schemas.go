@@ -18,8 +18,10 @@ const SchemaPrefix = "#/components/schemas/"
 var wireTypes = []reflect.Type{
 	reflect.TypeOf(ErrorItem{}),
 	reflect.TypeOf(PairingSessionView{}),
+	reflect.TypeOf(ReceiverAssociation{}),
 	reflect.TypeOf(PairingState{}),
 	reflect.TypeOf(CredentialReady{}),
+	reflect.TypeOf(PairingRemoved{}),
 	reflect.TypeOf(PairingRelayIn{}),
 	reflect.TypeOf(PairingRelayOut{}),
 	reflect.TypeOf(WSSError{}),

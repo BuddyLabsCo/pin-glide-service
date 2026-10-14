@@ -2,6 +2,7 @@ package wss
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,10 @@ const (
 	// answers the client, so a stalled dependency cannot hold a Receiver's slot
 	// behind an open handshake. It matches the server's header timeout.
 	handshakeTimeout = 5 * time.Second
+	// controlWriteTimeout bounds one service-initiated control write, so a
+	// Receiver that stopped reading cannot hold the operation reporting the
+	// change for longer than that window.
+	controlWriteTimeout = 2 * time.Second
 )
 
 // ErrReceiverAlreadyConnected reports a Receiver that already holds the one
@@ -238,6 +243,51 @@ func (s *ReceiverSocket) closeUncommitted(socket *websocket.Conn) {
 
 	code, reason := closeMeaning(intent)
 	_ = socket.Close(code, reason)
+}
+
+// PairingRemoved reports one Sender's removed association to the Receiver's
+// live delivery connection, so an online Receiver stops treating that Pairing
+// as one that may deliver without polling. The Receiver's credential, this
+// connection and every other Sender's association are unaffected, and a
+// Receiver with no live connection simply receives nothing: this channel keeps
+// no backlog.
+func (s *ReceiverSocket) PairingRemoved(senderID, receiverID, pairingID string) {
+	message := protocol.PairingRemoved{
+		Version:   protocol.WSSVersion,
+		Type:      "pairing_removed",
+		SenderID:  senderID,
+		PairingID: pairingID,
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		s.logger.Error("pairing removal could not be encoded",
+			slog.String("receiver_id", receiverID),
+			slog.String("cause", err.Error()),
+		)
+		return
+	}
+
+	s.mutex.Lock()
+	sockets := make([]*websocket.Conn, 0, 1)
+	for key, slot := range s.slots {
+		if key.receiverID == receiverID && slot.socket != nil {
+			sockets = append(sockets, slot.socket)
+		}
+	}
+	s.mutex.Unlock()
+
+	for _, socket := range sockets {
+		ctx, cancel := context.WithTimeout(context.Background(), controlWriteTimeout)
+		err := socket.Write(ctx, websocket.MessageText, encoded)
+		cancel()
+		if err != nil {
+			s.logger.Warn("pairing removal not delivered",
+				slog.String("receiver_id", receiverID),
+				slog.String("pairing_id", pairingID),
+				slog.String("cause", err.Error()),
+			)
+		}
+	}
 }
 
 // EndReceiverAccess ends the reserved and active delivery connections of one

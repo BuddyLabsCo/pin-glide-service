@@ -54,6 +54,14 @@ func (p *Presence) State(receiverID string) PresenceState {
 	return PresenceState{Online: presence.online, StateChangedAt: presence.changedAt}
 }
 
+// Reading reports one Receiver's published liveness as the two values a
+// Sender's own Receiver list states, so the HTTP surface reads presence without
+// depending on this package's type.
+func (p *Presence) Reading(receiverID string) (bool, time.Time) {
+	state := p.State(receiverID)
+	return state.Online, state.StateChangedAt
+}
+
 // online records that one committed connection now holds the Receiver. The
 // state-change time only moves when the published state changes, so a
 // reconnect that replaces a live connection keeps the same online time, while a
