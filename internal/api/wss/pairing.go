@@ -149,10 +149,10 @@ func (s *PairingSocket) relay(ctx context.Context, sender pairing.Resolved, fram
 	session, err := s.sessions.SessionByID(ctx, sender.Session.ID)
 	if err != nil {
 		// Storage that cannot answer says nothing about the session's
-		// authority, so the participant learns a recoverable failure and keeps
-		// the channel it can retry on.
+		// authority, so the participant learns the recoverable failure this
+		// cause reports and keeps the channel it can retry on.
 		if errors.Is(err, pairing.ErrStorageUnavailable) {
-			return recoverable(protocol.ServiceUnavailable, frameDetail(err))
+			return recoverable(frameErrorCodeOf(err), frameDetail(err))
 		}
 		return protocolClose(closePolicy, err, frameDetail(err))
 	}
