@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,34 +19,14 @@ import (
 func dialReceiver(t *testing.T, environment *environment, credential string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	url := "ws" + strings.TrimPrefix(environment.service.BaseURL, "http") + "/v1/receiver/events"
-	socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + credential}},
-		Subprotocols: []string{"pin-glide.v1"},
-	})
-	if err != nil {
-		return nil, response, err
-	}
-	socket.SetReadLimit(64 * 1024)
-	return socket, response, nil
+	return dialDelivery(t, environment.service, credential)
 }
 
 // receiverConnected requires one credential to open the delivery channel.
 func receiverConnected(t *testing.T, environment *environment, credential string) *websocket.Conn {
 	t.Helper()
 
-	socket, response, err := dialReceiver(t, environment, credential)
-	if err != nil {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		t.Fatalf("connect Receiver: %v (status %d)", err, status)
-	}
-	t.Cleanup(func() { _ = socket.CloseNow() })
-	return socket
+	return connectedDelivery(t, environment.service, credential)
 }
 
 // receiverRejected requires one credential's handshake to be refused before

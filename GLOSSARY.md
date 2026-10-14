@@ -16,6 +16,14 @@ _Avoid_: Phone, uploader
 A Windows app installation registered to an Account that receives verification messages from associated Senders in that Account. A Receiver may have independent Pairings with multiple Senders.
 _Avoid_: Desktop, target
 
+**Receiver Presence**:
+Whether a Receiver currently holds its one committed delivery connection, together with the time that published state last changed. A service restart begins with every Receiver offline.
+_Avoid_: Ack, heartbeat, last seen
+
+**Receiver Credential Generation**:
+The monotonic number of a Receiver's current Receiver credential. A newer generation supersedes older credentials, so only the current generation authorizes delivery presence.
+_Avoid_: Version, attempt
+
 **Device Registration**:
 The service identity of one app installation within an Account. Reinstalling the app creates a new Device Registration.
 _Avoid_: Hardware identity, hardware fingerprint

@@ -27,9 +27,12 @@ import (
 // environment is one composed service with its disposable database, faked
 // WeChat boundary and registered Senders.
 type environment struct {
-	service  *harness.Service
-	provider *wechatfake.Fake
-	pool     *sql.DB
+	service *harness.Service
+	// databaseURL is the disposable database the composed service uses, which a
+	// test restarting the service composes the next process against.
+	databaseURL string
+	provider    *wechatfake.Fake
+	pool        *sql.DB
 }
 
 // start composes the service against the shipped schema.
@@ -47,9 +50,10 @@ func start(t *testing.T) *environment {
 
 	provider := wechatfake.New()
 	return &environment{
-		service:  harness.StartService(t, postgres.DSN, provider),
-		provider: provider,
-		pool:     pool,
+		service:     harness.StartService(t, postgres.DSN, provider),
+		databaseURL: postgres.DSN,
+		provider:    provider,
+		pool:        pool,
 	}
 }
 
@@ -222,6 +226,42 @@ func (e *environment) dial(t *testing.T, sessionID, credential string) *websocke
 		t.Fatalf("dial pairing channel: %v", err)
 	}
 	socket.SetReadLimit(64 * 1024)
+	t.Cleanup(func() { _ = socket.CloseNow() })
+	return socket
+}
+
+// dialDelivery opens one R-authenticated delivery subscription on one composed
+// service. A rejected handshake returns the problem response of the refusal.
+func dialDelivery(t *testing.T, service *harness.Service, credential string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url := "ws" + strings.TrimPrefix(service.BaseURL, "http") + "/v1/receiver/events"
+	socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + credential}},
+		Subprotocols: []string{"pin-glide.v1"},
+	})
+	if err != nil {
+		return nil, response, err
+	}
+	socket.SetReadLimit(64 * 1024)
+	return socket, response, nil
+}
+
+// connectedDelivery requires one credential to open the delivery channel of one
+// composed service.
+func connectedDelivery(t *testing.T, service *harness.Service, credential string) *websocket.Conn {
+	t.Helper()
+
+	socket, response, err := dialDelivery(t, service, credential)
+	if err != nil {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		t.Fatalf("connect Receiver: %v (status %d)", err, status)
+	}
 	t.Cleanup(func() { _ = socket.CloseNow() })
 	return socket
 }
