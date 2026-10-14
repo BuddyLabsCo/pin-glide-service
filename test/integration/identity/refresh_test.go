@@ -312,14 +312,17 @@ func TestRefreshRejectsAnAttemptThatIsNotItsRetransmission(t *testing.T) {
 	issued := environment.loginOK(t, `{"wechatCode":"code-mismatch"}`)
 
 	// The successor the recorded operation issued is still current, so it is
-	// not that operation's retransmission and must not be consumed.
+	// not that operation's retransmission: the attempt is rejected, credits
+	// nothing to the operation's record and consumes nothing.
 	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-mismatch", 0)
 	refreshFails(t, environment, rotated.Refresh.Token, "operation-mismatch", 1,
 		http.StatusConflict, "operation_mismatch")
-	renewed := refreshOK(t, environment, rotated.Refresh.Token, "operation-after-mismatch", 0)
-	if renewed.Refresh.Token == rotated.Refresh.Token {
-		t.Error("the rejected attempt consumed the credential it refused")
-	}
+	// Crediting the rejected attempt to the operation would make this repeat a
+	// superseded attempt instead of the same mismatch.
+	refreshFails(t, environment, rotated.Refresh.Token, "operation-mismatch", 1,
+		http.StatusConflict, "operation_mismatch")
+	// The presented credential is untouched, so the family still renews with it.
+	refreshOK(t, environment, rotated.Refresh.Token, "operation-after-mismatch", 0)
 
 	// A stale operation ID of the family a fresh login replaced is not an
 	// operation of the family that login authenticated either.
