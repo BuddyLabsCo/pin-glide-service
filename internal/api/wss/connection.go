@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
@@ -35,6 +38,38 @@ const (
 	closePolicy
 	closeInternal
 )
+
+// ErrSubprotocolRequired reports an upgrade that did not offer the one
+// subprotocol this surface speaks. The service publishes that requirement, so
+// an upgrade answer it never negotiated is refused before the 101.
+var ErrSubprotocolRequired = errors.New("pin-glide.v1 subprotocol required")
+
+// closeCodes names the standard WebSocket status code of each close intent. The
+// reason that travels with a Close comes from protocol.CloseCodes, so the
+// published description and the connections that close carry one authority.
+var closeCodes = map[closeIntent]websocket.StatusCode{
+	closeNothing:        websocket.StatusNormalClosure,
+	closeGoingAway:      websocket.StatusGoingAway,
+	closeProtocolError:  websocket.StatusProtocolError,
+	closeInvalidPayload: websocket.StatusInvalidFramePayloadData,
+	closePolicy:         websocket.StatusPolicyViolation,
+	closeInternal:       websocket.StatusInternalError,
+}
+
+// subprotocolAccepted reports whether one upgrade offered the subprotocol the
+// service speaks. The library negotiates the first accepted token or none at
+// all, so an upgrade that offered nothing else would otherwise reach this
+// surface without its published subprotocol.
+func subprotocolAccepted(request *http.Request) bool {
+	for _, offered := range request.Header.Values("Sec-WebSocket-Protocol") {
+		for _, token := range strings.Split(offered, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), protocol.Subprotocol) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // closeFrame is a queue marker that ends a connection once every frame queued
 // before it has been written, so a final state message is not lost to the
@@ -105,6 +140,12 @@ func (c *Connection) Serve(ctx context.Context, relay func(frame []byte) error) 
 			break
 		}
 		if messageType != websocket.MessageText {
+			c.Close(closeProtocolError)
+			break
+		}
+		// A text frame the service cannot read as UTF-8 is an invalid payload
+		// rather than a protocol or business failure, so it has its own meaning.
+		if !utf8.Valid(data) {
 			c.Close(closeInvalidPayload)
 			break
 		}
@@ -206,20 +247,11 @@ func (c *Connection) reportFrameError(ctx context.Context, err error) bool {
 // closeMeaning maps one intent to the standard status code and a short
 // machine-readable reason, never secret data.
 func closeMeaning(intent closeIntent) (websocket.StatusCode, string) {
-	switch intent {
-	case closeGoingAway:
-		return websocket.StatusGoingAway, "service_shutdown"
-	case closeProtocolError:
-		return websocket.StatusProtocolError, "protocol_error"
-	case closeInvalidPayload:
-		return websocket.StatusInvalidFramePayloadData, "invalid_payload"
-	case closePolicy:
-		return websocket.StatusPolicyViolation, "policy_violation"
-	case closeInternal:
-		return websocket.StatusInternalError, "internal_error"
-	default:
+	code, known := closeCodes[intent]
+	if !known {
 		return websocket.StatusNormalClosure, ""
 	}
+	return code, protocol.CloseReason(int(code))
 }
 
 // discardOutput drops the diagnostics of a connection composed without a

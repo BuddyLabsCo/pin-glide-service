@@ -104,12 +104,13 @@ func (s *server) drain(admission *httpapi.Admission) error {
 	defer cancel()
 
 	admission.Close()
-	shutdownErr := s.http.Shutdown(ctx)
-	// A pairing connection outlives its transport, so shutdown ends it here
-	// rather than waiting for a reader that would block until it failed.
+	// A live connection outlives its transport and its handler owns the
+	// admission, so shutdown ends the connections first: draining the HTTP
+	// server beforehand would wait for readers that only end when they are
+	// closed, which can exceed the bounded window.
 	s.hub.Close()
-	// The delivery channel has the same shape, so its connections end here too.
 	s.receivers.Close()
+	shutdownErr := s.http.Shutdown(ctx)
 	// A pairing connection holds its admission until it closes, so this wait
 	// also joins the connections shutdown just ended.
 	admissionErr := admission.Wait(ctx)

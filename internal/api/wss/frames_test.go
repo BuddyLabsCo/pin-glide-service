@@ -20,17 +20,25 @@ func TestRelayFrameCodecRejectsMalformedFrames(t *testing.T) {
 		t.Errorf("decoded session = %q, want session-a", message.SessionID)
 	}
 
-	for name, frame := range map[string]string{
-		"not JSON":        `{`,
-		"wrong version":   `{"version":2,"type":"pairing_relay","sessionId":"session-a","payload":"AAAA"}`,
-		"wrong type":      `{"version":1,"type":"pairing_state","sessionId":"session-a","payload":"AAAA"}`,
-		"missing session": `{"version":1,"type":"pairing_relay","payload":"AAAA"}`,
-		"missing payload": `{"version":1,"type":"pairing_relay","sessionId":"session-a"}`,
-		"empty payload":   `{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":""}`,
-		"invalid base64":  `{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"not base64!"}`,
-		"unpadded base64": `{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"AAA"}`,
+	// An unknown optional field is compatible with the published definition, so
+	// a client that sent one still relays.
+	extended := `{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"AAAA","futureField":true}`
+	if _, err := decodeRelay([]byte(extended)); err != nil {
+		t.Errorf("a frame carrying an unknown optional field was rejected: %v", err)
+	}
+
+	for name, frame := range map[string][]byte{
+		"not JSON":        []byte(`{`),
+		"wrong version":   []byte(`{"version":2,"type":"pairing_relay","sessionId":"session-a","payload":"AAAA"}`),
+		"wrong type":      []byte(`{"version":1,"type":"pairing_state","sessionId":"session-a","payload":"AAAA"}`),
+		"unknown type":    []byte(`{"version":1,"type":"delivery","sessionId":"session-a","payload":"AAAA"}`),
+		"missing session": []byte(`{"version":1,"type":"pairing_relay","payload":"AAAA"}`),
+		"missing payload": []byte(`{"version":1,"type":"pairing_relay","sessionId":"session-a"}`),
+		"empty payload":   []byte(`{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":""}`),
+		"invalid base64":  []byte(`{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"not base64!"}`),
+		"unpadded base64": []byte(`{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"AAA"}`),
 	} {
-		if _, err := decodeRelay([]byte(frame)); err == nil {
+		if _, err := decodeRelay(frame); err == nil {
 			t.Errorf("%s was accepted", name)
 		} else if code := frameErrorCodeOf(err); code != protocol.InvalidRequest {
 			t.Errorf("%s reported %q, want %q", name, code, protocol.InvalidRequest)

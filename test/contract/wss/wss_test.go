@@ -192,4 +192,32 @@ func TestPublishedWSSDescriptionAssemblesFromTheShippedDefinitions(t *testing.T)
 	if _, embedded := description["components"].(map[string]any)["schemas"].(map[string]any); !embedded {
 		t.Errorf("the shipped WSS description does not embed a shared schema mapping: %v", description["components"])
 	}
+
+	// The channels the service actually serves are the ones the release
+	// documents, each with the authentication its upgrade requires.
+	channels, _ := description["channels"].(map[string]any)
+	for _, address := range []string{"/v1/receiver/events", "/v1/pairing-sessions/{id}/events"} {
+		if !channelWithAddress(channels, address) {
+			t.Errorf("the shipped WSS description does not declare the channel %s: %v", address, channels)
+		}
+	}
+	schemes, _ := description["components"].(map[string]any)["securitySchemes"].(map[string]any)
+	for _, scheme := range []string{"sessionCredential", "receiverCredential"} {
+		if schemes[scheme] == nil {
+			t.Errorf("the shipped WSS description does not declare the security scheme %s: %v", scheme, schemes)
+		}
+	}
+}
+
+// channelWithAddress reports whether the description declares a channel at one
+// served address, so a release cannot document a channel the service does not
+// serve or omit one it does.
+func channelWithAddress(channels map[string]any, address string) bool {
+	for _, value := range channels {
+		channel, _ := value.(map[string]any)
+		if channel["address"] == address {
+			return true
+		}
+	}
+	return false
 }

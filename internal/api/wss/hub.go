@@ -89,10 +89,10 @@ func (h *Hub) SendTo(sessionID string, side pairing.Side, message any) {
 	}
 }
 
-// CloseSession ends every live connection of one session once the frames
-// already queued for it are written, so a participant still learns the state
-// that made its channel unusable.
-func (h *Hub) CloseSession(sessionID string) {
+// CloseSession ends every live connection of one session with the meaning of
+// intent once the frames already queued for it are written, so a participant
+// still learns the state that made its channel unusable before it ends.
+func (h *Hub) CloseSession(sessionID string, intent closeIntent) {
 	h.mutex.Lock()
 	connections := make([]*Connection, 0, len(h.connections[sessionID]))
 	for _, connection := range h.connections[sessionID] {
@@ -101,7 +101,7 @@ func (h *Hub) CloseSession(sessionID string) {
 	h.mutex.Unlock()
 
 	for _, connection := range connections {
-		connection.CloseAfterWrite(closeNothing)
+		connection.CloseAfterWrite(intent)
 	}
 }
 

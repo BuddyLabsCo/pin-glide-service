@@ -37,9 +37,10 @@ func recoverable(code protocol.ErrorCode, detail string) error {
 	return &frameError{code: code, detail: detail, recoverable: true}
 }
 
-// decodeRelay validates one pairing_relay frame and returns it. Only shape and
-// encoding are checked here; the session's authority and state decide whether
-// the frame may be relayed at all.
+// decodeRelay validates one pairing_relay frame and returns it. Only shape is
+// checked here, because the connection has already refused a frame that is not
+// valid UTF-8 text; the session's authority and state decide whether the frame
+// may be relayed at all.
 func decodeRelay(frame []byte) (protocol.PairingRelayIn, error) {
 	var message protocol.PairingRelayIn
 	if err := json.Unmarshal(frame, &message); err != nil {
@@ -66,28 +67,38 @@ type errMalformedFrame struct{}
 
 func (errMalformedFrame) Error() string { return "malformed pairing frame" }
 
-// frameErrorCodeOf names the stable code a frame failure reports. Only the
+// frameCode maps one typed frame failure to the stable code the service
+// reports for it. The published description carries exactly this set of codes,
+// so a business outcome added here belongs in the description as well.
+type frameCode struct {
+	cause error
+	code  protocol.ErrorCode
+}
+
+// frameCodes lists every business outcome a frame can report. Only the
 // service's own outcomes are translated; anything else is unexpected.
+var frameCodes = []frameCode{
+	{pairing.ErrSessionExpired, protocol.PairingSessionExpired},
+	{pairing.ErrSessionClosed, protocol.PairingSessionClosed},
+	{pairing.ErrCredentialExpired, protocol.CredentialExpired},
+	{pairing.ErrCredentialInvalid, protocol.CredentialInvalid},
+	{pairing.ErrSessionNotFound, protocol.ResourceNotFound},
+	{pairing.ErrStorageUnavailable, protocol.ServiceUnavailable},
+	{errMalformedFrame{}, protocol.InvalidRequest},
+}
+
+// frameErrorCodeOf names the stable code a frame failure reports.
 func frameErrorCodeOf(cause error) protocol.ErrorCode {
-	var malformedFrame errMalformedFrame
-	switch {
-	case errors.Is(cause, pairing.ErrSessionExpired):
-		return protocol.PairingSessionExpired
-	case errors.Is(cause, pairing.ErrSessionClosed):
-		return protocol.PairingSessionClosed
-	case errors.Is(cause, pairing.ErrCredentialExpired):
-		return protocol.CredentialExpired
-	case errors.Is(cause, pairing.ErrCredentialInvalid):
-		return protocol.CredentialInvalid
-	case errors.Is(cause, pairing.ErrSessionNotFound):
-		return protocol.ResourceNotFound
-	case errors.Is(cause, pairing.ErrStorageUnavailable):
-		return protocol.ServiceUnavailable
-	case errors.As(cause, &malformedFrame):
-		return protocol.InvalidRequest
-	default:
-		return protocol.InternalError
+	var outcome *frameError
+	if errors.As(cause, &outcome) {
+		return outcome.code
 	}
+	for _, outcome := range frameCodes {
+		if errors.Is(cause, outcome.cause) {
+			return outcome.code
+		}
+	}
+	return protocol.InternalError
 }
 
 // frameDetail is the safe explanation a frame failure carries. It never

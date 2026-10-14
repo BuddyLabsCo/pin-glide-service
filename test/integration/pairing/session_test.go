@@ -33,6 +33,9 @@ type environment struct {
 	databaseURL string
 	provider    *wechatfake.Fake
 	pool        *sql.DB
+	// postgres is the disposable instance itself, which a test stopping the
+	// database deliberately owns before harness cleanup runs.
+	postgres *harness.Postgres
 }
 
 // start composes the service against the shipped schema.
@@ -54,6 +57,17 @@ func start(t *testing.T) *environment {
 		databaseURL: postgres.DSN,
 		provider:    provider,
 		pool:        pool,
+		postgres:    postgres,
+	}
+}
+
+// stopDatabase removes the disposable instance the composed service uses, so a
+// test observes how the service reports storage that stopped answering.
+func (e *environment) stopDatabase(t *testing.T) {
+	t.Helper()
+
+	if err := e.postgres.Stop(); err != nil {
+		t.Fatalf("stop disposable database: %v", err)
 	}
 }
 
