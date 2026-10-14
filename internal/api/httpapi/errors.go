@@ -203,6 +203,15 @@ func NewProblem(ctx context.Context, code protocol.ErrorCode, detail string, ite
 	}
 }
 
+// WriteUpgradeProblem answers one WSS subscription the transport refused before
+// upgrading with the shared problem document, and reports the code it published
+// so the surface that refused the connection logs what the client receives.
+func WriteUpgradeProblem(writer http.ResponseWriter, request *http.Request, reason error) protocol.ErrorCode {
+	problem := problemForStatus(http.StatusInternalServerError, observability.RequestIDFrom(request.Context()), []error{reason})
+	writeProblem(writer, request, problem)
+	return problem.Code
+}
+
 // configureErrorModel replaces Huma's default error model so generated
 // documents and runtime responses share one shape. Huma's default model omits
 // code and requestId and echoes rejected input values.

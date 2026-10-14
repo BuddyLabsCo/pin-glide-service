@@ -61,14 +61,23 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	// that a Sender withdrew forwarding authority.
 	pairingService.SetDeliveryNotifier(receiverSocket)
 
-	handler, admission := httpapi.New(httpapi.Dependencies{
-		Database:       dependencies.Database,
-		Logger:         dependencies.Logger,
-		Identity:       identityService,
-		Pairing:        pairingService,
-		Presence:       presence,
-		PairingEvents:  socket,
-		ReceiverEvents: receiverSocket,
+	// The WSS channels register their own routes on the mux the HTTP surface
+	// composes against, so one middleware chain, one admission gate and one
+	// problem mapping answer both surfaces.
+	mux := http.NewServeMux()
+	wss.Register(mux, wss.Router{
+		Pairing:  socket,
+		Receiver: receiverSocket,
+		Release:  httpapi.SessionAdmissionFrom,
+		Reject:   httpapi.WriteUpgradeProblem,
+		Logger:   dependencies.Logger,
+	})
+	handler, admission := httpapi.New(mux, httpapi.Dependencies{
+		Database: dependencies.Database,
+		Logger:   dependencies.Logger,
+		Identity: identityService,
+		Pairing:  pairingService,
+		Presence: presence,
 	})
 	httpServer := &http.Server{
 		Handler:           handler,
