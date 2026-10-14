@@ -49,7 +49,7 @@ func registerCreate(api huma.API, handlers Handlers) {
 		Description: "Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. " +
 			"new_receiver allocates a Receiver. add_sender attaches one more Sender to the Receiver named by receiverId and authenticates with that Receiver's own current credential in the Authorization header; presenting it proves possession and consumes any issuance grant still outstanding, and it authorizes no other Receiver. recover_receiver acts on an existing Receiver and takes no credential at creation. " +
 			"The Sender that approves the session supplies its own authority when it claims the session. " +
-			"Failures report 401 credential_missing, credential_invalid or credential_expired for add_sender, 404 resource_not_found for a Receiver the credential does not authenticate, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.",
+			"Failures report 401 credential_missing or credential_invalid for add_sender, 404 resource_not_found for a Receiver the credential does not authenticate, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,

@@ -7,11 +7,12 @@ import (
 )
 
 // creation is one created Pairing Session together with the restricted
-// credential that opens it and the grant its creation consumed, if any.
+// credential that opens it and the issuance grant its creation consumed, if
+// any.
 type creation struct {
-	session  Session
-	token    string
-	consumed Session
+	session       Session
+	token         string
+	consumedGrant Session
 }
 
 // Create opens one restricted session in the requested mode and returns it
@@ -27,10 +28,10 @@ func (s *Service) Create(ctx context.Context, request CreateRequest, now time.Ti
 	if err != nil {
 		return Session{}, "", err
 	}
-	if created.consumed.ID != "" {
+	if created.consumedGrant.ID != "" {
 		// Presenting the Receiver's credential proved possession of it, so the
 		// grant whose credential this was is now consumed.
-		s.sessionChanged(created.consumed, now)
+		s.sessionChanged(created.consumedGrant, now)
 	}
 	s.sessionChanged(created.session, now)
 	return created.session, created.token, nil
@@ -40,9 +41,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest, now time.Ti
 // transaction. The mode is fixed here, and no later request can switch it.
 func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest, now time.Time) (creation, error) {
 	receiverID := request.ReceiverID
-	// consumed is the issuance grant the created session's own credential
+	// consumedGrant is the issuance grant the created session's own credential
 	// presentation proved possession of, if one was still outstanding.
-	consumed := Session{}
+	consumedGrant := Session{}
 	switch request.Mode {
 	case ModeNewReceiver:
 		if request.ReceiverID != "" {
@@ -67,7 +68,7 @@ func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest,
 			// stays invisible to the caller that holds it.
 			return creation{}, ErrReceiverNotOwned
 		}
-		consumed = grant
+		consumedGrant = grant
 	case ModeRecoverReceiver:
 		if request.ReceiverID == "" {
 			return creation{}, ErrInvalidMode
@@ -94,5 +95,5 @@ func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest,
 	if err := insertSession(ctx, tx, info); err != nil {
 		return creation{}, err
 	}
-	return creation{session: info.session(), token: token, consumed: consumed}, nil
+	return creation{session: info.session(), token: token, consumedGrant: consumedGrant}, nil
 }
