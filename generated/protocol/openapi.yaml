@@ -109,6 +109,21 @@ components:
         - token
         - expiresAt
       type: object
+    LogoutRequest:
+      additionalProperties: false
+      properties:
+        mode:
+          default: logout
+          description: Logout mode; ordinary logout is the default and the only mode this release implements
+          enum:
+            - logout
+          type: string
+        refreshToken:
+          description: Renewal credential F; present exactly when the request carries no Authorization credential
+          maxLength: 512
+          minLength: 1
+          type: string
+      type: object
     PairingSessionView:
       additionalProperties: false
       properties:
@@ -319,6 +334,52 @@ paths:
       summary: Report sanitized service health
       tags:
         - system
+  /v1/auth/logout:
+    post:
+      description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration and without removing its Pairings; other installations and a family a fresh login replaced keep working. The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. A request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. A failed or uncertain response never means the service revoked anything, and the client stops forwarding locally at once without reporting remote sign-out it did not receive. Account switching, which also removes this Sender's own Pairings, is not part of this release. This response carries no credential and is never cacheable."
+      operationId: PostAuthLogout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security: []
+      summary: Revoke the Sender's service access
+      tags:
+        - identity
   /v1/auth/refresh:
     post:
       description: Rotates the Sender's userSession, uploader and refresh credentials through one operation ID and its attempt number. The client persists that operation ID with the current bundle before it sends it, keeps one single-flight renewal at a time, stores a returned bundle atomically in secure storage, and discards a response that belongs to an inactive local login or logout generation. Attempt 0 is the original request and attempt 1 its one permitted retransmission of an uncertain outcome; either can commit first, and the service never replays a lost response. A recorded attempt equal to or higher than the submitted one reports 409 operation_superseded without issuing or revoking anything. A higher attempt of the recorded operation recovers one lost response only while the consumed token is that operation's recorded predecessor, inside a 30-second overlap and before that token's original expiry, and receives a freshly minted bundle. A higher attempt that presents a credential no operation has consumed is not that operation's retransmission and reports 409 operation_mismatch without issuing or revoking anything. Any other use of a consumed token reports 401 refresh_reuse_detected and revokes only that Sender's family, so unknown or expired tokens never revoke anything. Existing userSession and uploader tokens keep their original expiry during ordinary rotation. Raw credentials appear only in this response, which is never cacheable.

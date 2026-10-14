@@ -68,6 +68,16 @@ type RefreshRequest struct {
 	Attempt      int
 }
 
+// LogoutRequest is one ordinary logout. Exactly one source carries the Sender's
+// own authority: AccessToken is the management or upload credential the client
+// sent in the Authorization header, RefreshToken is the renewal credential it
+// sent in the body instead. The transport rejects a request that offers both
+// sources before the domain decides any authority.
+type LogoutRequest struct {
+	AccessToken  string
+	RefreshToken string
+}
+
 // Token is one issued credential and its actual expiry.
 type Token struct {
 	Value     string

@@ -195,6 +195,15 @@ type refreshFixture struct {
 	Errors map[string][]string `json:"errors"`
 }
 
+// logoutFixture is the accepted v1 compatibility contract of ordinary logout,
+// whose success returns no payload and whose failures can report several codes
+// for one status: an unknown, expired or revoked credential is distinguishable
+// from a missing one.
+type logoutFixture struct {
+	operationContract
+	Errors map[string][]string `json:"errors"`
+}
+
 // The published description must keep describing exactly the accepted login
 // contract: the documented request fields, success payload, credential payload
 // and every failure status a released v1 client handles.
@@ -210,6 +219,48 @@ func TestPublishedHTTPDescriptionKeepsTheWeChatLoginContract(t *testing.T) {
 func TestPublishedHTTPDescriptionKeepsTheRefreshContract(t *testing.T) {
 	fixture := readFixture[refreshFixture](t, "refresh_v1.json")
 	publishedErrors := assertOperationContract(t, published(t), fixture.operationContract)
+	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
+}
+
+// The published description must keep describing exactly the accepted ordinary
+// logout contract: the documented optional body fields, a success that returns
+// no payload at all and every failure status a released v1 client handles.
+func TestPublishedHTTPDescriptionKeepsTheLogoutContract(t *testing.T) {
+	fixture := readFixture[logoutFixture](t, "logout_v1.json")
+	description := published(t)
+	operation := operationOf(t, description, fixture.operationContract)
+
+	requestBody := operation["requestBody"].(map[string]any)
+	if required, _ := requestBody["required"].(bool); required {
+		t.Error("ordinary logout requires a body, but its accepted contract makes the body optional")
+	}
+	content := requestBody["content"].(map[string]any)["application/json"].(map[string]any)
+	requestName, request := schemaOf(t, description, content["schema"])
+	if requestName != fixture.Request.Schema {
+		t.Errorf("request schema = %q, want %q", requestName, fixture.Request.Schema)
+	}
+	if required := requiredFields(t, request); !slices.Equal(required, fixture.Request.Required) {
+		t.Errorf("request required fields = %v, want %v", required, fixture.Request.Required)
+	}
+	if properties := propertyFields(t, request); !slices.Equal(properties, fixture.Request.Properties) {
+		t.Errorf("request fields = %v, want %v", properties, fixture.Request.Properties)
+	}
+
+	responses := operation["responses"].(map[string]any)
+	success, ok := responses[fixture.Success.Status].(map[string]any)
+	if !ok {
+		t.Fatalf("published description does not document success status %s", fixture.Success.Status)
+	}
+	if content, present := success["content"]; present {
+		t.Errorf("the bodyless logout success carries content: %v", content)
+	}
+
+	publishedErrors := map[string]bool{}
+	for status := range responses {
+		if !strings.HasPrefix(status, "2") {
+			publishedErrors[status] = true
+		}
+	}
 	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
 }
 
