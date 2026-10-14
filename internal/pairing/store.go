@@ -67,6 +67,61 @@ func insertSession(ctx context.Context, tx *sql.Tx, session sessionInfo) error {
 	return err
 }
 
+// confirmSender records one Sender-side key-confirmation report without
+// overwriting the timestamp an earlier report of the same side already set.
+func confirmSender(ctx context.Context, tx *sql.Tx, sessionID string, confirmedAt time.Time) error {
+	_, err := tx.ExecContext(ctx, `
+UPDATE pin_glide.pairing_sessions
+SET sender_confirmed_at = COALESCE(sender_confirmed_at, $2)
+WHERE id = $1`, sessionID, confirmedAt)
+	return err
+}
+
+// confirmReceiver records one Receiver-side key-confirmation report without
+// overwriting the timestamp an earlier report of the same side already set.
+func confirmReceiver(ctx context.Context, tx *sql.Tx, sessionID string, confirmedAt time.Time) error {
+	_, err := tx.ExecContext(ctx, `
+UPDATE pin_glide.pairing_sessions
+SET receiver_confirmed_at = COALESCE(receiver_confirmed_at, $2)
+WHERE id = $1`, sessionID, confirmedAt)
+	return err
+}
+
+// activatePairing commits the reservation both clients confirmed. The row is
+// matched by its session-owned identity, so activation cannot touch another
+// association. A row that is already active stays active with its original
+// activation time.
+func activatePairing(ctx context.Context, tx *sql.Tx, session Session, activatedAt time.Time) error {
+	result, err := tx.ExecContext(ctx, `
+UPDATE pin_glide.pairing_pairings
+SET state = 'active', activated_at = COALESCE(activated_at, $2)
+WHERE id = $1
+  AND sender_id = $3
+  AND receiver_id = $4
+  AND state IN ('pending', 'active')`,
+		session.PendingPairingID, activatedAt, session.AuthorizedSenderID, session.ReceiverID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return errors.New("the session's reserved Pairing disappeared before activation")
+	}
+	return nil
+}
+
+// setSessionState moves one session to its next lifecycle state.
+func setSessionState(ctx context.Context, tx *sql.Tx, sessionID string, state SessionState) error {
+	_, err := tx.ExecContext(ctx, `
+UPDATE pin_glide.pairing_sessions
+SET state = $2::pin_glide.pairing_session_state
+WHERE id = $1`, sessionID, string(state))
+	return err
+}
+
 // insertPendingPairing reserves one Pairing ID for a session that will
 // establish or replace an association. The row holds binding capacity from
 // here until it activates, or until a cancellation or expiry releases it.
@@ -194,24 +249,34 @@ func cancelSession(ctx context.Context, tx *sql.Tx, session Session, now time.Ti
 
 // sessionByID reads one session as it is stored.
 func sessionByID(ctx context.Context, db qrm.Queryable, sessionID string) (Session, error) {
-	return readSession(ctx, db, table.PairingSessions.ID.EQ(postgres.String(sessionID)))
+	return readSession(ctx, db, table.PairingSessions.ID.EQ(postgres.String(sessionID)), false)
+}
+
+// lockedSessionByID reads one session for the rest of the transaction, so a
+// completion that activates an association cannot interleave with a
+// cancellation of the same session.
+func lockedSessionByID(ctx context.Context, tx *sql.Tx, sessionID string) (Session, error) {
+	return readSession(ctx, tx, table.PairingSessions.ID.EQ(postgres.String(sessionID)), true)
 }
 
 // sessionByTokenDigest reads the session one restricted credential belongs to.
 func sessionByTokenDigest(ctx context.Context, db qrm.Queryable, tokenDigest string) (Session, error) {
-	return readSession(ctx, db, table.PairingSessions.TokenDigest.EQ(postgres.String(tokenDigest)))
+	return readSession(ctx, db, table.PairingSessions.TokenDigest.EQ(postgres.String(tokenDigest)), false)
 }
 
 // readSession reads one session row behind where and maps it to the domain
 // type. A caller that cannot tell apart "unknown" and "not visible to me"
 // must map the missing row to its own outcome.
-func readSession(ctx context.Context, db qrm.Queryable, where postgres.BoolExpression) (Session, error) {
-	var row model.PairingSessions
-	err := table.PairingSessions.
+func readSession(ctx context.Context, db qrm.Queryable, where postgres.BoolExpression, lock bool) (Session, error) {
+	statement := table.PairingSessions.
 		SELECT(table.PairingSessions.AllColumns).
 		FROM(table.PairingSessions).
-		WHERE(where).
-		QueryContext(ctx, db, &row)
+		WHERE(where)
+	if lock {
+		statement = statement.FOR(postgres.UPDATE())
+	}
+	var row model.PairingSessions
+	err := statement.QueryContext(ctx, db, &row)
 	if errors.Is(err, qrm.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}
@@ -239,6 +304,15 @@ func sessionOf(row model.PairingSessions) Session {
 	}
 	if row.PendingPairingID != nil {
 		session.PendingPairingID = *row.PendingPairingID
+	}
+	if row.IssuanceOperationID != nil {
+		session.IssuanceOperationID = *row.IssuanceOperationID
+	}
+	if row.IssuanceAttempt != nil {
+		session.IssuanceAttempt = int(*row.IssuanceAttempt)
+	}
+	if row.IssuedGeneration != nil {
+		session.IssuedGeneration = *row.IssuedGeneration
 	}
 	return session
 }
