@@ -229,6 +229,50 @@ ALTER TABLE pin_glide.release_probe DROP COLUMN legacy_amount;`)
 	})
 }
 
+// Regression: this Release replaces one deployed unique index with a partial
+// one, and Schema Sync issues no destructive change, so an existing deployment
+// carrying the superseded shape needs the explicit Migration Script to keep
+// converging; without it the replacement reservation of a re-pairing cannot be
+// inserted next to the working association.
+// Seam: the deployed pin-glide-release migrate process, the repository's real
+// pairing migration and an isolated PostgreSQL.
+func TestPairingReplacementIndexUpgrade(t *testing.T) {
+	root, work, bin, pool, dsn := releaseDatabase(t)
+	process := releaseProcess{work: work, bin: bin, dsn: dsn, version: "0.1.0", initial: "true", retry: "false"}
+	sqlExec := func(query string) { t.Helper(); _, err := pool.Exec(query); must(t, err) }
+	writeWorkFile(t, work, "db/migrations/order.txt", "")
+	process.migrate(t, true, "complete")
+
+	// An already deployed database carries the index this Release supersedes.
+	sqlExec("DROP INDEX pin_glide.uidx_pairing_pairings_sender_id_receiver_id")
+	sqlExec("CREATE UNIQUE INDEX uidx_pairing_pairings_sender_id_receiver_id ON pin_glide.pairing_pairings (sender_id, receiver_id)")
+
+	// The superseded shape is not something Schema Sync may drop by itself.
+	process.initial = "false"
+	process.migrate(t, false, "schema did not converge")
+
+	// The released migration drops the superseded index, and Schema Sync then
+	// applies the partial one this Release ships.
+	migration, err := os.ReadFile(filepath.Join(root, "db/migrations/pin_glide/issue_21_1_pairing_replacement_index.sql"))
+	must(t, err)
+	writeWorkFile(t, work, "db/migrations/pin_glide/issue_21_1_pairing_replacement_index.sql", string(migration))
+	writeWorkFile(t, work, "db/migrations/order.txt", "db/migrations/pin_glide/issue_21_1_pairing_replacement_index.sql\n")
+	process.migrate(t, true, "complete")
+	process.migrate(t, true, "already processed")
+
+	var predicate sql.NullString
+	must(t, pool.QueryRow(`
+SELECT pg_get_expr(index.indpred, index.indrelid)
+FROM pg_index AS index
+JOIN pg_class AS relation ON relation.oid = index.indexrelid
+JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+WHERE namespace.nspname = 'pin_glide'
+  AND relation.relname = 'uidx_pairing_pairings_sender_id_receiver_id'`).Scan(&predicate))
+	if !predicate.Valid || !strings.Contains(predicate.String, "active") {
+		t.Fatalf("replacement index predicate = %q, want the active-only partial index", predicate.String)
+	}
+}
+
 func run(t *testing.T, directory, program string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

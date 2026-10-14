@@ -45,15 +45,11 @@ func (e *environment) addSender(t *testing.T, receiverID, credential string) (se
 func (e *environment) paired(t *testing.T, sender bundle, alias string) (sessionView, issuedCredential) {
 	t.Helper()
 
-	created, token := e.createSession(t, "new_receiver", "", "")
-	status, claimed, payload := e.authorize(t, created.SessionID, alias, sender.UserSession.Token)
-	if status != http.StatusOK {
-		t.Fatalf("claim status = %d: %s", status, payload)
-	}
-	if ready := e.activate(t, created.SessionID, sender.UserSession.Token, token); ready.State != "credential_ready" {
+	claimed, token := e.claimNewReceiver(t, sender, alias)
+	if ready := e.activate(t, claimed.SessionID, sender.UserSession.Token, token); ready.State != "credential_ready" {
 		t.Fatalf("activated session = %+v, want credential_ready", ready)
 	}
-	status, issued, payload := e.redeem(t, created.SessionID, token, "op-pair-"+created.SessionID, 0)
+	status, issued, payload := e.redeem(t, claimed.SessionID, token, "op-pair-"+claimed.SessionID, 0)
 	if status != http.StatusOK {
 		t.Fatalf("redemption status = %d: %s", status, payload)
 	}
@@ -71,6 +67,9 @@ type association struct {
 // associationOf reads one Pairing's stored facts.
 func (e *environment) associationOf(t *testing.T, pairingID string) association {
 	t.Helper()
+	if pairingID == "" {
+		t.Fatal("the session allocated no Pairing ID")
+	}
 
 	var row association
 	var replaces *string

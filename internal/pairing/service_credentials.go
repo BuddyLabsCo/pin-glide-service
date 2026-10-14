@@ -76,7 +76,7 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 			}
 			// This replacement is stale, so it releases its own reservation
 			// and leaves the association that is current untouched.
-			if err := supersedeSession(ctx, tx, session, now); err != nil {
+			if err := closeSession(ctx, tx, session, StateSuperseded, now); err != nil {
 				return err
 			}
 			superseded = true

@@ -178,3 +178,52 @@ func TestPairingAnExistingReceiverNeedsNoFreeSlot(t *testing.T) {
 		t.Errorf("add_sender at the limit code = %q, want receiver_limit_reached", code)
 	}
 }
+
+// A Receiver whose only association with a Sender is still an unfinished
+// reservation is already counted, so a second claim for that same Receiver is
+// admitted at the Sender's limit while a sixth distinct Receiver stays refused.
+func TestPendingReservationForOneReceiverCountsOnce(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-once", "openid-once")
+	assistant := environment.sender(t, "code-once-assistant", "openid-once")
+
+	// Four unfinished reservations already take the Sender's whole limit.
+	for index := 0; index < 4; index++ {
+		created, _ := environment.createSession(t, "new_receiver", "", "")
+		if status, _, payload := environment.authorize(t, created.SessionID, "", sender.UserSession.Token); status != http.StatusOK {
+			t.Fatalf("claim %d status = %d: %s", index, status, payload)
+		}
+	}
+
+	// A Receiver of the same Account arrives for the fifth slot through the
+	// add_sender mode, so its own reservation is the only association this
+	// Sender holds with it.
+	held, issued := environment.paired(t, assistant, "Desk")
+	first, _ := environment.addSender(t, held.ReceiverID, issued.ReceiverToken)
+	if status, claimed, payload := environment.authorize(t, first.SessionID, "", sender.UserSession.Token); status != http.StatusOK {
+		t.Fatalf("claim of the fifth Receiver = %d, want 200: %s", status, payload)
+	} else if claimed.PairingID == "" {
+		t.Fatalf("claim of the fifth Receiver = %+v, want a reserved Pairing ID", claimed)
+	}
+
+	second, _ := environment.addSender(t, held.ReceiverID, issued.ReceiverToken)
+	status, claimed, payload := environment.authorize(t, second.SessionID, "", sender.UserSession.Token)
+	if status != http.StatusOK {
+		t.Fatalf("second claim of the same Receiver at the limit = %d, want 200: %s", status, payload)
+	}
+	if claimed.PairingID == "" {
+		t.Fatalf("second claim = %+v, want a reserved Pairing ID", claimed)
+	}
+	if count := environment.count(t,
+		`SELECT count(DISTINCT receiver_id) FROM pin_glide.pairing_pairings
+		WHERE sender_id = $1 AND state <> 'removed'`,
+		sender.SenderID); count != 5 {
+		t.Errorf("a repeated Receiver left %d distinct Receivers, want 5", count)
+	}
+
+	// The limit still bites: a sixth distinct Receiver is refused.
+	sixth, _ := environment.createSession(t, "new_receiver", "", "")
+	if status, _, payload := environment.authorize(t, sixth.SessionID, "", sender.UserSession.Token); status != http.StatusConflict {
+		t.Fatalf("sixth distinct Receiver = %d, want 409: %s", status, payload)
+	}
+}

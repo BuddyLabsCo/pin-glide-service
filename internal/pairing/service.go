@@ -146,7 +146,7 @@ func (s *Service) Cancel(ctx context.Context, sessionID, senderID, token string,
 		if !session.Live(now) {
 			return ErrSessionClosed
 		}
-		return cancelSession(ctx, tx, session, now)
+		return closeSession(ctx, tx, session, StateCanceled, now)
 	})
 	if err != nil {
 		return err
@@ -234,13 +234,15 @@ func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session 
 	}
 	// Re-pairing a Receiver the Sender already holds replaces that association
 	// without needing a free slot of its own, and inherits the Sender's own
-	// alias unless this claim supplies a replacement.
+	// alias unless this claim supplies a replacement. A Receiver the Sender
+	// already holds as a live reservation is counted already, so only its other
+	// Receivers decide whether this claim needs a free slot.
 	current, err := currentPairing(ctx, tx, request.SenderID, session.ReceiverID)
 	if err != nil {
 		return err
 	}
 	if current.ID == "" {
-		held, err := countReceivers(ctx, tx, request.SenderID)
+		held, err := countOtherReceivers(ctx, tx, request.SenderID, session.ReceiverID)
 		if err != nil {
 			return err
 		}

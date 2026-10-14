@@ -39,30 +39,23 @@ func (s *Service) Create(ctx context.Context, request CreateRequest, now time.Ti
 // create builds one session and its Receiver context inside the caller's
 // transaction. The mode is fixed here, and no later request can switch it.
 func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest, now time.Time) (creation, error) {
-	switch request.Mode {
-	case ModeNewReceiver:
-		if request.ReceiverID != "" {
-			return creation{}, ErrInvalidMode
-		}
-	case ModeAddSender, ModeRecoverReceiver:
-		if request.ReceiverID == "" {
-			return creation{}, ErrInvalidMode
-		}
-	default:
-		return creation{}, ErrInvalidMode
-	}
-
 	receiverID := request.ReceiverID
 	// consumed is the issuance grant the created session's own credential
 	// presentation proved possession of, if one was still outstanding.
 	consumed := Session{}
 	switch request.Mode {
 	case ModeNewReceiver:
+		if request.ReceiverID != "" {
+			return creation{}, ErrInvalidMode
+		}
 		receiverID = newValue()
 		if err := insertReceiverRegistration(ctx, tx, receiverID); err != nil {
 			return creation{}, err
 		}
 	case ModeAddSender:
+		if request.ReceiverID == "" {
+			return creation{}, ErrInvalidMode
+		}
 		// An already credentialed Receiver authorizes its own pairing channel
 		// with the credential it holds, which is the one it presents here.
 		admitted, grant, err := admitReceiver(ctx, tx, request.Token, now)
@@ -75,12 +68,17 @@ func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest,
 			return creation{}, ErrReceiverNotOwned
 		}
 		consumed = grant
-	default:
+	case ModeRecoverReceiver:
+		if request.ReceiverID == "" {
+			return creation{}, ErrInvalidMode
+		}
 		// Recovery acts on a Receiver that already has an owning Account; an
 		// unknown, unclaimed or revoked one is not visible to anyone.
 		if _, err := claimedReceiverAccount(ctx, tx, receiverID); err != nil {
 			return creation{}, err
 		}
+	default:
+		return creation{}, ErrInvalidMode
 	}
 
 	info := sessionInfo{
