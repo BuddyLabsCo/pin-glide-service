@@ -34,7 +34,7 @@ IS 'Receiver this association forwards to; one row per Sender.';
 COMMENT ON COLUMN pin_glide.pairing_pairings.alias
 IS 'The owning Sender''s own label for this association; empty when unset.';
 COMMENT ON COLUMN pin_glide.pairing_pairings.state
-IS 'Pending holds capacity until both clients confirm, then active.';
+IS 'Pending holds capacity until activation; cancellation/expiry releases it.';
 COMMENT ON COLUMN pin_glide.pairing_pairings.created_at
 IS 'When the pending association was reserved.';
 COMMENT ON COLUMN pin_glide.pairing_pairings.activated_at

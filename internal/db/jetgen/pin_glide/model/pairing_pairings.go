@@ -17,7 +17,7 @@ type PairingPairings struct {
 	SenderID    string       // Sender that owns this association and its alias.
 	ReceiverID  string       // Receiver this association forwards to; one row per Sender.
 	Alias       string       // The owning Sender's own label for this association; empty when unset.
-	State       PairingState // Pending holds capacity until both clients confirm, then active.
+	State       PairingState // Pending holds capacity until activation; cancellation/expiry releases it.
 	CreatedAt   time.Time    // When the pending association was reserved.
 	ActivatedAt *time.Time   // When both clients confirmed and the association became active.
 	RemovedAt   *time.Time   // When the owning Sender removed the association.

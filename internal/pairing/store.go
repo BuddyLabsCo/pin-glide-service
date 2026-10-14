@@ -69,7 +69,7 @@ func insertSession(ctx context.Context, tx *sql.Tx, session sessionInfo) error {
 
 // insertPendingPairing reserves one Pairing ID for a session that will
 // establish or replace an association. The row holds binding capacity from
-// here until both clients confirm or the reservation is released.
+// here until it activates, or until a cancellation or expiry releases it.
 func insertPendingPairing(ctx context.Context, tx *sql.Tx, pairingID, senderID, receiverID string, createdAt time.Time) error {
 	_, err := table.PairingPairings.
 		INSERT(

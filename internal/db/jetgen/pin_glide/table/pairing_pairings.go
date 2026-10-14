@@ -22,7 +22,7 @@ type pairingPairingsTable struct {
 	SenderID    postgres.ColumnString     // Sender that owns this association and its alias.
 	ReceiverID  postgres.ColumnString     // Receiver this association forwards to; one row per Sender.
 	Alias_      postgres.ColumnString     // The owning Sender's own label for this association; empty when unset.
-	State       postgres.ColumnString     // Pending holds capacity until both clients confirm, then active.
+	State       postgres.ColumnString     // Pending holds capacity until activation; cancellation/expiry releases it.
 	CreatedAt   postgres.ColumnTimestampz // When the pending association was reserved.
 	ActivatedAt postgres.ColumnTimestampz // When both clients confirmed and the association became active.
 	RemovedAt   postgres.ColumnTimestampz // When the owning Sender removed the association.

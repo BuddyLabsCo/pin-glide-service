@@ -167,6 +167,8 @@ func (e *environment) createRecovery(t *testing.T, receiverID string) (sessionVi
 // insertSenderSession writes the session row that add_sender creation will
 // write once Receiver credential issuance exists, so the replacement path of an
 // already associated Receiver is reachable before that slice lands.
+// shortcut: the fixture restates insertSession's row shape, so replace it with
+// the real add_sender create path when that slice lands.
 func (e *environment) insertSenderSession(t *testing.T, receiverID string) string {
 	t.Helper()
 

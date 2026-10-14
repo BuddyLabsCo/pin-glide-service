@@ -90,8 +90,9 @@ func TestPairingChannelRelaysOnlyBetweenItsParticipants(t *testing.T) {
 }
 
 // Reconnect returns the current session state without extending the lifetime
-// and without replaying handshake bytes; a lapsed session reports its own
-// distinct outcome for each participant credential.
+// and without replaying handshake bytes. A canceled session refuses both of
+// its former participants, and a lapsed one reports its own distinct outcome
+// for each participant credential.
 func TestPairingReconnectSnapshotsStateWithoutReplay(t *testing.T) {
 	environment := start(t)
 	sender := environment.sender(t, "code-reconnect", "openid-reconnect")
@@ -148,46 +149,69 @@ func TestPairingReconnectSnapshotsStateWithoutReplay(t *testing.T) {
 		t.Errorf("relayed frame after reconnect = %+v, want the live bytes", relayed)
 	}
 
-	// A relay frame sent before the reconnect is not replayed: the next frame
-	// the reconnected participant reads is the one its peer sends now.
+	// A canceled session is closed for both former participants: neither can
+	// subscribe to it again.
+	if status, payload := environment.request(t, http.MethodDelete,
+		"/v1/pairing-sessions/"+created.SessionID, "", sender.UserSession.Token); status != http.StatusNoContent {
+		t.Fatalf("cancel status = %d, want 204: %s", status, payload)
+	}
+	for _, rejected := range []rejectedSubscription{
+		{name: "canceled restricted credential", credential: token, wantStatus: http.StatusGone, wantCode: "pairing_session_closed"},
+		{name: "canceled owning management credential", credential: sender.UserSession.Token, wantStatus: http.StatusGone, wantCode: "pairing_session_closed"},
+	} {
+		assertSubscriptionRejected(t, environment, created.SessionID, rejected)
+	}
+
 	environment.exec(t, `UPDATE pin_glide.pairing_sessions SET expires_at = now() - interval '1 second' WHERE id = $1`,
 		created.SessionID)
 
 	// A lapsed restricted credential reports the expired credential, while
 	// the owning Sender's valid management credential reports the expired
 	// session.
-	url := "ws" + strings.TrimPrefix(environment.service.BaseURL, "http") +
-		"/v1/pairing-sessions/" + created.SessionID + "/events"
-	for _, rejected := range []struct {
-		name       string
-		credential string
-		wantStatus int
-		wantCode   string
-	}{
+	for _, rejected := range []rejectedSubscription{
 		{name: "expired restricted credential", credential: token, wantStatus: http.StatusUnauthorized, wantCode: "credential_expired"},
 		{name: "owning management credential", credential: sender.UserSession.Token, wantStatus: http.StatusGone, wantCode: "pairing_session_expired"},
 	} {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + rejected.credential}},
-		})
-		cancel()
-		if err == nil {
-			_ = socket.CloseNow()
-			t.Errorf("%s subscribed to a lapsed session", rejected.name)
-			continue
-		}
-		if response == nil {
-			t.Errorf("%s subscription has no response: %v", rejected.name, err)
-			continue
-		}
-		if response.StatusCode != rejected.wantStatus {
-			t.Errorf("%s status = %d, want %d", rejected.name, response.StatusCode, rejected.wantStatus)
-		}
-		body, _ := io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if decoded := decodeProblem(t, body); decoded.Code != rejected.wantCode {
-			t.Errorf("%s code = %q, want %q", rejected.name, decoded.Code, rejected.wantCode)
-		}
+		assertSubscriptionRejected(t, environment, created.SessionID, rejected)
+	}
+}
+
+// rejectedSubscription is one expected pre-upgrade rejection of the restricted
+// pairing channel.
+type rejectedSubscription struct {
+	name       string
+	credential string
+	wantStatus int
+	wantCode   string
+}
+
+// assertSubscriptionRejected requires one credential to be refused before the
+// pairing channel upgrades, with the given problem status and code.
+func assertSubscriptionRejected(t *testing.T, environment *environment, sessionID string, rejected rejectedSubscription) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	url := "ws" + strings.TrimPrefix(environment.service.BaseURL, "http") +
+		"/v1/pairing-sessions/" + sessionID + "/events"
+	socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + rejected.credential}},
+	})
+	if err == nil {
+		_ = socket.CloseNow()
+		t.Errorf("%s subscribed to a rejected session", rejected.name)
+		return
+	}
+	if response == nil {
+		t.Errorf("%s subscription has no response: %v", rejected.name, err)
+		return
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != rejected.wantStatus {
+		t.Errorf("%s status = %d, want %d", rejected.name, response.StatusCode, rejected.wantStatus)
+	}
+	if decoded := decodeProblem(t, body); decoded.Code != rejected.wantCode {
+		t.Errorf("%s code = %q, want %q", rejected.name, decoded.Code, rejected.wantCode)
 	}
 }

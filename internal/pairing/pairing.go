@@ -54,7 +54,8 @@ const (
 )
 
 // AssociationState is the lifecycle of one Sender-to-Receiver association. A
-// pending row holds binding capacity until both clients confirm it.
+// pending row holds binding capacity until it activates; a canceled or expired
+// reservation releases the slot instead.
 type AssociationState string
 
 const (

@@ -101,6 +101,10 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 		if session.AuthorizedSenderID != senderID {
 			return pairing.Resolved{}, pairing.ErrSessionNotFound
 		}
+		// A session that can no longer pair cannot open its channel either.
+		if err := session.TerminalError(now); err != nil {
+			return pairing.Resolved{}, err
+		}
 		return pairing.Resolved{Session: session, Side: pairing.SideSender}, nil
 	} else if !isCredentialOutcome(err) {
 		return pairing.Resolved{}, err
@@ -116,6 +120,10 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 		// A restricted credential authorizes nothing outside its own session,
 		// and the caller cannot confirm another session exists.
 		return pairing.Resolved{}, pairing.ErrCredentialInvalid
+	}
+	// A session that can no longer pair cannot open its channel either.
+	if err := resolved.Session.TerminalError(now); err != nil {
+		return pairing.Resolved{}, err
 	}
 	return resolved, nil
 }
