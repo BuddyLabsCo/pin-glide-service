@@ -19,6 +19,10 @@ type Service struct {
 	provider      Provider
 	authenticator Authenticator
 	notifier      Notifier
+	// deliveryNotifier reports a removed association to the Receiver's live
+	// delivery connection, which is a different live channel than the pairing
+	// one the session notifier serves.
+	deliveryNotifier DeliveryNotifier
 }
 
 // Notifier reports session state changes to the live pairing channel, so a
@@ -421,6 +425,7 @@ func isOutcome(err error) bool {
 		ErrReceiverLimitReached,
 		ErrInvalidMode,
 		ErrReceiverNotOwned,
+		ErrAssociationNotFound,
 		ErrPairingNotReady,
 		ErrModeForbidsCredentialIssue,
 		ErrOperationSuperseded,

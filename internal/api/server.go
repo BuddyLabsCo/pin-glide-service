@@ -57,12 +57,16 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	}
 	receiverSocket := wss.NewReceiverSocket(pairingService, presence, dependencies.Logger)
 	service.receivers = receiverSocket
+	// The Receiver's own delivery connection is where the transport tells it
+	// that a Sender withdrew forwarding authority.
+	pairingService.SetDeliveryNotifier(receiverSocket)
 
 	handler, admission := httpapi.New(httpapi.Dependencies{
 		Database:       dependencies.Database,
 		Logger:         dependencies.Logger,
 		Identity:       identityService,
 		Pairing:        pairingService,
+		Presence:       presence,
 		PairingEvents:  socket,
 		ReceiverEvents: receiverSocket,
 	})

@@ -149,6 +149,16 @@ components:
           minLength: 1
           type: string
       type: object
+    PairingAlias:
+      additionalProperties: false
+      properties:
+        alias:
+          description: Replacement alias for the Sender's own association; an empty value clears it
+          maxLength: 256
+          type: string
+      required:
+        - alias
+      type: object
     PairingSessionView:
       additionalProperties: false
       properties:
@@ -247,6 +257,48 @@ components:
         - detail
         - code
         - requestId
+      type: object
+    ReceiverAssociation:
+      additionalProperties: false
+      properties:
+        alias:
+          description: The owning Sender's own label for this association; empty when unset
+          type: string
+        pairingId:
+          description: Pairing ID both clients stored the Pairing key under
+          type: string
+        presence:
+          description: Whether this Receiver currently holds its committed delivery connection
+          enum:
+            - online
+            - offline
+          type: string
+        receiverId:
+          description: Receiver this association forwards to
+          type: string
+        stateChangedAt:
+          description: When the Receiver's published presence last changed, in RFC 3339 UTC
+          format: date-time
+          type: string
+      required:
+        - receiverId
+        - pairingId
+        - alias
+        - presence
+        - stateChangedAt
+      type: object
+    ReceiverList:
+      additionalProperties: false
+      properties:
+        items:
+          description: The Sender's own active associations; empty when it has none
+          items:
+            $ref: "#/components/schemas/ReceiverAssociation"
+          type:
+            - array
+            - "null"
+      required:
+        - items
       type: object
     RedeemRequest:
       additionalProperties: false
@@ -876,6 +928,151 @@ paths:
       security:
         - bearerAuth: []
       summary: Redeem the Pairing Session's Receiver credential
+      tags:
+        - pairing
+  /v1/self/pairings/{id}:
+    delete:
+      description: Removes this Sender's own authorization to forward to a Receiver and answers 204. The Receiver credential, its delivery connection and every other Sender's association survive, and the removed association keeps its durable identity. The Sender's unfinished association work for the same Receiver is canceled with it, so a later key-confirmation report cannot recreate the association those clients removed; a connected Receiver is told with pairing_removed on its delivery connection, which stays open. A Pairing that is unknown, owned by another Sender, still pending or already removed reports 404 resource_not_found exactly as one that does not exist. Failures report 401 for an absent or unusable management credential, 404 resource_not_found, or 503 service_unavailable.
+      operationId: DeleteSelfPairing
+      parameters:
+        - description: Pairing ID of the Sender's own association
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Pairing ID of the Sender's own association
+            maxLength: 128
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Remove the Sender's own association
+      tags:
+        - pairing
+    patch:
+      description: Replaces the authenticated Sender's own alias for one of its active associations and returns that association as it now is, with the Receiver's current presence. An empty alias clears the Sender's own label. The Pairing identity, its Receiver, the Receiver's delivery connection and every other Sender's association are untouched. A Pairing that is unknown, owned by another Sender, still pending or already removed reports 404 resource_not_found exactly as one that does not exist, so no caller can confirm another Sender's association. Failures report 401 for an absent or unusable management credential, 404 resource_not_found, 422 validation_failed for a body without an alias within its length, or 503 service_unavailable.
+      operationId: PatchSelfPairing
+      parameters:
+        - description: Pairing ID of the Sender's own association
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Pairing ID of the Sender's own association
+            maxLength: 128
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingAlias"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceiverAssociation"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Rename the Sender's own association alias
+      tags:
+        - pairing
+  /v1/self/receivers:
+    get:
+      description: "Returns every active association the authenticated Sender owns: the Receiver it forwards to, the Pairing ID both clients stored the Pairing key under, the Sender's own alias, and the Receiver's current presence with the time that state last changed. Only this Sender's own associations appear: another Sender sharing the same Receiver is invisible here, and a pending reservation appears only as its Pairing Session. Management authority is required, so an upload, Receiver or restricted pairing credential authorizes nothing here. Failures report 401 for an absent or unusable management credential, or 503 service_unavailable."
+      operationId: GetSelfReceivers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceiverList"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: List the Sender's own Receiver associations
       tags:
         - pairing
 servers:

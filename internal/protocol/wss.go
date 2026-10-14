@@ -108,6 +108,18 @@ type CredentialReady struct {
 	ExpiresAt  time.Time `json:"expiresAt" doc:"Absolute end of the restricted credential's redemption window"`
 }
 
+// PairingRemoved tells one Receiver's delivery connection that a Sender
+// removed its own association with it, so the Receiver stops treating that
+// Pairing as one that may deliver. The Receiver's credential, its connection
+// and every other Sender's Pairing are unaffected, so the message changes
+// forwarding authority without ending the channel.
+type PairingRemoved struct {
+	Version   int    `json:"version" doc:"Application message version; always 1"`
+	Type      string `json:"type" doc:"Message type; pairing_removed"`
+	SenderID  string `json:"senderId" doc:"Sender whose association was removed"`
+	PairingID string `json:"pairingId" doc:"Pairing ID of the removed association"`
+}
+
 // WSSError is a recoverable application error. The connection stays open
 // after it, and the shared BusinessError carries the stable code.
 type WSSError struct {

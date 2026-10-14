@@ -34,7 +34,10 @@ type Dependencies struct {
 	// ReceiverEvents serves the R-authenticated delivery channel; it is the
 	// transport dependency of live delivery, not a domain one.
 	ReceiverEvents ReceiverEvents
-	Logger         *slog.Logger
+	// Presence reports each Receiver's published liveness, which a Sender's
+	// own Receiver list states; it is the transport's own process-local state.
+	Presence pairingapi.ReceiverPresence
+	Logger   *slog.Logger
 }
 
 // PairingEvents serves one authenticated pairing subscription until its
@@ -94,6 +97,7 @@ func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 	pairingapi.Register(api, pairingapi.Handlers{
 		Sessions: dependencies.Pairing,
 		Senders:  dependencies.Pairing,
+		Presence: dependencies.Presence,
 	})
 	registerPairingEvents(mux, dependencies.PairingEvents, dependencies.Logger)
 	registerReceiverEvents(mux, dependencies.ReceiverEvents, dependencies.Logger)

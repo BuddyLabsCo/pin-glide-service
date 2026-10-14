@@ -120,6 +120,15 @@ channels:
       1007, a normal close uses 1000, server shutdown uses 1001 and an
       unexpected server failure uses 1011.
 
+      The service also reports association changes here: a Sender that removes
+      its own association is announced as pairing_removed, which withdraws that
+      Sender's forwarding authority for the named Pairing while the Receiver's
+      credential, its connection and every other Sender's association keep
+      working.
+    messages:
+      pairingRemoved:
+        $ref: '#/components/messages/pairingRemoved'
+
 operations:
   acceptPairingHandshake:
     action: receive
@@ -159,14 +168,22 @@ operations:
     action: send
     channel:
       $ref: '#/channels/receiverEvents'
-    summary: Keep the delivery connection alive
+    summary: Keep the delivery connection alive and report removed associations
     description: |-
       The service sends native Ping control frames and answers Pong. Close
       carries the meanings the channel describes; delivery and Receipt messages
       join this direction with live delivery.
+
+      A Sender that removes its own association is reported here as
+      pairing_removed, so a connected Receiver stops treating that Pairing as
+      one that may deliver without polling. The message states the Sender and
+      the removed Pairing only: the Receiver's credential, this connection and
+      every other Sender's association are unaffected, and the service keeps no
+      backlog for a Receiver that is not connected.
     security:
       - $ref: '#/components/securitySchemes/receiverCredential'
-    messages: []
+    messages:
+      - $ref: '#/channels/receiverEvents/messages/pairingRemoved'
 
 components:
   securitySchemes:
@@ -213,6 +230,16 @@ components:
         learns that the credential exists.
       payload:
         $ref: '#/components/schemas/CredentialReady'
+    pairingRemoved:
+      name: pairing_removed
+      title: A Sender removed its association with this Receiver
+      description: |-
+        Sent to the delivery connection of the Receiver whose Sender removed
+        one of its own associations. The Receiver stops expecting deliveries
+        for that Pairing; it keeps its credential and its connection, and every
+        other Sender's association keeps forwarding.
+      payload:
+        $ref: '#/components/schemas/PairingRemoved'
     error:
       name: error
       title: Recoverable application error
