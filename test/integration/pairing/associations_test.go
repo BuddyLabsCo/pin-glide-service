@@ -144,6 +144,9 @@ func TestOwnAssociationListRenameAndRemovalRespectScope(t *testing.T) {
 			`{"alias":"Taken"}`, refused.credential); status != http.StatusUnauthorized {
 			t.Errorf("%s rename status = %d, want 401: %s", refused.name, status, payload)
 		}
+		if status, payload := environment.removeOwnPairing(t, held.PairingID, refused.credential); status != http.StatusUnauthorized {
+			t.Errorf("%s removal status = %d, want 401: %s", refused.name, status, payload)
+		}
 	}
 
 	// Renaming changes only the owning Sender's own alias, and the association
@@ -205,6 +208,15 @@ func TestOwnAssociationListRenameAndRemovalRespectScope(t *testing.T) {
 		t.Fatalf("the other Sender's association = %q after a refused removal, want active", stored.state)
 	}
 
+	// The second Sender's own unfinished re-pairing is not the first Sender's
+	// work: removing one association leaves the other Sender's live reservation
+	// for the shared Receiver alone.
+	replacing, _ := environment.addSender(t, held.ReceiverID, issued.ReceiverToken)
+	status, liveReservation, payload := environment.authorize(t, replacing.SessionID, "", second.UserSession.Token)
+	if status != http.StatusOK || liveReservation.PairingID == "" {
+		t.Fatalf("the other Sender's re-pairing = %d %+v, want a live reservation: %s", status, liveReservation, payload)
+	}
+
 	// Removing the Sender's own association withdraws only its forwarding
 	// authority: the shared Receiver credential, its delivery connection and
 	// the other Sender's association keep working, and the Receiver is told
@@ -225,6 +237,12 @@ func TestOwnAssociationListRenameAndRemovalRespectScope(t *testing.T) {
 	}
 	if status, kept, payload := environment.listOwnReceivers(t, second.UserSession.Token); status != http.StatusOK || len(kept) != 1 || kept[0].PairingID != attached.PairingID {
 		t.Errorf("the other Sender's list = %d %+v, want its association kept: %s", status, kept, payload)
+	}
+	if state := environment.sessionState(t, replacing.SessionID); state != "awaiting_confirmation" {
+		t.Errorf("the other Sender's session state = %q after the removal, want awaiting_confirmation", state)
+	}
+	if reservation := environment.associationOf(t, liveReservation.PairingID); reservation.state != "pending" {
+		t.Errorf("the other Sender's reservation = %q after the removal, want pending", reservation.state)
 	}
 
 	var control struct {
