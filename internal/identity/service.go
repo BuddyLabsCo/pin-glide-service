@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/model"
+	"github.com/go-jet/jet/v2/qrm"
 )
 
 // Service implements Account mapping, Sender login and credential resolution
@@ -103,6 +106,131 @@ func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope 
 	return credential.SenderID, nil
 }
 
+// Refresh rotates one Sender's credential family against its refresh token.
+// The operation ID and attempt the client persisted with that token order the
+// rotation: the family's current token rotates, the token an operation already
+// consumed recovers one lost response for that same operation inside
+// RefreshOverlap, a recorded attempt that is equal or higher is superseded, and
+// any other use of a spent token revokes that family alone.
+func (s *Service) Refresh(ctx context.Context, request RefreshRequest) (bundle Bundle, err error) {
+	// A failure that is not an explicit outcome is storage unavailability:
+	// renewal cannot complete without PostgreSQL.
+	defer func() {
+		if err != nil && !isOutcome(err) {
+			err = fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+		}
+	}()
+
+	if request.Attempt != 0 && request.Attempt != 1 {
+		return Bundle{}, ErrAttemptUnsupported
+	}
+
+	tx, err := s.pool.BeginTx(ctx, nil)
+	if err != nil {
+		return Bundle{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	presented, err := findCredential(ctx, tx, digest(request.RefreshToken))
+	if err != nil {
+		return Bundle{}, err
+	}
+	// The Sender lock is what serializes renewal with login, logout and
+	// security revocation, so the credential is read again under it.
+	registration, err := lockSender(ctx, tx, presented.SenderID)
+	if errors.Is(err, qrm.ErrNoRows) {
+		return Bundle{}, ErrCredentialInvalid
+	}
+	if err != nil {
+		return Bundle{}, err
+	}
+	if registration.State != model.IdentitySenderRegistrationState_Active {
+		return Bundle{}, ErrCredentialRevoked
+	}
+	credential, err := lockCredential(ctx, tx, presented.TokenDigest)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if credential.RevokedAt != nil {
+		return Bundle{}, ErrCredentialRevoked
+	}
+	if !credential.ExpiresAt.After(now) {
+		return Bundle{}, ErrCredentialExpired
+	}
+	if Scope(credential.Scope) != ScopeRefresh {
+		return Bundle{}, ErrCredentialInvalid
+	}
+
+	operation, recorded, err := findRefreshOperation(ctx, tx, credential.SenderID, request.OperationID)
+	if err != nil {
+		return Bundle{}, err
+	}
+	switch {
+	case recorded && request.Attempt <= int(operation.Attempt):
+		// The attempt this client already committed: report the ordering
+		// conflict before replay detection, so a stale retransmission never
+		// mints credentials and never revokes the family.
+		return Bundle{}, ErrOperationSuperseded
+	case recorded && !recoverable(operation, credential, now):
+		return Bundle{}, revokeForReuse(ctx, tx, credential, now)
+	case !recorded:
+		spent, err := tokenConsumed(ctx, tx, credential.TokenDigest)
+		if err != nil {
+			return Bundle{}, err
+		}
+		if spent {
+			return Bundle{}, revokeForReuse(ctx, tx, credential, now)
+		}
+	}
+
+	// The rotation continues the family: it issues fresh M/U/F and leaves the
+	// family's existing access tokens to their original expiry. A replacement
+	// for a lost response is a fresh bundle of the same kind, never the raw
+	// successor the client did not receive.
+	rotated := newBundle(registration.AccountID, credential.SenderID, now)
+	if err := insertCredentials(ctx, tx, credential.FamilyID, rotated, now); err != nil {
+		return Bundle{}, err
+	}
+	if err := recordRefreshAttempt(ctx, tx, credential.SenderID, request.OperationID, request.Attempt, credential, now); err != nil {
+		return Bundle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Bundle{}, err
+	}
+	return rotated, nil
+}
+
+// recoverable reports whether a higher attempt of the recorded operation may
+// mint a replacement bundle: the presented token must be that operation's
+// consumed immediate predecessor, inside the overlap that started when the
+// operation committed and inside the parent's original expiry, which is also
+// how long the record itself is kept.
+func recoverable(operation model.IdentityRefreshOperations, presented model.IdentityCredentials, now time.Time) bool {
+	if presented.TokenDigest != operation.ParentDigest {
+		return false
+	}
+	if now.After(operation.CommittedAt.Add(RefreshOverlap)) {
+		return false
+	}
+	return !now.After(operation.ExpiresAt)
+}
+
+// revokeForReuse revokes every credential of the family a reused renewal token
+// belongs to, commits that revocation and reports the reuse outcome. The
+// revocation is the point of the operation, so it is committed even though the
+// request itself fails; a storage failure leaves the family intact and reports
+// unavailability instead.
+func revokeForReuse(ctx context.Context, tx *sql.Tx, credential model.IdentityCredentials, now time.Time) error {
+	if err := revokeFamilyCredentials(ctx, tx, credential.FamilyID, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return ErrRefreshReuse
+}
+
 // newBundle issues three independent credentials with the adopted lifetimes.
 func newBundle(accountID, senderID string, issuedAt time.Time) Bundle {
 	return Bundle{
@@ -128,6 +256,11 @@ func isOutcome(err error) bool {
 		ErrSenderNotFound,
 		ErrSenderRevoked,
 		ErrCredentialInvalid,
+		ErrCredentialExpired,
+		ErrCredentialRevoked,
+		ErrRefreshReuse,
+		ErrOperationSuperseded,
+		ErrAttemptUnsupported,
 	} {
 		if errors.Is(err, outcome) {
 			return true

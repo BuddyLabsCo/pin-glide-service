@@ -109,6 +109,64 @@ components:
         - code
         - requestId
       type: object
+    RefreshBundle:
+      additionalProperties: false
+      properties:
+        accountId:
+          description: Internal Account identifier that owns this Sender
+          type: string
+        attempt:
+          description: Attempt number this renewal committed
+          format: int64
+          type: integer
+        operationId:
+          description: Operation identifier this renewal committed
+          type: string
+        refresh:
+          $ref: "#/components/schemas/IssuedCredential"
+          description: Renewal credential with a sliding seven-day lifetime
+        senderId:
+          description: Sender registration ID (deviceId); save it to restore this installation
+          type: string
+        uploader:
+          $ref: "#/components/schemas/IssuedCredential"
+          description: Upload and model-credential access, valid for three hours
+        userSession:
+          $ref: "#/components/schemas/IssuedCredential"
+          description: Management credential, valid for three hours
+      required:
+        - operationId
+        - attempt
+        - accountId
+        - senderId
+        - userSession
+        - uploader
+        - refresh
+      type: object
+    RefreshRequest:
+      additionalProperties: false
+      properties:
+        attempt:
+          description: 0 for the original request, 1 for its one permitted retransmission
+          format: int64
+          maximum: 1
+          minimum: 0
+          type: integer
+        operationId:
+          description: Client-generated identifier of one renewal operation, reused by that operation's retransmission
+          maxLength: 128
+          minLength: 1
+          type: string
+        refreshToken:
+          description: Current renewal credential F; the client persists its operation state before sending it, and it never travels in a URL
+          maxLength: 512
+          minLength: 1
+          type: string
+      required:
+        - refreshToken
+        - operationId
+        - attempt
+      type: object
     WeChatLoginRequest:
       additionalProperties: false
       properties:
@@ -157,6 +215,63 @@ paths:
       summary: Report sanitized service health
       tags:
         - system
+  /v1/auth/refresh:
+    post:
+      description: Rotates the Sender's userSession, uploader and refresh credentials through one operation ID and its attempt number. The client persists that operation ID with the current bundle before it sends it, keeps one single-flight renewal at a time, stores a returned bundle atomically in secure storage, and discards a response that belongs to an inactive local login or logout generation. Attempt 0 is the original request and attempt 1 its one permitted retransmission of an uncertain outcome; either can commit first, and the service never replays a lost response. A recorded attempt equal to or higher than the submitted one reports 409 operation_superseded without issuing or revoking anything. A higher attempt of the recorded operation recovers one lost response only while the consumed token is that operation's recorded predecessor, inside a 30-second overlap and before that token's original expiry, and receives a freshly minted bundle. Any other use of a consumed token reports 401 refresh_reuse_detected and revokes only that Sender's family, so unknown or expired tokens never revoke anything. Existing userSession and uploader tokens keep their original expiry during ordinary rotation. Raw credentials appear only in this response, which is never cacheable.
+      operationId: PostAuthRefresh
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshBundle"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security: []
+      summary: Rotate the Sender credential bundle
+      tags:
+        - identity
   /v1/auth/wechat:
     post:
       description: Verifies a fresh WeChat authorization code, maps it to its Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Failures report 401 wechat_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.

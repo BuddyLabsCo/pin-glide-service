@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -213,6 +214,13 @@ type Service struct {
 // boundary of that service.
 func StartService(t *testing.T, databaseURL string, provider identity.Provider) *Service {
 	t.Helper()
+	return StartServiceLogging(t, databaseURL, provider, observability.NewLogger(os.Stderr, "integration"))
+}
+
+// StartServiceLogging composes the service like StartService with the supplied
+// logger, so a test can assert what reaches service diagnostics.
+func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Provider, logger *slog.Logger) *Service {
+	t.Helper()
 	requireDisposableDatabase(t, databaseURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -232,7 +240,7 @@ func StartService(t *testing.T, databaseURL string, provider identity.Provider) 
 	go func() {
 		served <- api.Serve(ctx, listener, api.Dependencies{
 			Database: pool,
-			Logger:   observability.NewLogger(os.Stderr, "integration"),
+			Logger:   logger,
 			WeChat:   provider,
 		})
 	}()

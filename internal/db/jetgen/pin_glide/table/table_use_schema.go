@@ -12,5 +12,6 @@ package table
 func UseSchema(schema string) {
 	IdentityAccounts = IdentityAccounts.FromSchema(schema)
 	IdentityCredentials = IdentityCredentials.FromSchema(schema)
+	IdentityRefreshOperations = IdentityRefreshOperations.FromSchema(schema)
 	IdentitySenderRegistrations = IdentitySenderRegistrations.FromSchema(schema)
 }

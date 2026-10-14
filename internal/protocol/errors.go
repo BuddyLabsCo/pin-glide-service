@@ -24,6 +24,20 @@ const (
 	// DeviceRegistrationRevoked marks an owned Sender registration that
 	// security revocation closed permanently.
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
+	// CredentialInvalid marks a supplied credential that is unknown or that
+	// does not authorize the requested operation.
+	CredentialInvalid ErrorCode = "credential_invalid"
+	// CredentialExpired marks a supplied credential whose expiry has passed.
+	CredentialExpired ErrorCode = "credential_expired"
+	// CredentialRevoked marks a supplied credential or its credential family
+	// as revoked.
+	CredentialRevoked ErrorCode = "credential_revoked"
+	// RefreshReuseDetected marks confirmed reuse of an already consumed
+	// renewal credential; the family it belonged to has been revoked.
+	RefreshReuseDetected ErrorCode = "refresh_reuse_detected"
+	// OperationSuperseded marks an attempt at or below the attempt another
+	// request already committed for the same operation.
+	OperationSuperseded ErrorCode = "operation_superseded"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.

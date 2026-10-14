@@ -87,6 +87,31 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Device registration revoked",
 		detail: "This Sender registration was permanently security-revoked and cannot be restored.",
 	},
+	protocol.CredentialInvalid: {
+		status: http.StatusUnauthorized,
+		title:  "Credential invalid",
+		detail: "The supplied credential does not authorize this operation.",
+	},
+	protocol.CredentialExpired: {
+		status: http.StatusUnauthorized,
+		title:  "Credential expired",
+		detail: "The supplied credential has expired.",
+	},
+	protocol.CredentialRevoked: {
+		status: http.StatusUnauthorized,
+		title:  "Credential revoked",
+		detail: "The supplied credential has been revoked.",
+	},
+	protocol.RefreshReuseDetected: {
+		status: http.StatusUnauthorized,
+		title:  "Refresh reuse detected",
+		detail: "The renewal credential was already consumed, so its credential family was revoked.",
+	},
+	protocol.OperationSuperseded: {
+		status: http.StatusConflict,
+		title:  "Operation superseded",
+		detail: "A recorded attempt of this operation is equal to or higher than the submitted attempt.",
+	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,
 		title:  "Service unavailable",
@@ -189,6 +214,12 @@ var businessOutcomes = []struct {
 	{identity.ErrIdentityProvider, protocol.IdentityProviderError},
 	{identity.ErrSenderNotFound, protocol.ResourceNotFound},
 	{identity.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
+	{identity.ErrCredentialInvalid, protocol.CredentialInvalid},
+	{identity.ErrCredentialExpired, protocol.CredentialExpired},
+	{identity.ErrCredentialRevoked, protocol.CredentialRevoked},
+	{identity.ErrRefreshReuse, protocol.RefreshReuseDetected},
+	{identity.ErrOperationSuperseded, protocol.OperationSuperseded},
+	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
 }
 
@@ -205,6 +236,8 @@ func codeForStatus(status int) protocol.ErrorCode {
 		return protocol.InvalidRequest
 	case http.StatusNotFound:
 		return protocol.ResourceNotFound
+	case http.StatusUnauthorized:
+		return protocol.CredentialInvalid
 	case http.StatusMethodNotAllowed:
 		return protocol.MethodNotAllowed
 	case http.StatusUnprocessableEntity:
