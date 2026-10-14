@@ -182,23 +182,6 @@ func (e *environment) createRecovery(t *testing.T, receiverID string) (sessionVi
 	return created.Session, created.PairingToken
 }
 
-// insertSenderSession writes the session row that add_sender creation will
-// write once Receiver credential issuance exists, so the replacement path of an
-// already associated Receiver is reachable before that slice lands.
-// shortcut: the fixture restates insertSession's row shape, so replace it with
-// the real add_sender create path when that slice lands.
-func (e *environment) insertSenderSession(t *testing.T, receiverID string) string {
-	t.Helper()
-
-	const sessionID = "session-add-sender-fixture"
-	// token_digest is unique per session; nothing holds this value.
-	e.exec(t, `INSERT INTO pin_glide.pairing_sessions
-			(id, mode, receiver_id, state, token_digest, expires_at)
-		VALUES ($1, 'add_sender', $2, 'awaiting_authorization', $3, now() + interval '5 minutes')`,
-		sessionID, receiverID, strings.Repeat("a", 64))
-	return sessionID
-}
-
 // authorize claims one session for a Sender and returns the resulting view.
 func (e *environment) authorize(t *testing.T, sessionID, alias, credential string) (int, sessionView, []byte) {
 	t.Helper()

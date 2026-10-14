@@ -15,37 +15,6 @@ import (
 	"github.com/go-jet/jet/v2/qrm"
 )
 
-// The capacity decision and the reservation must not interleave with another
-// authorization for the same Sender, so every claim serializes on this
-// transaction-scoped advisory lock before it counts and inserts. The lock is
-// keyed by the Sender ID and released when the transaction ends.
-const lockSenderSQL = `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`
-
-// capacitySQL counts the distinct Receivers one Sender already holds with an
-// active association or a live pending reservation, which includes one both
-// clients have confirmed but not yet activated. A re-pairing of an existing
-// Receiver counts once, so it can never consume a second slot, and a
-// reservation whose session lapsed releases its slot without any cleanup work.
-const capacitySQL = `
-SELECT count(DISTINCT pairings.receiver_id)
-FROM pin_glide.pairing_pairings AS pairings
-WHERE pairings.sender_id = $1
-  AND (
-    pairings.state = 'active'
-    OR (
-      pairings.state = 'pending'
-      AND EXISTS (
-        SELECT 1
-        FROM pin_glide.pairing_sessions AS sessions
-        WHERE sessions.pending_pairing_id = pairings.id
-          AND sessions.state IN (
-            'awaiting_authorization', 'awaiting_confirmation', 'credential_ready'
-          )
-          AND sessions.expires_at > now()
-      )
-    )
-  )`
-
 // insertSession persists one created session. A recovery session has no
 // pending Pairing ID, which the table's check constraint also enforces.
 func insertSession(ctx context.Context, tx *sql.Tx, session sessionInfo) error {
@@ -87,32 +56,6 @@ WHERE id = $1`, sessionID, confirmedAt)
 	return err
 }
 
-// activatePairing commits the reservation both clients confirmed. The row is
-// matched by its session-owned identity, so activation cannot touch another
-// association. A row that is already active stays active with its original
-// activation time.
-func activatePairing(ctx context.Context, tx *sql.Tx, session Session, activatedAt time.Time) error {
-	result, err := tx.ExecContext(ctx, `
-UPDATE pin_glide.pairing_pairings
-SET state = 'active', activated_at = COALESCE(activated_at, $2)
-WHERE id = $1
-  AND sender_id = $3
-  AND receiver_id = $4
-  AND state IN ('pending', 'active')`,
-		session.PendingPairingID, activatedAt, session.AuthorizedSenderID, session.ReceiverID)
-	if err != nil {
-		return err
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if updated != 1 {
-		return errors.New("the session's reserved Pairing disappeared before activation")
-	}
-	return nil
-}
-
 // setSessionState moves one session to its next lifecycle state.
 func setSessionState(ctx context.Context, tx *sql.Tx, sessionID string, state SessionState) error {
 	_, err := tx.ExecContext(ctx, `
@@ -120,36 +63,6 @@ UPDATE pin_glide.pairing_sessions
 SET state = $2::pin_glide.pairing_session_state
 WHERE id = $1`, sessionID, string(state))
 	return err
-}
-
-// insertPendingPairing reserves one Pairing ID for a session that will
-// establish or replace an association. The row holds binding capacity from
-// here until it activates, or until a cancellation or expiry releases it.
-func insertPendingPairing(ctx context.Context, tx *sql.Tx, pairingID, senderID, receiverID string, createdAt time.Time) error {
-	_, err := table.PairingPairings.
-		INSERT(
-			table.PairingPairings.ID,
-			table.PairingPairings.SenderID,
-			table.PairingPairings.ReceiverID,
-			table.PairingPairings.State,
-			table.PairingPairings.CreatedAt,
-		).
-		VALUES(pairingID, senderID, receiverID, string(AssociationPending), createdAt).
-		ExecContext(ctx, tx)
-	return err
-}
-
-// lockSender serializes every capacity decision of one Sender.
-func lockSender(ctx context.Context, tx *sql.Tx, senderID string) error {
-	_, err := tx.ExecContext(ctx, lockSenderSQL, senderID)
-	return err
-}
-
-// countReceivers returns how many distinct Receivers the Sender holds.
-func countReceivers(ctx context.Context, tx *sql.Tx, senderID string) (int, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, capacitySQL, senderID).Scan(&count)
-	return count, err
 }
 
 // claimedSender returns the Sender that claimed a session, or an empty string
@@ -168,25 +81,6 @@ func claimedSender(ctx context.Context, tx *sql.Tx, sessionID string) (string, e
 		return "", err
 	}
 	return *row.AuthorizedSenderID, nil
-}
-
-// currentPairing returns the Sender's live association with one Receiver,
-// whether it is already active or still a pending reservation. Its owner
-// reuses that Pairing ID instead of reserving a second row, so a replacement
-// of an existing Receiver can never consume another capacity slot.
-func currentPairing(ctx context.Context, tx *sql.Tx, senderID, receiverID string) (string, error) {
-	var row model.PairingPairings
-	err := table.PairingPairings.
-		SELECT(table.PairingPairings.ID).
-		FROM(table.PairingPairings).
-		WHERE(table.PairingPairings.SenderID.EQ(postgres.String(senderID)).
-			AND(table.PairingPairings.ReceiverID.EQ(postgres.String(receiverID))).
-			AND(table.PairingPairings.State.IN(enum.PairingState.Pending, enum.PairingState.Active))).
-		QueryContext(ctx, tx, &row)
-	if errors.Is(err, qrm.ErrNoRows) {
-		return "", nil
-	}
-	return row.ID, err
 }
 
 // claimSession records the first successful claim of a session. The update is
@@ -215,21 +109,11 @@ func reservePairing(ctx context.Context, tx *sql.Tx, sessionID, pairingID string
 	return err
 }
 
-// setAlias stores the owning Sender's own label for a pairing. The Sender must
-// already own the row, so one Sender cannot rename another's association.
-func setAlias(ctx context.Context, tx *sql.Tx, pairingID, alias string) error {
-	_, err := table.PairingPairings.
-		UPDATE(table.PairingPairings.Alias_).
-		SET(postgres.String(alias)).
-		WHERE(table.PairingPairings.ID.EQ(postgres.String(pairingID))).
-		ExecContext(ctx, tx)
-	return err
-}
-
-// cancelSession closes a session that may still continue and releases the
-// reservation it held. Deleting the reservation row is what frees the slot,
-// which is why it happens before the session records its closure.
-func cancelSession(ctx context.Context, tx *sql.Tx, session Session, now time.Time) error {
+// closeSession releases the reservation a session still holds and records its
+// terminal state. Releasing deletes only the pending association the session
+// reserved, so the working association a canceled or superseded replacement
+// expected to replace keeps forwarding.
+func closeSession(ctx context.Context, tx *sql.Tx, session Session, state SessionState, now time.Time) error {
 	if session.PendingPairingID != "" {
 		if _, err := table.PairingPairings.
 			DELETE().
@@ -241,7 +125,7 @@ func cancelSession(ctx context.Context, tx *sql.Tx, session Session, now time.Ti
 	}
 	_, err := table.PairingSessions.
 		UPDATE(table.PairingSessions.State, table.PairingSessions.ClosedAt).
-		SET(enum.PairingSessionState.Canceled, postgres.TimestampzT(now)).
+		SET(postgres.NewEnumValue(string(state)), postgres.TimestampzT(now)).
 		WHERE(table.PairingSessions.ID.EQ(postgres.String(session.ID))).
 		ExecContext(ctx, tx)
 	return err

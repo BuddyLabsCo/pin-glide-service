@@ -74,16 +74,27 @@ func (e *environment) activate(t *testing.T, sessionID, senderToken, receiverTok
 	return view
 }
 
+// claimNewReceiver creates one new_receiver session, claims it for the Sender
+// under the given alias, and returns the claimed view with the session's
+// restricted credential.
+func (e *environment) claimNewReceiver(t *testing.T, sender bundle, alias string) (sessionView, string) {
+	t.Helper()
+
+	created, token := e.createSession(t, "new_receiver", "", "")
+	status, claimed, payload := e.authorize(t, created.SessionID, alias, sender.UserSession.Token)
+	if status != http.StatusOK {
+		t.Fatalf("claim status = %d: %s", status, payload)
+	}
+	return claimed, token
+}
+
 // readySession drives a new_receiver session to credential_ready and returns
 // its created view, restricted credential and claiming Sender.
 func (e *environment) readySession(t *testing.T, sender bundle) (sessionView, string) {
 	t.Helper()
 
-	created, token := e.createSession(t, "new_receiver", "", "")
-	if status, _, payload := e.authorize(t, created.SessionID, "", sender.UserSession.Token); status != http.StatusOK {
-		t.Fatalf("claim status = %d: %s", status, payload)
-	}
-	ready := e.activate(t, created.SessionID, sender.UserSession.Token, token)
+	claimed, token := e.claimNewReceiver(t, sender, "")
+	ready := e.activate(t, claimed.SessionID, sender.UserSession.Token, token)
 	if ready.State != "credential_ready" {
 		t.Fatalf("activated session = %+v, want credential_ready", ready)
 	}
@@ -371,15 +382,7 @@ func TestIssuanceRejectsUnsupportedAttempts(t *testing.T) {
 // pairingState reads one association's stored state.
 func (e *environment) pairingState(t *testing.T, pairingID string) string {
 	t.Helper()
-	if pairingID == "" {
-		t.Fatal("the session allocated no Pairing ID")
-	}
-	var state string
-	if err := e.pool.QueryRow(
-		`SELECT state FROM pin_glide.pairing_pairings WHERE id = $1`, pairingID).Scan(&state); err != nil {
-		t.Fatalf("read pairing state: %v", err)
-	}
-	return state
+	return e.associationOf(t, pairingID).state
 }
 
 // sessionState reads one session's stored state.

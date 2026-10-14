@@ -64,6 +64,17 @@ channels:
       supersedes or closes ends its live connections. Redemption of the
       credential itself is an HTTPS operation, so the restricted credential
       never travels over this channel twice.
+
+      The Pairing ID a session publishes on its first claim is the identity
+      both participants store their provisional key under, and neither selects
+      it for forwarding before the session reports the activation of both
+      confirmations: credential_ready for a new Receiver, completed for an
+      added Sender. Re-pairing reserves a Pairing ID of its own next to the
+      Sender's current association, which keeps forwarding under its own alias
+      until both reports commit the replacement and retire only that
+      association. A replacement whose expected association already changed
+      fails with operation_superseded and preserves the association that is
+      current instead.
     parameters:
       id:
         description: Pairing Session identifier the QR references.

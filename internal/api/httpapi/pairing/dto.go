@@ -12,12 +12,14 @@ import (
 const TagPairing = "pairing"
 
 // CreateRequest is the accepted POST /v1/pairing-sessions body. The mode fixes
-// the session's purpose; receiverId is present exactly for the mode that acts
-// on an existing Receiver. Creation itself carries no credential, so the
-// Receiver side holds only the restricted token it receives here.
+// the session's purpose; receiverId is present exactly for the modes that act
+// on an existing Receiver. new_receiver and recover_receiver creation carry no
+// credential, so the Receiver side holds only the restricted token it receives
+// here; add_sender creation presents the credential that Receiver already
+// holds.
 type CreateRequest struct {
-	Mode       string `json:"mode" required:"true" enum:"new_receiver,recover_receiver" doc:"Fixed session mode: new_receiver allocates a Receiver, recover_receiver replaces a lost Receiver credential"`
-	ReceiverID string `json:"receiverId,omitempty" maxLength:"128" doc:"Existing Receiver for recover_receiver; omit it for new_receiver"`
+	Mode       string `json:"mode" required:"true" enum:"new_receiver,add_sender,recover_receiver" doc:"Fixed session mode: new_receiver allocates a Receiver, add_sender attaches one more Sender to an existing Receiver, recover_receiver replaces a lost Receiver credential"`
+	ReceiverID string `json:"receiverId,omitempty" maxLength:"128" doc:"Existing Receiver for add_sender and recover_receiver; omit it for new_receiver"`
 }
 
 // AuthorizeRequest is the accepted POST
