@@ -17,7 +17,9 @@ import (
 // answers, sanitized unavailability once it stops, and shuts down cleanly.
 func TestHealthReflectsPostgreSQLAvailability(t *testing.T) {
 	postgres := harness.StartPostgres(t)
-	service := harness.StartService(t, postgres.DSN)
+	// Health does not exercise the WeChat boundary, so this service is
+	// composed without a provider.
+	service := harness.StartService(t, postgres.DSN, nil)
 
 	assertHealth(t, service, http.StatusOK, "ok")
 

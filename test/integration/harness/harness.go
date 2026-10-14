@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 )
 
@@ -46,12 +48,11 @@ func postgresImage(t *testing.T) string {
 	t.Helper()
 
 	postgresImageOnce.Do(func() {
-		_, source, _, ok := runtime.Caller(0)
+		root, ok := repositoryRoot()
 		if !ok {
 			postgresImageErr = errors.New("cannot locate the repository root")
 			return
 		}
-		root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", ".."))
 		command := exec.Command("bash", filepath.Join(root, "scripts", "db", "postgres-image.sh"))
 		command.Stderr = os.Stderr
 		output, err := command.Output()
@@ -65,6 +66,15 @@ func postgresImage(t *testing.T) string {
 		t.Fatal(postgresImageErr)
 	}
 	return postgresImageRef
+}
+
+// repositoryRoot returns the checkout root this harness file lives in.
+func repositoryRoot() (string, bool) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", false
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..")), true
 }
 
 // Postgres is a disposable PostgreSQL instance owned by one test.
@@ -120,6 +130,70 @@ func (p *Postgres) Stop() error {
 	return nil
 }
 
+// ApplySchema loads one desired schema from db/schema/<target> with the pinned
+// psqldef the release process uses, so composed tests run against the shipped
+// structure instead of test-only objects.
+func (p *Postgres) ApplySchema(t *testing.T, target string) {
+	t.Helper()
+
+	root, ok := repositoryRoot()
+	if !ok {
+		t.Fatal("cannot locate the repository root")
+	}
+
+	var files []string
+	err := filepath.WalkDir(filepath.Join(root, "db", "schema", target),
+		func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() && strings.HasSuffix(path, ".sql") {
+				files = append(files, path)
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("locate the %s desired schema: %v", target, err)
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		t.Fatalf("the %s desired schema is empty", target)
+	}
+
+	var desired strings.Builder
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read schema file %s: %v", file, err)
+		}
+		desired.Write(body)
+		desired.WriteString("\n")
+	}
+
+	// psqldef orders the desired statements, which is what the release image
+	// relies on: filename order would create a foreign key before the table it
+	// references.
+	config := filepath.Join(t.TempDir(), "psqldef.yml")
+	if err := os.WriteFile(config, []byte("target_schema: "+target+"\n"), 0o600); err != nil {
+		t.Fatalf("write psqldef configuration: %v", err)
+	}
+	database, err := url.Parse(p.DSN)
+	if err != nil {
+		t.Fatalf("parse the disposable database URL: %v", err)
+	}
+	password, _ := database.User.Password()
+
+	command := exec.Command("go", "tool", "psqldef",
+		"-h", database.Hostname(), "-p", database.Port(), "-U", database.User.Username(),
+		strings.TrimPrefix(database.Path, "/"), "--config", config, "--apply")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PGPASSWORD="+password)
+	command.Stdin = strings.NewReader(desired.String())
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("apply the %s desired schema: %v: %s", target, err, output)
+	}
+}
+
 // Service is the composed service running on a real loopback HTTP listener.
 type Service struct {
 	BaseURL string
@@ -135,8 +209,9 @@ type Service struct {
 // StartService composes the service against databaseURL, starts it on a real
 // listener and returns once health answers. Tests cannot select a shared or
 // production database or origin: the harness only starts disposable loopback
-// databases and binds one loopback port.
-func StartService(t *testing.T, databaseURL string) *Service {
+// databases and binds one loopback port. provider is the faked external WeChat
+// boundary of that service.
+func StartService(t *testing.T, databaseURL string, provider identity.Provider) *Service {
 	t.Helper()
 	requireDisposableDatabase(t, databaseURL)
 
@@ -158,6 +233,7 @@ func StartService(t *testing.T, databaseURL string) *Service {
 		served <- api.Serve(ctx, listener, api.Dependencies{
 			Database: pool,
 			Logger:   observability.NewLogger(os.Stderr, "integration"),
+			WeChat:   provider,
 		})
 	}()
 

@@ -196,7 +196,7 @@ func newFailureTestServer(t *testing.T) (*httptest.Server, huma.API) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
-	api := newAPI(mux, nil, logger)
+	api := newAPI(mux, Dependencies{Logger: logger})
 	huma.Register(api, huma.Operation{
 		OperationID: "TestEcho",
 		Method:      http.MethodPost,

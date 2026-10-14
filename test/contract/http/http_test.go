@@ -4,7 +4,11 @@ package http_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,6 +21,9 @@ import (
 // verbs followed by the resource it acts on, so a generated client method name
 // is stable and readable.
 var verbResource = regexp.MustCompile(`^(Get|Post|Put|Patch|Delete)[A-Z][A-Za-z0-9]*$`)
+
+// fixtureDir holds the shared HTTP contract fixtures, relative to this package.
+const fixtureDir = "../../fixtures/contract/http"
 
 // The published description must describe every implemented route with a
 // stable operation identifier, exactly one domain tag, an explicit
@@ -145,4 +152,175 @@ func published(t *testing.T) map[string]any {
 		t.Fatalf("decode HTTP description: %v: %s", err, buffer.String())
 	}
 	return description
+}
+
+// loginFixture is the accepted v1 compatibility contract of the WeChat login
+// operation. The published description and the composed service are both
+// checked against this one file, so a client-visible rename cannot pass one
+// check and fail the other.
+type loginFixture struct {
+	OperationID string `json:"operationId"`
+	Path        string `json:"path"`
+	Method      string `json:"method"`
+	Request     struct {
+		Schema     string   `json:"schema"`
+		Required   []string `json:"required"`
+		Properties []string `json:"properties"`
+	} `json:"request"`
+	Success struct {
+		Schema   string   `json:"schema"`
+		Status   string   `json:"status"`
+		Required []string `json:"required"`
+	} `json:"success"`
+	Credential struct {
+		Schema   string   `json:"schema"`
+		Required []string `json:"required"`
+	} `json:"credential"`
+	Errors map[string]string `json:"errors"`
+}
+
+// The published description must keep describing exactly the accepted login
+// contract: the documented request fields, success payload, credential payload
+// and every failure status a released v1 client handles.
+func TestPublishedHTTPDescriptionKeepsTheWeChatLoginContract(t *testing.T) {
+	fixture := readFixture(t)
+	description := published(t)
+	operation := operationOf(t, description, fixture)
+
+	requestBody := operation["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)
+	requestName, request := schemaOf(t, description, requestBody["schema"])
+	if requestName != fixture.Request.Schema {
+		t.Errorf("request schema = %q, want %q", requestName, fixture.Request.Schema)
+	}
+	if required := requiredFields(t, request); !slices.Equal(required, fixture.Request.Required) {
+		t.Errorf("request required fields = %v, want %v", required, fixture.Request.Required)
+	}
+	if properties := propertyFields(t, request); !slices.Equal(properties, fixture.Request.Properties) {
+		t.Errorf("request fields = %v, want %v", properties, fixture.Request.Properties)
+	}
+
+	responses := operation["responses"].(map[string]any)
+	success := responses[fixture.Success.Status].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)
+	successName, successSchema := schemaOf(t, description, success["schema"])
+	if successName != fixture.Success.Schema {
+		t.Errorf("success schema = %q, want %q", successName, fixture.Success.Schema)
+	}
+	if required := requiredFields(t, successSchema); !slices.Equal(required, fixture.Success.Required) {
+		t.Errorf("success required fields = %v, want %v", required, fixture.Success.Required)
+	}
+
+	credentialName, credential := schemaOf(t, description, successSchema["properties"].(map[string]any)["userSession"])
+	if credentialName != fixture.Credential.Schema {
+		t.Errorf("credential schema = %q, want %q", credentialName, fixture.Credential.Schema)
+	}
+	if required := requiredFields(t, credential); !slices.Equal(required, fixture.Credential.Required) {
+		t.Errorf("credential required fields = %v, want %v", required, fixture.Credential.Required)
+	}
+
+	publishedErrors := map[string]bool{}
+	for status := range responses {
+		if !strings.HasPrefix(status, "2") {
+			publishedErrors[status] = true
+		}
+	}
+	for status := range fixture.Errors {
+		if !publishedErrors[status] {
+			t.Errorf("published description does not document failure status %s", status)
+		}
+	}
+	for status := range publishedErrors {
+		if _, accepted := fixture.Errors[status]; !accepted {
+			t.Errorf("published failure status %s is not part of the accepted fixture", status)
+		}
+	}
+}
+
+// operationOf returns the published operation the fixture describes.
+func operationOf(t *testing.T, description map[string]any, fixture loginFixture) map[string]any {
+	t.Helper()
+
+	paths, ok := description["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("published description has no paths: %v", description)
+	}
+	path, ok := paths[fixture.Path].(map[string]any)
+	if !ok {
+		t.Fatalf("published description does not serve %s: %v", fixture.Path, paths)
+	}
+	operation, ok := path[fixture.Method].(map[string]any)
+	if !ok {
+		t.Fatalf("published description does not serve %s %s: %v", fixture.Method, fixture.Path, path)
+	}
+	if id, _ := operation["operationId"].(string); id != fixture.OperationID {
+		t.Fatalf("operation %s %s has identifier %q, want %q", fixture.Method, fixture.Path, id, fixture.OperationID)
+	}
+	return operation
+}
+
+// schemaOf resolves a schema reference to the schema name and definition the
+// published description embeds.
+func schemaOf(t *testing.T, description map[string]any, value any) (string, map[string]any) {
+	t.Helper()
+
+	schema, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("schema value %v is not a schema", value)
+	}
+	ref, _ := schema["$ref"].(string)
+	name, shared := strings.CutPrefix(ref, protocol.SchemaPrefix)
+	if !shared {
+		t.Fatalf("schema %v is not a shared component reference", schema)
+	}
+	resolved, ok := description["components"].(map[string]any)["schemas"].(map[string]any)[name].(map[string]any)
+	if !ok {
+		t.Fatalf("published description does not embed schema %q", name)
+	}
+	return name, resolved
+}
+
+// requiredFields returns the sorted required fields of a schema.
+func requiredFields(t *testing.T, schema map[string]any) []string {
+	t.Helper()
+
+	values, _ := schema["required"].([]any)
+	fields := make([]string, 0, len(values))
+	for _, value := range values {
+		field, ok := value.(string)
+		if !ok {
+			t.Fatalf("required entry %v is not a field name", value)
+		}
+		fields = append(fields, field)
+	}
+	slices.Sort(fields)
+	return fields
+}
+
+// propertyFields returns the sorted property names of a schema.
+func propertyFields(t *testing.T, schema map[string]any) []string {
+	t.Helper()
+
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema %v has no properties", schema)
+	}
+	fields := make([]string, 0, len(properties))
+	for field := range properties {
+		fields = append(fields, field)
+	}
+	slices.Sort(fields)
+	return fields
+}
+
+func readFixture(t *testing.T) loginFixture {
+	t.Helper()
+
+	contents, err := os.ReadFile(filepath.Join(fixtureDir, "wechat_login_v1.json"))
+	if err != nil {
+		t.Fatalf("read login fixture: %v", err)
+	}
+	fixture := loginFixture{}
+	if err := json.Unmarshal(contents, &fixture); err != nil {
+		t.Fatalf("decode login fixture: %v", err)
+	}
+	return fixture
 }

@@ -130,7 +130,7 @@ function makeInstall(name, config) {
   const install = { dir, project: name, config: { ...structuredClone(config), name } };
   installations.push(install);
   fs.copyFileSync(path.join(root, 'install.sh'), path.join(dir, 'install.sh'));
-  write(path.join(dir, '.env'), `# Complete backup sentinel\nCOMPOSE_PROJECT_NAME=${name}\nRELEASE=63.0.0\nPOSTGRES_USER=pin_glide\nPOSTGRES_PASSWORD=isolated-smoke-only\n`);
+  write(path.join(dir, '.env'), `# Complete backup sentinel\nCOMPOSE_PROJECT_NAME=${name}\nRELEASE=63.0.0\nPOSTGRES_USER=pin_glide\nPOSTGRES_PASSWORD=isolated-smoke-only\nWECHAT_APP_ID=isolated-smoke-appid\nWECHAT_APP_SECRET=isolated-smoke-appsecret\n`);
   install.config.services.migrate.container_name = `${name}-migrate`;
   saveCompose(install);
   return install;
@@ -144,7 +144,7 @@ try {
   } else {
     // Resolve only repository configuration, with a controlled interpolation environment.
     const sourceEnv = path.join(work, 'source.env');
-    write(sourceEnv, `RELEASE=63.0.0\nCOMPOSE_PROJECT_NAME=${project}\nPOSTGRES_USER=pin_glide\nPOSTGRES_PASSWORD=isolated-smoke-only\n`);
+    write(sourceEnv, `RELEASE=63.0.0\nCOMPOSE_PROJECT_NAME=${project}\nPOSTGRES_USER=pin_glide\nPOSTGRES_PASSWORD=isolated-smoke-only\nWECHAT_APP_ID=isolated-smoke-appid\nWECHAT_APP_SECRET=isolated-smoke-appsecret\n`);
     const source = JSON.parse(run('docker', ['compose', '--env-file', sourceEnv, '-f', path.join(root, 'deploy/compose/docker-compose.yml'), 'config', '--format', 'json']).stdout);
     const config = { services: {}, volumes: { database: {}, registry: {} } };
     for (const service of ['postgres', 'api', 'migrate']) {

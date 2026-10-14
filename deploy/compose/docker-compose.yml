@@ -37,6 +37,10 @@ services:
       PIN_GLIDE_ENV: production
       PIN_GLIDE_API_ADDRESS: :8080
       PIN_GLIDE_DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/pin_glide?sslmode=disable
+      # The approved WeChat mobile application whose verified OpenIDs identify
+      # Accounts. Both values are protected server configuration.
+      PIN_GLIDE_WECHAT_APP_ID: ${WECHAT_APP_ID:?Set WECHAT_APP_ID in .env}
+      PIN_GLIDE_WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:?Set WECHAT_APP_SECRET in .env}
     ports:
       - "8080:8080"
     depends_on:
