@@ -178,7 +178,7 @@ type IssuedCredential struct {
 	Token      string
 }
 
-// ReceiverCredential is the Receiver one presented credential authenticated.
+// ReceiverCredential is the Receiver that a presented credential authenticated.
 type ReceiverCredential struct {
 	ReceiverID string
 }
