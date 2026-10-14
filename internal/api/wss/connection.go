@@ -36,6 +36,13 @@ const (
 	closeInternal
 )
 
+// closeFrame is a queue marker that ends a connection once every frame queued
+// before it has been written, so a final state message is not lost to the
+// close that follows it.
+type closeFrame struct {
+	intent closeIntent
+}
+
 // Connection owns one accepted pairing socket: its write queue, its sequence
 // of frames and the cleanup of its own registration.
 type Connection struct {
@@ -119,6 +126,10 @@ func (c *Connection) write(ctx context.Context) {
 		case <-c.done:
 			return
 		case message := <-c.frames:
+			if closing, ok := message.(closeFrame); ok {
+				c.Close(closing.intent)
+				return
+			}
 			encoded, err := json.Marshal(message)
 			if err != nil {
 				c.logger.ErrorContext(ctx, "encode pairing frame",
@@ -145,6 +156,18 @@ func (c *Connection) Close(intent closeIntent) {
 		code, reason := closeMeaning(intent)
 		_ = c.socket.Close(code, reason)
 	})
+}
+
+// CloseAfterWrite ends the connection once every frame already queued has
+// been written. A queue that cannot take the marker closes immediately instead,
+// so a peer that stopped reading cannot hold the connection open.
+func (c *Connection) CloseAfterWrite(intent closeIntent) {
+	select {
+	case <-c.done:
+	case c.frames <- closeFrame{intent: intent}:
+	default:
+		c.Close(intent)
+	}
 }
 
 // reportFrameError maps one business frame failure to its Close meaning and

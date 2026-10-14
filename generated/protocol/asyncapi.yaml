@@ -3,8 +3,10 @@ asyncapi: 3.1.0
 channels:
   pairingSessionEvents:
     address: /v1/pairing-sessions/{id}/events
-    description: "One Pairing Session's handshake channel. A participant subscribes with\nthe session's restricted credential, or with the management credential of\nthe Sender that claimed it; the service derives the participant side from\nwhichever credential authenticated. It relays opaque handshake bytes to\nthe other participant, sends the session state after subscription and on\nevery change, and reports failures without closing a usable session.\nRelayed bytes are live traffic: the service keeps no history, so a\nreconnect receives the current state and nothing sent before it.\n\nA subscription the service rejects before upgrading is an ordinary HTTP\nproblem detail: 401 credential_missing, credential_invalid or\ncredential_expired, 404 resource_not_found, 410 pairing_session_expired or\npairing_session_closed, or 503 service_unavailable. A credential's own\nvalidity is decided before the protected session state, so an expired\nrestricted credential reports itself while the valid management\ncredential of the session's own Sender reports the expired session.\n\nAfter the upgrade every recoverable failure arrives as an error message\nand the connection stays open. A frame that is not a pairing_relay of this\nversion, an unknown message type and a frame for another session are\nprotocol errors rather than relay traffic, so the service closes with\n1002. Invalid text encoding closes with 1007, a session that may no longer\nrelay closes with 1008, a normal close uses 1000, server shutdown uses\n1001 and an unexpected server failure uses 1011. Close reasons carry a\nshort machine code and never secret data."
+    description: "One Pairing Session's handshake channel. A participant subscribes with\nthe session's restricted credential, or with the management credential of\nthe Sender that claimed it; the service derives the participant side from\nwhichever credential authenticated. It relays opaque handshake bytes to\nthe other participant, sends the session state after subscription and on\nevery change, and reports failures without closing a usable session.\nRelayed bytes are live traffic: the service keeps no history, so a\nreconnect receives the current state and nothing sent before it.\n\nA subscription the service rejects before upgrading is an ordinary HTTP\nproblem detail: 401 credential_missing, credential_invalid or\ncredential_expired, 404 resource_not_found, 410 pairing_session_expired or\npairing_session_closed, or 503 service_unavailable. A credential's own\nvalidity is decided before the protected session state, so an expired\nrestricted credential reports itself while the valid management\ncredential of the session's own Sender reports the expired session.\n\nAfter the upgrade every recoverable failure arrives as an error message\nand the connection stays open. A frame that is not a pairing_relay of this\nversion, an unknown message type and a frame for another session are\nprotocol errors rather than relay traffic, so the service closes with\n1002. Invalid text encoding closes with 1007, a session that may no longer\nrelay closes with 1008, a normal close uses 1000, server shutdown uses\n1001 and an unexpected server failure uses 1011. Close reasons carry a\nshort machine code and never secret data.\n\nOnce both authenticated reports have activated the session's Pairing, the\nchannel no longer relays: a new_receiver session tells only its Receiver\nside that the credential is ready, and a session that completes,\nsupersedes or closes ends its live connections. Redemption of the\ncredential itself is an HTTPS operation, so the restricted credential\nnever travels over this channel twice."
     messages:
+      credentialReady:
+        $ref: "#/components/messages/credentialReady"
       error:
         $ref: "#/components/messages/error"
       pairingRelayIn:
@@ -17,8 +19,23 @@ channels:
       id:
         description: Pairing Session identifier the QR references.
     title: Restricted Pairing Session channel
+  receiverEvents:
+    address: /v1/receiver/events
+    description: "The single long-lived delivery channel of one Receiver, authenticated by\nits Receiver credential on the upgrade request. One Receiver has one\nreserved or active slot: a second handshake with the same credential is\nrejected before the upgrade with HTTP 409 receiver_already_connected and\nnever evicts the connection that already holds the slot. A rejected\nhandshake leaves that connection's presence unchanged.\n\nA successful upgrade commits credential possession: the session whose\ngrant the credential came from completes and its restricted pairing\nchannel closes. Delivery and Receipt messages arrive on this channel with\nlive delivery; until they are published, an application frame is a\nprotocol error and closes with 1002. Invalid text encoding closes with\n1007, a normal close uses 1000, server shutdown uses 1001 and an\nunexpected server failure uses 1011."
+    title: Receiver delivery channel
 components:
   messages:
+    credentialReady:
+      description: |-
+        Sent only to the Receiver side of a new_receiver session once both
+        authenticated reports activated its Pairing. It carries no credential:
+        the Receiver redeems its first Receiver credential over HTTPS with the
+        restricted credential it already holds, and the Sender side never
+        learns that the credential exists.
+      name: credential_ready
+      payload:
+        $ref: "#/components/schemas/CredentialReady"
+      title: The session's Receiver credential can be redeemed
     error:
       description: |-
         A failure that leaves the session usable, so the connection stays open.
@@ -47,6 +64,33 @@ components:
         $ref: "#/components/schemas/PairingState"
       title: Pairing Session state
   schemas:
+    CredentialReady:
+      additionalProperties: false
+      properties:
+        expiresAt:
+          description: Absolute end of the restricted credential's redemption window
+          format: date-time
+          type: string
+        receiverId:
+          description: Receiver the credential belongs to
+          type: string
+        sessionId:
+          description: Pairing Session whose credential is ready
+          type: string
+        type:
+          description: Message type; credential_ready
+          type: string
+        version:
+          description: Application message version; always 1
+          format: int64
+          type: integer
+      required:
+      - version
+      - type
+      - sessionId
+      - receiverId
+      - expiresAt
+      type: object
     PairingRelayIn:
       additionalProperties: false
       properties:
@@ -239,6 +283,7 @@ operations:
     messages:
     - $ref: "#/channels/pairingSessionEvents/messages/pairingState"
     - $ref: "#/channels/pairingSessionEvents/messages/pairingRelayOut"
+    - $ref: "#/channels/pairingSessionEvents/messages/credentialReady"
     - $ref: "#/channels/pairingSessionEvents/messages/error"
     security:
     - $ref: "#/components/securitySchemes/sessionCredential"

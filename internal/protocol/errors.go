@@ -49,6 +49,9 @@ const (
 	FreshIdentityRequired ErrorCode = "fresh_identity_required"
 	// ReceiverLimitReached marks the five-Receiver association limit.
 	ReceiverLimitReached ErrorCode = "receiver_limit_reached"
+	// ReceiverAlreadyConnected marks a Receiver that already holds the one
+	// reserved/active delivery connection.
+	ReceiverAlreadyConnected ErrorCode = "receiver_already_connected"
 	// PairingSessionClaimed marks a session another Sender already claimed.
 	PairingSessionClaimed ErrorCode = "pairing_session_claimed"
 	// PairingSessionExpired marks an authorized caller's expired session.
@@ -58,6 +61,9 @@ const (
 	// PairingNotReady marks a Pairing Session that cannot perform the requested
 	// step yet, for example because the peer participant is not connected.
 	PairingNotReady ErrorCode = "pairing_not_ready"
+	// ModeForbidsCredentialIssue marks an add_sender Pairing Session that may
+	// not enter the Receiver credential issuance path.
+	ModeForbidsCredentialIssue ErrorCode = "mode_forbids_credential_issue"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.

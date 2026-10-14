@@ -20,6 +20,9 @@ type PairingSessions struct {
 	PendingPairingID    *string             // Reserved Pairing ID; NULL for recovery and released sessions.
 	State               PairingSessionState // Current state; expiry and cancellation win over stored progress.
 	TokenDigest         string              // SHA-256 digest of the restricted B credential, never the raw one.
+	IssuanceOperationID *string             // Credential-issuance operation recorded; NULL before redemption.
+	IssuanceAttempt     *int16              // Highest committed attempt; 0 original, 1 retransmission.
+	IssuedGeneration    *int64              // Receiver credential generation handed out by this session.
 	SenderConfirmedAt   *time.Time          // When the Sender side reported key confirmation, if it has.
 	ReceiverConfirmedAt *time.Time          // When the Receiver side reported key confirmation, if it has.
 	CreatedAt           time.Time           // When the session was created.

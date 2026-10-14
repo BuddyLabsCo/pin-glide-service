@@ -56,6 +56,13 @@ channels:
       relay closes with 1008, a normal close uses 1000, server shutdown uses
       1001 and an unexpected server failure uses 1011. Close reasons carry a
       short machine code and never secret data.
+
+      Once both authenticated reports have activated the session's Pairing, the
+      channel no longer relays: a new_receiver session tells only its Receiver
+      side that the credential is ready, and a session that completes,
+      supersedes or closes ends its live connections. Redemption of the
+      credential itself is an HTTPS operation, so the restricted credential
+      never travels over this channel twice.
     parameters:
       id:
         description: Pairing Session identifier the QR references.
@@ -66,8 +73,29 @@ channels:
         $ref: '#/components/messages/pairingRelayIn'
       pairingRelayOut:
         $ref: '#/components/messages/pairingRelayOut'
+      credentialReady:
+        $ref: '#/components/messages/credentialReady'
       error:
         $ref: '#/components/messages/error'
+
+  receiverEvents:
+    address: /v1/receiver/events
+    title: Receiver delivery channel
+    description: |-
+      The single long-lived delivery channel of one Receiver, authenticated by
+      its Receiver credential on the upgrade request. One Receiver has one
+      reserved or active slot: a second handshake with the same credential is
+      rejected before the upgrade with HTTP 409 receiver_already_connected and
+      never evicts the connection that already holds the slot. A rejected
+      handshake leaves that connection's presence unchanged.
+
+      A successful upgrade commits credential possession: the session whose
+      grant the credential came from completes and its restricted pairing
+      channel closes. Delivery and Receipt messages arrive on this channel with
+      live delivery; until they are published, an application frame is a
+      protocol error and closes with 1002. Invalid text encoding closes with
+      1007, a normal close uses 1000, server shutdown uses 1001 and an
+      unexpected server failure uses 1011.
 
 operations:
   acceptPairingHandshake:
@@ -89,6 +117,7 @@ operations:
     messages:
       - $ref: '#/channels/pairingSessionEvents/messages/pairingState'
       - $ref: '#/channels/pairingSessionEvents/messages/pairingRelayOut'
+      - $ref: '#/channels/pairingSessionEvents/messages/credentialReady'
       - $ref: '#/channels/pairingSessionEvents/messages/error'
 
 components:
@@ -118,6 +147,17 @@ components:
       description: The payload is unchanged; the side is derived from authentication.
       payload:
         $ref: '#/components/schemas/PairingRelayOut'
+    credentialReady:
+      name: credential_ready
+      title: The session's Receiver credential can be redeemed
+      description: |-
+        Sent only to the Receiver side of a new_receiver session once both
+        authenticated reports activated its Pairing. It carries no credential:
+        the Receiver redeems its first Receiver credential over HTTPS with the
+        restricted credential it already holds, and the Sender side never
+        learns that the credential exists.
+      payload:
+        $ref: '#/components/schemas/CredentialReady'
     error:
       name: error
       title: Recoverable application error

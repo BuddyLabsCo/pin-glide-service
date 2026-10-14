@@ -47,13 +47,16 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	)
 	socket := wss.NewPairingSocket(pairingService, service.hub, dependencies.Logger)
 	pairingService.SetNotifier(socket)
+	receiverSocket := wss.NewReceiverSocket(pairingService, dependencies.Logger)
+	service.receivers = receiverSocket
 
 	handler, admission := httpapi.New(httpapi.Dependencies{
-		Database:      dependencies.Database,
-		Logger:        dependencies.Logger,
-		Identity:      identityService,
-		Pairing:       pairingService,
-		PairingEvents: socket,
+		Database:       dependencies.Database,
+		Logger:         dependencies.Logger,
+		Identity:       identityService,
+		Pairing:        pairingService,
+		PairingEvents:  socket,
+		ReceiverEvents: receiverSocket,
 	})
 	httpServer := &http.Server{
 		Handler:           handler,
@@ -80,8 +83,9 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 // server is one composed api run: the HTTP server and the live pairing
 // connections that outlive their transport.
 type server struct {
-	hub  *wss.Hub
-	http *http.Server
+	hub       *wss.Hub
+	receivers *wss.ReceiverSocket
+	http      *http.Server
 }
 
 // drain closes admission, stops the server, ends every live pairing
@@ -96,6 +100,8 @@ func (s *server) drain(admission *httpapi.Admission) error {
 	// A pairing connection outlives its transport, so shutdown ends it here
 	// rather than waiting for a reader that would block until it failed.
 	s.hub.Close()
+	// The delivery channel has the same shape, so its connections end here too.
+	s.receivers.Close()
 	// A pairing connection holds its admission until it closes, so this wait
 	// also joins the connections shutdown just ended.
 	admissionErr := admission.Wait(ctx)

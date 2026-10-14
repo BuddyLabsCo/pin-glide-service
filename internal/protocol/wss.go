@@ -1,5 +1,7 @@
 package protocol
 
+import "time"
+
 // WSSVersion is the only application message version the v1 surface accepts.
 const WSSVersion = 1
 
@@ -32,6 +34,17 @@ type PairingState struct {
 	Version int                `json:"version" doc:"Application message version; always 1"`
 	Type    string             `json:"type" doc:"Message type; pairing_state"`
 	Session PairingSessionView `json:"session" doc:"Current Pairing Session view"`
+}
+
+// CredentialReady tells the Receiver side of a new_receiver session that its
+// first Receiver credential can be redeemed. It is sent only to the restricted
+// B subscriber and carries no credential, QR PSK or client key material.
+type CredentialReady struct {
+	Version    int       `json:"version" doc:"Application message version; always 1"`
+	Type       string    `json:"type" doc:"Message type; credential_ready"`
+	SessionID  string    `json:"sessionId" doc:"Pairing Session whose credential is ready"`
+	ReceiverID string    `json:"receiverId" doc:"Receiver the credential belongs to"`
+	ExpiresAt  time.Time `json:"expiresAt" doc:"Absolute end of the restricted credential's redemption window"`
 }
 
 // WSSError is a recoverable application error. The connection stays open

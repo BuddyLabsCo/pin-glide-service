@@ -27,12 +27,37 @@ type AuthorizeRequest struct {
 	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh WeChat authorization; required for recover_receiver"`
 }
 
+// CompleteRequest is the accepted POST /v1/pairing-sessions/{id}/complete
+// body. One report confirms that the authenticated side saved the derived
+// Pairing key and checked its peer's key confirmation; the service never sees
+// or verifies that client key material.
+type CompleteRequest struct {
+	KeyConfirmation string `json:"keyConfirmation" required:"true" enum:"confirmed" doc:"Authenticated confirmation that this side saved the Pairing key and verified its peer's key confirmation"`
+}
+
+// RedeemRequest is the accepted POST
+// /v1/pairing-sessions/{id}/receiver-token body. The operation ID and attempt
+// order the one permitted retransmission of a redemption whose response was
+// lost.
+type RedeemRequest struct {
+	OperationID string `json:"operationId" required:"true" minLength:"1" maxLength:"128" doc:"Credential-issuance operation identifier the client persisted before sending"`
+	Attempt     int    `json:"attempt" required:"true" minimum:"0" maximum:"1" doc:"0 is the original request, 1 the one permitted retransmission of it"`
+}
+
 // CreatedSession is the accepted creation payload. The restricted credential
 // is returned only here and only to the Receiver-side peer.
 type CreatedSession struct {
 	Session               protocol.PairingSessionView `json:"session" doc:"The created Pairing Session"`
 	PairingToken          string                      `json:"pairingToken" doc:"Restricted five-minute Pairing credential; opens the pairing channel for this session and redeems its first Receiver credential"`
 	PairingTokenExpiresAt time.Time                   `json:"pairingTokenExpiresAt" doc:"Absolute expiry of the restricted credential; the session cannot outlive it"`
+}
+
+// IssuedReceiverToken is the accepted redemption payload. The long-lived
+// Receiver credential is returned only here and only to the side that
+// authenticated with the restricted credential.
+type IssuedReceiverToken struct {
+	ReceiverID    string `json:"receiverId" doc:"Receiver the credential belongs to"`
+	ReceiverToken string `json:"receiverToken" doc:"Long-lived Receiver credential; store it securely, it is never returned again"`
 }
 
 type createInput struct {
@@ -50,6 +75,20 @@ type authorizeInput struct {
 
 type sessionOutput struct {
 	Body protocol.PairingSessionView
+}
+
+type completeInput struct {
+	ID   string `path:"id" maxLength:"128" doc:"Pairing Session ID"`
+	Body CompleteRequest
+}
+
+type redeemInput struct {
+	ID   string `path:"id" maxLength:"128" doc:"Pairing Session ID"`
+	Body RedeemRequest
+}
+
+type redeemOutput struct {
+	Body IssuedReceiverToken
 }
 
 type cancelInput struct {

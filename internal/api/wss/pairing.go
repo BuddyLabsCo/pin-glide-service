@@ -101,9 +101,11 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 		if session.AuthorizedSenderID != senderID {
 			return pairing.Resolved{}, pairing.ErrSessionNotFound
 		}
-		// A session that can no longer pair cannot open its channel either.
-		if err := session.TerminalError(now); err != nil {
-			return pairing.Resolved{}, err
+		// A session that completed or closed cannot open its channel either;
+		// one whose Pairing activated but whose credential grant is still
+		// outstanding keeps it for the current view.
+		if session.ClosesChannel(now) {
+			return pairing.Resolved{}, pairing.ErrSessionClosed
 		}
 		return pairing.Resolved{Session: session, Side: pairing.SideSender}, nil
 	} else if !isCredentialOutcome(err) {
@@ -121,9 +123,9 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 		// and the caller cannot confirm another session exists.
 		return pairing.Resolved{}, pairing.ErrCredentialInvalid
 	}
-	// A session that can no longer pair cannot open its channel either.
-	if err := resolved.Session.TerminalError(now); err != nil {
-		return pairing.Resolved{}, err
+	// A session that completed or closed cannot open its channel either.
+	if resolved.Session.ClosesChannel(now) {
+		return pairing.Resolved{}, pairing.ErrSessionClosed
 	}
 	return resolved, nil
 }
@@ -164,15 +166,33 @@ func (s *PairingSocket) relay(ctx context.Context, sender pairing.Resolved, fram
 	return nil
 }
 
-// SessionChanged tells every subscribed participant the session's current state.
-// The domain calls it after a claim or a cancellation, so a connected peer
-// follows the state without polling or replay.
+// SessionChanged tells every subscribed participant the session's current
+// state and applies the two control effects the state carries: the Receiver
+// side alone learns that its credential is ready to redeem, and a session that
+// can no longer pair ends its live channels. The domain calls it after every
+// committed change, so a connected peer follows the state without polling or
+// replay.
 func (s *PairingSocket) SessionChanged(sessionID string, view pairing.View) {
 	s.hub.SendState(sessionID, protocol.PairingState{
 		Version: protocol.WSSVersion,
 		Type:    "pairing_state",
 		Session: wireView(view),
 	})
+
+	switch view.State {
+	case pairing.StateCredentialReady:
+		// Only the restricted B side may redeem the credential, so only it is
+		// told that the grant became redeemable.
+		s.hub.SendTo(sessionID, pairing.SideReceiver, protocol.CredentialReady{
+			Version:    protocol.WSSVersion,
+			Type:       "credential_ready",
+			SessionID:  view.SessionID,
+			ReceiverID: view.ReceiverID,
+			ExpiresAt:  view.ExpiresAt,
+		})
+	case pairing.StateCompleted, pairing.StateCanceled, pairing.StateSuperseded, pairing.StateExpired:
+		s.hub.CloseSession(sessionID)
+	}
 }
 
 // snapshot builds one session state message.

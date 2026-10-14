@@ -150,7 +150,10 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest, now t
 // undoing the association.
 func (s *Service) Cancel(ctx context.Context, sessionID, senderID, token string, now time.Time) error {
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
-		session, err := sessionByID(ctx, tx, sessionID)
+		// The session row is locked before its state is read, so a cancellation
+		// cannot interleave with the completion that activates the session's
+		// association: whichever commits first decides the outcome.
+		session, err := lockedSessionByID(ctx, tx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -462,6 +465,11 @@ func isOutcome(err error) bool {
 		ErrReceiverLimitReached,
 		ErrInvalidMode,
 		ErrReceiverNotOwned,
+		ErrPairingNotReady,
+		ErrModeForbidsCredentialIssue,
+		ErrOperationSuperseded,
+		ErrAttemptUnsupported,
+		ErrIssuanceInvalid,
 		ErrFreshIdentityRequired,
 		ErrWeChatAuthorizationInvalid,
 		ErrIdentityProvider,
