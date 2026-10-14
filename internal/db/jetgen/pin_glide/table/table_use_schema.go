@@ -13,6 +13,7 @@ func UseSchema(schema string) {
 	IdentityAccounts = IdentityAccounts.FromSchema(schema)
 	IdentityCredentials = IdentityCredentials.FromSchema(schema)
 	IdentityReceiverRegistrations = IdentityReceiverRegistrations.FromSchema(schema)
+	IdentityRefreshOperations = IdentityRefreshOperations.FromSchema(schema)
 	IdentitySenderRegistrations = IdentitySenderRegistrations.FromSchema(schema)
 	PairingPairings = PairingPairings.FromSchema(schema)
 	PairingSessions = PairingSessions.FromSchema(schema)

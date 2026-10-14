@@ -1,0 +1,40 @@
+{
+  "operationId": "PostAuthRefresh",
+  "path": "/v1/auth/refresh",
+  "method": "post",
+  "request": {
+    "schema": "RefreshRequest",
+    "required": ["attempt", "operationId", "refreshToken"],
+    "properties": ["attempt", "operationId", "refreshToken"]
+  },
+  "success": {
+    "schema": "RefreshBundle",
+    "status": "200",
+    "required": [
+      "accountId",
+      "attempt",
+      "operationId",
+      "refresh",
+      "senderId",
+      "uploader",
+      "userSession"
+    ]
+  },
+  "credential": {
+    "schema": "IssuedCredential",
+    "required": ["expiresAt", "token"]
+  },
+  "errors": {
+    "400": ["invalid_request"],
+    "401": [
+      "credential_expired",
+      "credential_invalid",
+      "credential_revoked",
+      "refresh_reuse_detected"
+    ],
+    "409": ["operation_mismatch", "operation_superseded"],
+    "422": ["validation_failed"],
+    "500": ["internal_error"],
+    "503": ["service_unavailable"]
+  }
+}

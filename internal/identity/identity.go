@@ -27,6 +27,10 @@ const (
 	// RefreshLifetime is how long an issued F credential stays valid; each
 	// successful renewal slides the window.
 	RefreshLifetime = 7 * 24 * time.Hour
+	// RefreshOverlap is how long the consumed immediate predecessor of one
+	// renewal operation stays eligible for the retransmission of that same
+	// operation. The predecessor's own expiry bounds it as well.
+	RefreshOverlap = 30 * time.Second
 )
 
 // WeChatIdentity is one identity the WeChat provider verified. AppID is the
@@ -51,6 +55,17 @@ type Provider interface {
 type LoginRequest struct {
 	WeChatCode string
 	SenderID   string
+}
+
+// RefreshRequest is one ordered renewal: the token that authorizes it, the
+// operation identifier the client persisted with that token before sending it,
+// and the attempt number of this transmission. Attempt 0 is the original
+// request and attempt 1 is the one permitted retransmission of an uncertain
+// one.
+type RefreshRequest struct {
+	RefreshToken string
+	OperationID  string
+	Attempt      int
 }
 
 // Token is one issued credential and its actual expiry.
@@ -91,9 +106,25 @@ var (
 	// ErrCredentialMissing marks an operation without a usable credential
 	// source; a protected operation requires exactly one.
 	ErrCredentialMissing = errors.New("credential missing")
-	// ErrCredentialExpired marks a credential whose recorded lifetime has
-	// passed; the holder may hold a renewal credential instead.
+	// ErrCredentialExpired marks a credential whose recorded expiry has
+	// passed. An expired credential never revokes anything.
 	ErrCredentialExpired = errors.New("credential expired")
+	// ErrCredentialRevoked marks a credential or credential family that was
+	// revoked, including by an earlier replay detection or logout.
+	ErrCredentialRevoked = errors.New("credential revoked")
+	// ErrRefreshReuse marks confirmed reuse of an already consumed renewal
+	// token; the family that token belongs to has been revoked.
+	ErrRefreshReuse = errors.New("refresh credential reused")
+	// ErrOperationSuperseded marks an attempt equal to or lower than the one
+	// another request already committed for the same operation. It neither
+	// issues credentials nor revokes anything.
+	ErrOperationSuperseded = errors.New("operation superseded")
+	// ErrOperationMismatch marks a higher attempt that claims a recorded
+	// operation without presenting the credential that operation consumed. It
+	// neither issues credentials nor revokes anything.
+	ErrOperationMismatch = errors.New("operation mismatch")
+	// ErrAttemptUnsupported marks an attempt outside the adopted 0/1 protocol.
+	ErrAttemptUnsupported = errors.New("refresh attempt unsupported")
 	// ErrStorageUnavailable marks a required database operation that failed.
 	ErrStorageUnavailable = errors.New("storage unavailable")
 )

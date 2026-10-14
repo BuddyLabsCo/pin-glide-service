@@ -9,18 +9,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
@@ -79,6 +79,13 @@ type loginEnvironment struct {
 // startLogin composes the service against the shipped identity schema.
 func startLogin(t *testing.T) *loginEnvironment {
 	t.Helper()
+	return startLoginWith(t, observability.NewLogger(os.Stderr, "integration"))
+}
+
+// startLoginWith composes the same service with a caller-supplied logger, so a
+// test can assert which values reach service diagnostics.
+func startLoginWith(t *testing.T, logger *slog.Logger) *loginEnvironment {
+	t.Helper()
 
 	postgres := harness.StartPostgres(t)
 	postgres.ApplySchema(t, "pin_glide")
@@ -91,7 +98,7 @@ func startLogin(t *testing.T) *loginEnvironment {
 
 	provider := wechatfake.New()
 	return &loginEnvironment{
-		service:  harness.StartService(t, postgres.DSN, provider),
+		service:  harness.StartServiceLogging(t, postgres.DSN, provider, logger),
 		provider: provider,
 		pool:     pool,
 	}
@@ -100,18 +107,7 @@ func startLogin(t *testing.T) *loginEnvironment {
 // login posts one raw body and returns the status, payload and headers.
 func (e *loginEnvironment) login(t *testing.T, body string) (int, []byte, http.Header) {
 	t.Helper()
-
-	response, err := e.service.Client.Post(e.service.BaseURL+loginPath, "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST %s: %v", loginPath, err)
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	payload, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatalf("read login payload: %v", err)
-	}
-	return response.StatusCode, payload, response.Header
+	return post(t, e, loginPath, body)
 }
 
 // loginOK requires a successful login and checks it against the accepted

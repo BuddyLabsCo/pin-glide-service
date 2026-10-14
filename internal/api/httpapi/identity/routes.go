@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	domain "github.com/BuddyLabsCo/pin-glide-service/internal/identity"
@@ -15,6 +16,13 @@ const TagIdentity = "identity"
 // returns the domain's typed outcome; the shared HTTP error model maps it to
 // the stable business code the published contract defines.
 func Register(api huma.API, service *domain.Service) {
+	registerLogin(api, service)
+	registerRefresh(api, service)
+}
+
+// registerLogin serves the fresh WeChat login that creates or restores one
+// Sender installation.
+func registerLogin(api huma.API, service *domain.Service) {
 	huma.Register(api, huma.Operation{
 		OperationID: "PostAuthWechat",
 		Tags:        []string{TagIdentity},
@@ -46,21 +54,56 @@ func Register(api huma.API, service *domain.Service) {
 		}
 
 		output := &loginOutput{}
-		output.Body = CredentialBundle{
-			AccountID: bundle.AccountID,
-			SenderID:  bundle.SenderID,
-			UserSession: IssuedCredential{
-				Token:     bundle.UserSession.Value,
-				ExpiresAt: bundle.UserSession.ExpiresAt,
-			},
-			Uploader: IssuedCredential{
-				Token:     bundle.Uploader.Value,
-				ExpiresAt: bundle.Uploader.ExpiresAt,
-			},
-			Refresh: IssuedCredential{
-				Token:     bundle.Refresh.Value,
-				ExpiresAt: bundle.Refresh.ExpiresAt,
-			},
+		output.Body = credentialBundle(bundle)
+		return output, nil
+	})
+}
+
+// registerRefresh serves ordered renewal of one Sender's credential family.
+// Its description states the client's adopted renewal contract, because that
+// contract is what the published operation is built around, and states the
+// retransmission window from its domain constant so the published contract
+// cannot advertise a window the service does not enforce.
+func registerRefresh(api huma.API, service *domain.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "PostAuthRefresh",
+		Tags:        []string{TagIdentity},
+		Method:      http.MethodPost,
+		Path:        "/v1/auth/refresh",
+		Summary:     "Rotate the Sender credential bundle",
+		Description: fmt.Sprintf("Rotates the Sender's userSession, uploader and refresh credentials through one operation ID and its attempt number. "+
+			"The client persists that operation ID with the current bundle before it sends it, keeps one single-flight renewal at a time, stores a returned bundle atomically in secure storage, and discards a response that belongs to an inactive local login or logout generation. "+
+			"Attempt 0 is the original request and attempt 1 its one permitted retransmission of an uncertain outcome; either can commit first, and the service never replays a lost response. "+
+			"A recorded attempt equal to or higher than the submitted one reports 409 operation_superseded without issuing or revoking anything. "+
+			"A higher attempt of the recorded operation recovers one lost response only while the consumed token is that operation's recorded predecessor, inside a %g-second overlap and before that token's original expiry, and receives a freshly minted bundle. "+
+			"A higher attempt that presents a credential no operation has consumed is not that operation's retransmission and reports 409 operation_mismatch without issuing or revoking anything. "+
+			"Any other use of a consumed token reports 401 refresh_reuse_detected and revokes only that Sender's family, so unknown or expired tokens never revoke anything. "+
+			"Existing userSession and uploader tokens keep their original expiry during ordinary rotation. Raw credentials appear only in this response, which is never cacheable.", domain.RefreshOverlap.Seconds()),
+		Errors: []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusConflict,
+			http.StatusUnprocessableEntity,
+			http.StatusServiceUnavailable,
+		},
+		// The renewal credential is the authority of this operation, and it
+		// travels in the body rather than in a header or URL.
+		Security: []map[string][]string{},
+	}, func(ctx context.Context, input *refreshInput) (*refreshOutput, error) {
+		rotated, err := service.Refresh(ctx, domain.RefreshRequest{
+			RefreshToken: input.Body.RefreshToken,
+			OperationID:  input.Body.OperationID,
+			Attempt:      input.Body.Attempt,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		output := &refreshOutput{}
+		output.Body = RefreshBundle{
+			CredentialBundle: credentialBundle(rotated),
+			OperationID:      input.Body.OperationID,
+			Attempt:          input.Body.Attempt,
 		}
 		return output, nil
 	})

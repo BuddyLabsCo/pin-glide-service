@@ -96,12 +96,32 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 	protocol.CredentialInvalid: {
 		status: http.StatusUnauthorized,
 		title:  "Credential invalid",
-		detail: "The presented credential is not valid for this operation.",
+		detail: "The supplied credential does not authorize this operation.",
 	},
 	protocol.CredentialExpired: {
 		status: http.StatusUnauthorized,
 		title:  "Credential expired",
-		detail: "The presented credential has expired; obtain a fresh one before retrying.",
+		detail: "The supplied credential has expired.",
+	},
+	protocol.CredentialRevoked: {
+		status: http.StatusUnauthorized,
+		title:  "Credential revoked",
+		detail: "The supplied credential has been revoked.",
+	},
+	protocol.RefreshReuseDetected: {
+		status: http.StatusUnauthorized,
+		title:  "Refresh reuse detected",
+		detail: "The renewal credential was already consumed, so its credential family was revoked.",
+	},
+	protocol.OperationSuperseded: {
+		status: http.StatusConflict,
+		title:  "Operation superseded",
+		detail: "A recorded attempt of this operation is equal to or higher than the submitted attempt.",
+	},
+	protocol.OperationMismatch: {
+		status: http.StatusConflict,
+		title:  "Operation mismatch",
+		detail: "The recorded operation consumed a different renewal credential, so this attempt is not that operation's retransmission.",
 	},
 	protocol.FreshIdentityRequired: {
 		status: http.StatusForbidden,
@@ -236,8 +256,13 @@ var businessOutcomes = []struct {
 	{identity.ErrSenderNotFound, protocol.ResourceNotFound},
 	{identity.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
 	{identity.ErrCredentialMissing, protocol.CredentialMissing},
-	{identity.ErrCredentialExpired, protocol.CredentialExpired},
 	{identity.ErrCredentialInvalid, protocol.CredentialInvalid},
+	{identity.ErrCredentialExpired, protocol.CredentialExpired},
+	{identity.ErrCredentialRevoked, protocol.CredentialRevoked},
+	{identity.ErrRefreshReuse, protocol.RefreshReuseDetected},
+	{identity.ErrOperationSuperseded, protocol.OperationSuperseded},
+	{identity.ErrOperationMismatch, protocol.OperationMismatch},
+	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{pairing.ErrSessionNotFound, protocol.ResourceNotFound},
 	{pairing.ErrSessionExpired, protocol.PairingSessionExpired},
@@ -268,6 +293,8 @@ func codeForStatus(status int) protocol.ErrorCode {
 		return protocol.InvalidRequest
 	case http.StatusNotFound:
 		return protocol.ResourceNotFound
+	case http.StatusUnauthorized:
+		return protocol.CredentialInvalid
 	case http.StatusMethodNotAllowed:
 		return protocol.MethodNotAllowed
 	case http.StatusUnprocessableEntity:

@@ -26,10 +26,24 @@ const (
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
 	// CredentialMissing marks a protected operation without a credential.
 	CredentialMissing ErrorCode = "credential_missing"
-	// CredentialInvalid marks a credential that authorizes nothing here.
+	// CredentialInvalid marks a supplied credential that is unknown or that
+	// does not authorize the requested operation.
 	CredentialInvalid ErrorCode = "credential_invalid"
-	// CredentialExpired marks a credential past its recorded lifetime.
+	// CredentialExpired marks a supplied credential whose expiry has passed.
 	CredentialExpired ErrorCode = "credential_expired"
+	// CredentialRevoked marks a supplied credential or its credential family
+	// as revoked.
+	CredentialRevoked ErrorCode = "credential_revoked"
+	// RefreshReuseDetected marks confirmed reuse of an already consumed
+	// renewal credential; the family it belonged to has been revoked.
+	RefreshReuseDetected ErrorCode = "refresh_reuse_detected"
+	// OperationSuperseded marks an attempt at or below the attempt another
+	// request already committed for the same operation.
+	OperationSuperseded ErrorCode = "operation_superseded"
+	// OperationMismatch marks a higher attempt that claims a recorded operation
+	// without presenting the credential that operation consumed. It neither
+	// issues nor revokes anything.
+	OperationMismatch ErrorCode = "operation_mismatch"
 	// FreshIdentityRequired marks an operation that needs fresh owner
 	// verification.
 	FreshIdentityRequired ErrorCode = "fresh_identity_required"

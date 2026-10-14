@@ -154,11 +154,13 @@ func published(t *testing.T) map[string]any {
 	return description
 }
 
-// loginFixture is the accepted v1 compatibility contract of the WeChat login
-// operation. The published description and the composed service are both
-// checked against this one file, so a client-visible rename cannot pass one
-// check and fail the other.
-type loginFixture struct {
+// operationContract is the accepted published shape of one HTTP operation: the
+// request, success and credential schemas with the exact field set a released
+// client handles. A fixture file holds this part plus its failure statuses, and
+// the published description and the composed service are both checked against
+// that one file, so a client-visible rename cannot pass one check and fail the
+// other.
+type operationContract struct {
 	OperationID string `json:"operationId"`
 	Path        string `json:"path"`
 	Method      string `json:"method"`
@@ -176,15 +178,47 @@ type loginFixture struct {
 		Schema   string   `json:"schema"`
 		Required []string `json:"required"`
 	} `json:"credential"`
+}
+
+// loginFixture is the accepted v1 compatibility contract of the WeChat login
+// operation, whose failures report one code per status.
+type loginFixture struct {
+	operationContract
 	Errors map[string]string `json:"errors"`
+}
+
+// refreshFixture is the accepted v1 compatibility contract of credential
+// renewal, whose failures can report several codes for one status: an unknown,
+// expired or revoked credential is distinguishable from confirmed reuse.
+type refreshFixture struct {
+	operationContract
+	Errors map[string][]string `json:"errors"`
 }
 
 // The published description must keep describing exactly the accepted login
 // contract: the documented request fields, success payload, credential payload
 // and every failure status a released v1 client handles.
 func TestPublishedHTTPDescriptionKeepsTheWeChatLoginContract(t *testing.T) {
-	fixture := readFixture(t)
-	description := published(t)
+	fixture := readFixture[loginFixture](t, "wechat_login_v1.json")
+	publishedErrors := assertOperationContract(t, published(t), fixture.operationContract)
+	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
+}
+
+// The published description must keep describing exactly the accepted renewal
+// contract: the documented request fields, success payload, credential payload
+// and every failure status a released v1 client handles.
+func TestPublishedHTTPDescriptionKeepsTheRefreshContract(t *testing.T) {
+	fixture := readFixture[refreshFixture](t, "refresh_v1.json")
+	publishedErrors := assertOperationContract(t, published(t), fixture.operationContract)
+	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
+}
+
+// assertOperationContract checks the published request, success and credential
+// schemas of one operation against its accepted fixture, and returns the
+// failure statuses the description documents for it.
+func assertOperationContract(t *testing.T, description map[string]any, fixture operationContract) map[string]bool {
+	t.Helper()
+
 	operation := operationOf(t, description, fixture)
 
 	requestBody := operation["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)
@@ -223,20 +257,38 @@ func TestPublishedHTTPDescriptionKeepsTheWeChatLoginContract(t *testing.T) {
 			publishedErrors[status] = true
 		}
 	}
-	for status := range fixture.Errors {
-		if !publishedErrors[status] {
+	return publishedErrors
+}
+
+// assertFailureStatuses requires one operation's published failure statuses to
+// be exactly the accepted ones.
+func assertFailureStatuses(t *testing.T, published map[string]bool, accepted []string) {
+	t.Helper()
+
+	for _, status := range accepted {
+		if !published[status] {
 			t.Errorf("published description does not document failure status %s", status)
 		}
 	}
-	for status := range publishedErrors {
-		if _, accepted := fixture.Errors[status]; !accepted {
+	for status := range published {
+		if !slices.Contains(accepted, status) {
 			t.Errorf("published failure status %s is not part of the accepted fixture", status)
 		}
 	}
 }
 
+// fixtureStatuses returns the failure statuses one accepted fixture documents.
+func fixtureStatuses[Codes any](errors map[string]Codes) []string {
+	statuses := make([]string, 0, len(errors))
+	for status := range errors {
+		statuses = append(statuses, status)
+	}
+	slices.Sort(statuses)
+	return statuses
+}
+
 // operationOf returns the published operation the fixture describes.
-func operationOf(t *testing.T, description map[string]any, fixture loginFixture) map[string]any {
+func operationOf(t *testing.T, description map[string]any, fixture operationContract) map[string]any {
 	t.Helper()
 
 	paths, ok := description["paths"].(map[string]any)
@@ -311,16 +363,18 @@ func propertyFields(t *testing.T, schema map[string]any) []string {
 	return fields
 }
 
-func readFixture(t *testing.T) loginFixture {
+// readFixture decodes the accepted contract of one operation from the shared
+// fixture directory.
+func readFixture[F any](t *testing.T, name string) F {
 	t.Helper()
 
-	contents, err := os.ReadFile(filepath.Join(fixtureDir, "wechat_login_v1.json"))
+	contents, err := os.ReadFile(filepath.Join(fixtureDir, name))
 	if err != nil {
-		t.Fatalf("read login fixture: %v", err)
+		t.Fatalf("read fixture %s: %v", name, err)
 	}
-	fixture := loginFixture{}
+	var fixture F
 	if err := json.Unmarshal(contents, &fixture); err != nil {
-		t.Fatalf("decode login fixture: %v", err)
+		t.Fatalf("decode fixture %s: %v", name, err)
 	}
 	return fixture
 }
