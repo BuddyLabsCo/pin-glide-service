@@ -77,6 +77,34 @@ func (h *Hub) SendState(sessionID string, message protocol.PairingState) {
 	h.send(sessionID, message)
 }
 
+// SendTo publishes one message to one participant's connection. A side that is
+// not currently subscribed receives nothing.
+func (h *Hub) SendTo(sessionID string, side pairing.Side, message any) {
+	h.mutex.Lock()
+	connection := h.connections[sessionID][side]
+	h.mutex.Unlock()
+
+	if connection != nil {
+		connection.Send(message)
+	}
+}
+
+// CloseSession ends every live connection of one session once the frames
+// already queued for it are written, so a participant still learns the state
+// that made its channel unusable.
+func (h *Hub) CloseSession(sessionID string) {
+	h.mutex.Lock()
+	connections := make([]*Connection, 0, len(h.connections[sessionID]))
+	for _, connection := range h.connections[sessionID] {
+		connections = append(connections, connection)
+	}
+	h.mutex.Unlock()
+
+	for _, connection := range connections {
+		connection.CloseAfterWrite(closeNothing)
+	}
+}
+
 // send delivers message to every connection of one session.
 func (h *Hub) send(sessionID string, message any) {
 	h.mutex.Lock()

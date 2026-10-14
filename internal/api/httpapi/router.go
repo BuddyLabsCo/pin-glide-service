@@ -31,7 +31,10 @@ type Dependencies struct {
 	// PairingEvents serves the restricted pairing channel; it is the transport
 	// dependency of the pairing operations, not a domain one.
 	PairingEvents PairingEvents
-	Logger        *slog.Logger
+	// ReceiverEvents serves the R-authenticated delivery channel; it is the
+	// transport dependency of live delivery, not a domain one.
+	ReceiverEvents ReceiverEvents
+	Logger         *slog.Logger
 }
 
 // PairingEvents serves one authenticated pairing subscription until its
@@ -39,6 +42,13 @@ type Dependencies struct {
 // a subscription the transport rejected before upgrading.
 type PairingEvents interface {
 	Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) error
+}
+
+// ReceiverEvents serves one authenticated Receiver delivery subscription until
+// its connection closes. The HTTP composition routes the upgrade to it, and
+// reports a subscription the transport rejected before upgrading.
+type ReceiverEvents interface {
+	Serve(writer http.ResponseWriter, request *http.Request, release func()) error
 }
 
 // New builds the composed HTTP handler and its admission gate. The gate closes
@@ -86,6 +96,7 @@ func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 		Senders:  dependencies.Pairing,
 	})
 	registerPairingEvents(mux, dependencies.PairingEvents, dependencies.Logger)
+	registerReceiverEvents(mux, dependencies.ReceiverEvents, dependencies.Logger)
 	return api
 }
 
@@ -126,6 +137,31 @@ func registerPairingEvents(mux *http.ServeMux, events PairingEvents, logger *slo
 			logger.WarnContext(request.Context(), "pairing subscription rejected",
 				slog.String("request_id", problem.RequestID),
 				slog.String("session_id", sessionID),
+				slog.String("code", string(problem.Code)),
+			)
+			writeProblem(writer, request, problem)
+		}
+	})
+}
+
+// registerReceiverEvents routes the R-authenticated delivery channel. The
+// upgrade is a plain HTTP handler for the same reason the pairing channel is:
+// a hijacked connection has no JSON response Huma could describe, and a
+// subscription the service rejects before upgrading still uses the shared
+// problem mapping.
+func registerReceiverEvents(mux *http.ServeMux, events ReceiverEvents, logger *slog.Logger) {
+	if events == nil {
+		return
+	}
+	mux.HandleFunc("GET /v1/receiver/events", func(writer http.ResponseWriter, request *http.Request) {
+		release := SessionAdmissionFrom(request.Context())
+		if release == nil {
+			release = func() {}
+		}
+		if err := events.Serve(writer, request, release); err != nil {
+			problem := problemForStatus(http.StatusInternalServerError, observability.RequestIDFrom(request.Context()), []error{err})
+			logger.WarnContext(request.Context(), "receiver subscription rejected",
+				slog.String("request_id", problem.RequestID),
 				slog.String("code", string(problem.Code)),
 			)
 			writeProblem(writer, request, problem)

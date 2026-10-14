@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
@@ -133,6 +134,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Receiver limit reached",
 		detail: "A Sender can have at most 5 associated Receivers.",
 	},
+	protocol.ReceiverAlreadyConnected: {
+		status: http.StatusConflict,
+		title:  "Receiver already connected",
+		detail: "This Receiver already holds the one reserved or active delivery connection.",
+	},
 	protocol.PairingSessionClaimed: {
 		status: http.StatusConflict,
 		title:  "Pairing session claimed",
@@ -152,6 +158,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		status: http.StatusConflict,
 		title:  "Pairing not ready",
 		detail: "The Pairing Session cannot perform this step yet.",
+	},
+	protocol.ModeForbidsCredentialIssue: {
+		status: http.StatusConflict,
+		title:  "Mode forbids credential issue",
+		detail: "An add_sender Pairing Session cannot issue or replace a Receiver credential.",
 	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,
@@ -269,6 +280,11 @@ var businessOutcomes = []struct {
 	{pairing.ErrSessionClosed, protocol.PairingSessionClosed},
 	{pairing.ErrSessionClaimed, protocol.PairingSessionClaimed},
 	{pairing.ErrReceiverLimitReached, protocol.ReceiverLimitReached},
+	{pairing.ErrPairingNotReady, protocol.PairingNotReady},
+	{pairing.ErrModeForbidsCredentialIssue, protocol.ModeForbidsCredentialIssue},
+	{pairing.ErrOperationSuperseded, protocol.OperationSuperseded},
+	{pairing.ErrAttemptUnsupported, protocol.ValidationFailed},
+	{pairing.ErrIssuanceInvalid, protocol.ValidationFailed},
 	{pairing.ErrInvalidMode, protocol.ValidationFailed},
 	{pairing.ErrReceiverNotOwned, protocol.ResourceNotFound},
 	{pairing.ErrFreshIdentityRequired, protocol.FreshIdentityRequired},
@@ -278,6 +294,8 @@ var businessOutcomes = []struct {
 	{pairing.ErrCredentialInvalid, protocol.CredentialInvalid},
 	{pairing.ErrCredentialExpired, protocol.CredentialExpired},
 	{pairing.ErrStorageUnavailable, protocol.ServiceUnavailable},
+	{wss.ErrReceiverAlreadyConnected, protocol.ReceiverAlreadyConnected},
+	{wss.ErrReceiverUnavailable, protocol.ServiceUnavailable},
 }
 
 // codeForStatus names the code reported when the service has only an HTTP

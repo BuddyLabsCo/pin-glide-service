@@ -90,6 +90,9 @@ type Session struct {
 	PendingPairingID    string
 	State               SessionState
 	TokenDigest         string
+	IssuanceOperationID string
+	IssuanceAttempt     int
+	IssuedGeneration    int64
 	SenderConfirmedAt   *time.Time
 	ReceiverConfirmedAt *time.Time
 	CreatedAt           time.Time
@@ -134,6 +137,55 @@ type AuthorizeRequest struct {
 	SenderID     string
 	Alias        string
 	RecoveryCode string
+}
+
+// KeyConfirmation is one client's authenticated report that it saved the
+// derived Pairing key and checked its peer's key confirmation. A Receiver-side
+// recovery may instead report that it no longer holds a key.
+type KeyConfirmation string
+
+const (
+	// KeyConfirmed reports that the client saved the key and verified its peer.
+	KeyConfirmed KeyConfirmation = "confirmed"
+	// KeyNotAvailable reports a recovery client that no longer holds the key.
+	KeyNotAvailable KeyConfirmation = "not_available"
+)
+
+// CompleteRequest is one participant's key-confirmation report. Exactly one
+// credential source identifies the side: SenderID for the claiming Sender's
+// management credential, Token for the Receiver side's restricted credential.
+type CompleteRequest struct {
+	SessionID       string
+	SenderID        string
+	Token           string
+	KeyConfirmation KeyConfirmation
+}
+
+// RedeemRequest is one Receiver-side redemption of the session's credential
+// grant, ordered by the client's operation ID and attempt like the renewal
+// protocol: attempt 0 is the original request and attempt 1 its one permitted
+// retransmission.
+type RedeemRequest struct {
+	SessionID   string
+	Token       string
+	OperationID string
+	Attempt     int
+}
+
+// IssuedCredential is one issued Receiver credential and the Receiver it
+// belongs to. The raw value leaves the service only through the response that
+// hands it to its holder.
+type IssuedCredential struct {
+	ReceiverID string
+	Token      string
+	Generation int64
+}
+
+// ReceiverCredential is the Receiver one presented credential authenticated,
+// with the issuance generation that presentation proves possession of.
+type ReceiverCredential struct {
+	ReceiverID string
+	Generation int64
 }
 
 // Resolved is the result of presenting one restricted Pairing Session
@@ -182,6 +234,22 @@ var (
 	ErrInvalidMode = errors.New("pairing session mode is not usable for this request")
 	// ErrReceiverNotOwned marks a Receiver that is not visible to this Sender.
 	ErrReceiverNotOwned = errors.New("receiver not owned by this sender")
+	// ErrPairingNotReady marks a session that cannot perform the requested step
+	// yet, for example because a participant has not reported key confirmation.
+	ErrPairingNotReady = errors.New("pairing session not ready")
+	// ErrModeForbidsCredentialIssue marks a restricted credential that may not
+	// enter the Receiver credential issuance path.
+	ErrModeForbidsCredentialIssue = errors.New("pairing session mode forbids credential issue")
+	// ErrOperationSuperseded marks an issuance attempt equal to or lower than
+	// the one already committed, or a competing operation. It neither issues a
+	// credential nor changes issued state.
+	ErrOperationSuperseded = errors.New("issuance operation superseded")
+	// ErrAttemptUnsupported marks an issuance attempt outside the adopted 0/1
+	// protocol.
+	ErrAttemptUnsupported = errors.New("issuance attempt unsupported")
+	// ErrIssuanceInvalid marks an issuance request without the operation
+	// identifier the ordering guard needs.
+	ErrIssuanceInvalid = errors.New("credential issuance request invalid")
 	// ErrFreshIdentityRequired marks a recovery request without fresh owner
 	// verification.
 	ErrFreshIdentityRequired = errors.New("fresh wechat verification required")
@@ -227,6 +295,23 @@ func (s Session) Live(now time.Time) bool {
 	}
 	switch s.State {
 	case StateAwaitingAuthorization, StateAwaitingConfirmation:
+		return true
+	default:
+		return false
+	}
+}
+
+// ClosesChannel reports whether the session's restricted channel must refuse
+// an authenticated subscription. A canceled, superseded or completed session
+// is closed for everyone; a session whose Pairing activated but whose
+// credential grant is still outstanding keeps offering its channel, so either
+// participant can reconnect for the current view.
+func (s Session) ClosesChannel(now time.Time) bool {
+	if s.Expired(now) {
+		return true
+	}
+	switch s.State {
+	case StateCompleted, StateCanceled, StateSuperseded:
 		return true
 	default:
 		return false

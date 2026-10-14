@@ -25,6 +25,9 @@ type pairingSessionsTable struct {
 	PendingPairingID    postgres.ColumnString     // Reserved Pairing ID; NULL for recovery and released sessions.
 	State               postgres.ColumnString     // Current state; expiry and cancellation win over stored progress.
 	TokenDigest         postgres.ColumnString     // SHA-256 digest of the restricted B credential, never the raw one.
+	IssuanceOperationID postgres.ColumnString     // Credential-issuance operation recorded; NULL before redemption.
+	IssuanceAttempt     postgres.ColumnInteger    // Highest committed attempt; 0 original, 1 retransmission.
+	IssuedGeneration    postgres.ColumnInteger    // Receiver credential generation handed out by this session.
 	SenderConfirmedAt   postgres.ColumnTimestampz // When the Sender side reported key confirmation, if it has.
 	ReceiverConfirmedAt postgres.ColumnTimestampz // When the Receiver side reported key confirmation, if it has.
 	CreatedAt           postgres.ColumnTimestampz // When the session was created.
@@ -78,13 +81,16 @@ func newPairingSessionsTableImpl(schemaName, tableName, alias string) pairingSes
 		PendingPairingIDColumn    = postgres.StringColumn("pending_pairing_id")
 		StateColumn               = postgres.StringColumn("state")
 		TokenDigestColumn         = postgres.StringColumn("token_digest")
+		IssuanceOperationIDColumn = postgres.StringColumn("issuance_operation_id")
+		IssuanceAttemptColumn     = postgres.IntegerColumn("issuance_attempt")
+		IssuedGenerationColumn    = postgres.IntegerColumn("issued_generation")
 		SenderConfirmedAtColumn   = postgres.TimestampzColumn("sender_confirmed_at")
 		ReceiverConfirmedAtColumn = postgres.TimestampzColumn("receiver_confirmed_at")
 		CreatedAtColumn           = postgres.TimestampzColumn("created_at")
 		ExpiresAtColumn           = postgres.TimestampzColumn("expires_at")
 		ClosedAtColumn            = postgres.TimestampzColumn("closed_at")
-		allColumns                = postgres.ColumnList{IDColumn, ModeColumn, ReceiverIDColumn, AuthorizedSenderIDColumn, PendingPairingIDColumn, StateColumn, TokenDigestColumn, SenderConfirmedAtColumn, ReceiverConfirmedAtColumn, CreatedAtColumn, ExpiresAtColumn, ClosedAtColumn}
-		mutableColumns            = postgres.ColumnList{ModeColumn, ReceiverIDColumn, AuthorizedSenderIDColumn, PendingPairingIDColumn, StateColumn, TokenDigestColumn, SenderConfirmedAtColumn, ReceiverConfirmedAtColumn, CreatedAtColumn, ExpiresAtColumn, ClosedAtColumn}
+		allColumns                = postgres.ColumnList{IDColumn, ModeColumn, ReceiverIDColumn, AuthorizedSenderIDColumn, PendingPairingIDColumn, StateColumn, TokenDigestColumn, IssuanceOperationIDColumn, IssuanceAttemptColumn, IssuedGenerationColumn, SenderConfirmedAtColumn, ReceiverConfirmedAtColumn, CreatedAtColumn, ExpiresAtColumn, ClosedAtColumn}
+		mutableColumns            = postgres.ColumnList{ModeColumn, ReceiverIDColumn, AuthorizedSenderIDColumn, PendingPairingIDColumn, StateColumn, TokenDigestColumn, IssuanceOperationIDColumn, IssuanceAttemptColumn, IssuedGenerationColumn, SenderConfirmedAtColumn, ReceiverConfirmedAtColumn, CreatedAtColumn, ExpiresAtColumn, ClosedAtColumn}
 		defaultColumns            = postgres.ColumnList{StateColumn, CreatedAtColumn}
 	)
 
@@ -99,6 +105,9 @@ func newPairingSessionsTableImpl(schemaName, tableName, alias string) pairingSes
 		PendingPairingID:    PendingPairingIDColumn,
 		State:               StateColumn,
 		TokenDigest:         TokenDigestColumn,
+		IssuanceOperationID: IssuanceOperationIDColumn,
+		IssuanceAttempt:     IssuanceAttemptColumn,
+		IssuedGeneration:    IssuedGenerationColumn,
 		SenderConfirmedAt:   SenderConfirmedAtColumn,
 		ReceiverConfirmedAt: ReceiverConfirmedAtColumn,
 		CreatedAt:           CreatedAtColumn,

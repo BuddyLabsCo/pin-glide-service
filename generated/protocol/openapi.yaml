@@ -13,6 +13,17 @@ components:
           maxLength: 512
           type: string
       type: object
+    CompleteRequest:
+      additionalProperties: false
+      properties:
+        keyConfirmation:
+          description: Authenticated confirmation that this side saved the Pairing key and verified its peer's key confirmation
+          enum:
+            - confirmed
+          type: string
+      required:
+        - keyConfirmation
+      type: object
     CreateRequest:
       additionalProperties: false
       properties:
@@ -108,6 +119,19 @@ components:
       required:
         - token
         - expiresAt
+      type: object
+    IssuedReceiverToken:
+      additionalProperties: false
+      properties:
+        receiverId:
+          description: Receiver the credential belongs to
+          type: string
+        receiverToken:
+          description: Long-lived Receiver credential; store it securely, it is never returned again
+          type: string
+      required:
+        - receiverId
+        - receiverToken
       type: object
     PairingSessionView:
       additionalProperties: false
@@ -207,6 +231,24 @@ components:
         - detail
         - code
         - requestId
+      type: object
+    RedeemRequest:
+      additionalProperties: false
+      properties:
+        attempt:
+          description: 0 is the original request, 1 the one permitted retransmission of it
+          format: int64
+          maximum: 1
+          minimum: 0
+          type: integer
+        operationId:
+          description: Credential-issuance operation identifier the client persisted before sending
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+        - operationId
+        - attempt
       type: object
     RefreshBundle:
       additionalProperties: false
@@ -624,6 +666,146 @@ paths:
       security:
         - bearerAuth: []
       summary: Claim a Pairing Session for one Sender
+      tags:
+        - pairing
+  /v1/pairing-sessions/{id}/complete:
+    post:
+      description: "Records one participant's authenticated report that it saved the derived Pairing key and verified its peer's key confirmation. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. Receiver credential recovery reports through its own retained-key reconciliation instead. Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed, or 503 service_unavailable."
+      operationId: PostPairingSessionComplete
+      parameters:
+        - description: Pairing Session ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Pairing Session ID
+            maxLength: 128
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingSessionView"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "410":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Gone
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Report key confirmation for one Pairing Session side
+      tags:
+        - pairing
+  /v1/pairing-sessions/{id}/receiver-token:
+    post:
+      description: "Redeems one session's credential grant for the Receiver side and returns the long-lived Receiver credential to that holder only, as a no-store response. The session's one issuance operation orders the request by operationId and attempt: an equal or lower attempt and any competing operation are superseded, while the one higher attempt may replace a credential no one has proved possession of yet, so a lost response costs at most one retransmission. Once the credential proves possession, redemption can no longer rotate it. An add_sender session returns mode_forbids_credential_issue without touching credentials. The credential is stored as a digest only and never reaches the Sender, the QR or a session view. Failures report 401 for an unusable restricted credential, 409 operation_superseded, pairing_not_ready or mode_forbids_credential_issue, 410 pairing_session_closed, 422 validation_failed, or 503 service_unavailable."
+      operationId: PostPairingSessionReceiverToken
+      parameters:
+        - description: Pairing Session ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Pairing Session ID
+            maxLength: 128
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedReceiverToken"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "410":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Gone
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Redeem the Pairing Session's Receiver credential
       tags:
         - pairing
 servers:

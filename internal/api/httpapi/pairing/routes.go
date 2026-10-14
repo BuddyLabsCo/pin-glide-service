@@ -29,6 +29,8 @@ type SenderCredentials interface {
 func Register(api huma.API, handlers Handlers) {
 	registerCreate(api, handlers)
 	registerAuthorize(api, handlers)
+	registerComplete(api, handlers)
+	registerRedeem(api, handlers)
 	registerCancel(api, handlers)
 }
 
@@ -119,6 +121,89 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 	})
 }
 
+// registerComplete installs POST /v1/pairing-sessions/{id}/complete. Each
+// participant reports with its own credential, and the service derives the
+// reporting side from authentication rather than from a caller-supplied label.
+func registerComplete(api huma.API, handlers Handlers) {
+	huma.Register(api, huma.Operation{
+		OperationID: "PostPairingSessionComplete",
+		Tags:        []string{TagPairing},
+		Method:      http.MethodPost,
+		Path:        "/v1/pairing-sessions/{id}/complete",
+		Summary:     "Report key confirmation for one Pairing Session side",
+		Description: "Records one participant's authenticated report that it saved the derived Pairing key and verified its peer's key confirmation. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. Receiver credential recovery reports through its own retained-key reconciliation instead. " +
+			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusGone,
+			http.StatusUnprocessableEntity,
+			http.StatusServiceUnavailable,
+		},
+		Security: []map[string][]string{{"bearerAuth": {}}},
+	}, func(ctx context.Context, input *completeInput) (*sessionOutput, error) {
+		senderID, token, err := participantOf(ctx, handlers)
+		if err != nil {
+			return nil, err
+		}
+		session, err := handlers.Sessions.Complete(ctx, domain.CompleteRequest{
+			SessionID:       input.ID,
+			SenderID:        senderID,
+			Token:           token,
+			KeyConfirmation: domain.KeyConfirmation(input.Body.KeyConfirmation),
+		}, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+
+		output := &sessionOutput{}
+		output.Body = wireView(session, time.Now().UTC())
+		return output, nil
+	})
+}
+
+// registerRedeem installs POST /v1/pairing-sessions/{id}/receiver-token. Only
+// the Receiver-side restricted credential may redeem, and only a session whose
+// mode issues credentials.
+func registerRedeem(api huma.API, handlers Handlers) {
+	huma.Register(api, huma.Operation{
+		OperationID: "PostPairingSessionReceiverToken",
+		Tags:        []string{TagPairing},
+		Method:      http.MethodPost,
+		Path:        "/v1/pairing-sessions/{id}/receiver-token",
+		Summary:     "Redeem the Pairing Session's Receiver credential",
+		Description: "Redeems one session's credential grant for the Receiver side and returns the long-lived Receiver credential to that holder only, as a no-store response. The session's one issuance operation orders the request by operationId and attempt: an equal or lower attempt and any competing operation are superseded, while the one higher attempt may replace a credential no one has proved possession of yet, so a lost response costs at most one retransmission. Once the credential proves possession, redemption can no longer rotate it. An add_sender session returns mode_forbids_credential_issue without touching credentials. The credential is stored as a digest only and never reaches the Sender, the QR or a session view. " +
+			"Failures report 401 for an unusable restricted credential, 409 operation_superseded, pairing_not_ready or mode_forbids_credential_issue, 410 pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusConflict,
+			http.StatusGone,
+			http.StatusUnprocessableEntity,
+			http.StatusServiceUnavailable,
+		},
+		Security: []map[string][]string{{"bearerAuth": {}}},
+	}, func(ctx context.Context, input *redeemInput) (*redeemOutput, error) {
+		token := bearerCredential(ctx)
+		if token == "" {
+			return nil, domain.ErrCredentialMissing
+		}
+		issued, err := handlers.Sessions.Redeem(ctx, domain.RedeemRequest{
+			SessionID:   input.ID,
+			Token:       token,
+			OperationID: input.Body.OperationID,
+			Attempt:     input.Body.Attempt,
+		}, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+
+		output := &redeemOutput{}
+		output.Body = IssuedReceiverToken{ReceiverID: issued.ReceiverID, ReceiverToken: issued.Token}
+		return output, nil
+	})
+}
+
 // registerCancel installs DELETE /v1/pairing-sessions/{id}. Cancellation
 // releases the reservation only while the session may still continue.
 func registerCancel(api huma.API, handlers Handlers) {
@@ -140,7 +225,7 @@ func registerCancel(api huma.API, handlers Handlers) {
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},
 	}, func(ctx context.Context, input *cancelInput) (*struct{}, error) {
-		senderID, token, err := cancelParticipant(ctx, input.ID, handlers)
+		senderID, token, err := participantOf(ctx, handlers)
 		if err != nil {
 			return nil, err
 		}
@@ -161,10 +246,11 @@ func senderOf(ctx context.Context, handlers Handlers) (string, error) {
 	return handlers.Senders.SenderOf(ctx, token)
 }
 
-// cancelParticipant reports the authenticated participant of one
-// cancellation. The owning Sender uses management authority; the Receiver
-// side uses the session's restricted credential.
-func cancelParticipant(ctx context.Context, sessionID string, handlers Handlers) (string, string, error) {
+// participantOf reports the participant one session operation authenticates.
+// The owning Sender uses management authority; the Receiver side uses the
+// session's restricted credential. A caller that presents neither usable
+// source receives the credential outcome of the one it tried.
+func participantOf(ctx context.Context, handlers Handlers) (string, string, error) {
 	token := bearerCredential(ctx)
 	if token == "" {
 		return "", "", domain.ErrCredentialMissing
