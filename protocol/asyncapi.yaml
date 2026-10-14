@@ -83,11 +83,21 @@ channels:
     title: Receiver delivery channel
     description: |-
       The single long-lived delivery channel of one Receiver, authenticated by
-      its Receiver credential on the upgrade request. One Receiver has one
-      reserved or active slot: a second handshake with the same credential is
-      rejected before the upgrade with HTTP 409 receiver_already_connected and
-      never evicts the connection that already holds the slot. A rejected
-      handshake leaves that connection's presence unchanged.
+      its Receiver credential on the upgrade request. One Receiver generation
+      has one reserved or active slot: a second handshake with the same
+      credential is rejected before the upgrade with HTTP 409
+      receiver_already_connected and never evicts the connection that already
+      holds the slot. A rejected handshake leaves that connection's presence
+      unchanged.
+
+      This connection is the Receiver's liveness. Online begins with the
+      committed upgrade, and the owning Sender's Receiver list reports the
+      Receiver offline on the end of that connection, on a heartbeat failure or
+      on a service restart. The service sends a Ping every 15 seconds and
+      requires the Pong within 5 seconds, then closes and releases a connection
+      that stopped answering, so a half-open transport cannot hold the slot. A
+      reconnect is a new live connection and receives nothing kept for the
+      previous one.
 
       A successful upgrade commits credential possession: the session whose
       grant the credential came from completes and its restricted pairing

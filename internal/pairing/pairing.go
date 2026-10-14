@@ -178,9 +178,13 @@ type IssuedCredential struct {
 	Token      string
 }
 
-// ReceiverCredential is the Receiver that a presented credential authenticated.
+// ReceiverCredential is the Receiver that a presented credential authenticated,
+// together with the issuance generation the credential still presented. The
+// generation is what a live delivery connection belongs to: a later recovery
+// supersedes it, and only the current generation authorizes presence.
 type ReceiverCredential struct {
 	ReceiverID string
+	Generation int64
 }
 
 // Resolved is the result of presenting one restricted Pairing Session

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -199,6 +200,9 @@ func (p *Postgres) ApplySchema(t *testing.T, target string) {
 type Service struct {
 	BaseURL string
 	Client  *http.Client
+	// Presence is the liveness of Receiver delivery connections this process
+	// run publishes, which is what a Sender's Receiver list reports.
+	Presence *wss.Presence
 
 	cancel  context.CancelFunc
 	served  <-chan error
@@ -237,20 +241,23 @@ func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Pro
 	}
 
 	served := make(chan error, 1)
+	presence := wss.NewPresence(time.Now().UTC())
 	go func() {
 		served <- api.Serve(ctx, listener, api.Dependencies{
 			Database: pool,
 			Logger:   logger,
 			WeChat:   provider,
+			Presence: presence,
 		})
 	}()
 
 	service := &Service{
-		BaseURL: "http://" + listener.Addr().String(),
-		Client:  &http.Client{Timeout: 10 * time.Second},
-		cancel:  cancel,
-		served:  served,
-		pool:    pool,
+		BaseURL:  "http://" + listener.Addr().String(),
+		Client:   &http.Client{Timeout: 10 * time.Second},
+		Presence: presence,
+		cancel:   cancel,
+		served:   served,
+		pool:     pool,
 	}
 	t.Cleanup(func() {
 		if err := service.Stop(); err != nil {

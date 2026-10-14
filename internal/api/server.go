@@ -29,6 +29,10 @@ type Dependencies struct {
 	// WeChat verifies login authorization codes; the web adapter satisfies it
 	// and tests substitute a fake at this external boundary.
 	WeChat identity.Provider
+	// Presence is the Receiver liveness this process publishes. A nil value
+	// composes the private registry of this run; a caller that also reads
+	// presence supplies the registry the delivery channel writes.
+	Presence *wss.Presence
 }
 
 // Serve runs the composed API on listener until ctx is canceled or serving
@@ -47,7 +51,11 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	)
 	socket := wss.NewPairingSocket(pairingService, service.hub, dependencies.Logger)
 	pairingService.SetNotifier(socket)
-	receiverSocket := wss.NewReceiverSocket(pairingService, dependencies.Logger)
+	presence := dependencies.Presence
+	if presence == nil {
+		presence = wss.NewPresence(time.Now().UTC())
+	}
+	receiverSocket := wss.NewReceiverSocket(pairingService, presence, dependencies.Logger)
 	service.receivers = receiverSocket
 
 	handler, admission := httpapi.New(httpapi.Dependencies{

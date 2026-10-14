@@ -215,7 +215,7 @@ func (s *Service) AdmitReceiver(ctx context.Context, token string, now time.Time
 			}
 			completed = grant
 		}
-		admitted = ReceiverCredential{ReceiverID: presented.ReceiverID}
+		admitted = ReceiverCredential{ReceiverID: presented.ReceiverID, Generation: current.Generation}
 		return nil
 	})
 	if err != nil {
@@ -227,4 +227,38 @@ func (s *Service) AdmitReceiver(ctx context.Context, token string, now time.Time
 		}
 	}
 	return admitted, nil
+}
+
+// ConfirmReceiverConnection revalidates one admitted connection's credential
+// generation under the Receiver's serialization boundary. It is the domain half
+// of the final upgrade commit: a revocation or recovery that committed while
+// the handshake was in flight leaves the presented generation superseded, so the
+// service cancels the pending connection instead of admitting it. The same
+// boundary that serializes redemption and recovery therefore also decides
+// whether an upgrade commits first or a generation change does.
+func (s *Service) ConfirmReceiverConnection(ctx context.Context, receiverID string, generation int64) error {
+	return s.inTransaction(ctx, func(tx *sql.Tx) error {
+		if err := lockReceiver(ctx, tx, receiverID); err != nil {
+			return err
+		}
+		current, err := lockCurrentReceiverCredential(ctx, tx, receiverID)
+		if err != nil {
+			return err
+		}
+		if current.Generation != generation {
+			// The Receiver already has a newer generation, which is the
+			// generation its live access belongs to.
+			return ErrCredentialInvalid
+		}
+		_, state, err := lockRegistration(ctx, tx, receiverID)
+		if err != nil {
+			return err
+		}
+		if state != string(RegistrationActive) {
+			// A closed registration denies the connection even while its last
+			// credential row still exists.
+			return ErrCredentialInvalid
+		}
+		return nil
+	})
 }
