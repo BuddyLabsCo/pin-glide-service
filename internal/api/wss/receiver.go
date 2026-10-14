@@ -344,7 +344,8 @@ func (s *ReceiverSocket) Close() {
 	}
 	s.mutex.Unlock()
 
+	code, reason := closeMeaning(closeGoingAway)
 	for _, socket := range sockets {
-		_ = socket.Close(websocket.StatusGoingAway, "service_shutdown")
+		_ = socket.Close(code, reason)
 	}
 }

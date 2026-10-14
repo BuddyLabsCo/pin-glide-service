@@ -59,7 +59,6 @@ func (s *receiverStub) AdmitReceiver(_ context.Context, credential string, _ tim
 // upgrade was in flight.
 func (s *receiverStub) ConfirmReceiverConnection(_ context.Context, receiverID string, generation int64) error {
 	s.mutex.Lock()
-	refuse, current := s.refuse, s.current[receiverID]
 	entered, gate := s.entered, s.gate
 	s.mutex.Unlock()
 
@@ -72,6 +71,10 @@ func (s *receiverStub) ConfirmReceiverConnection(_ context.Context, receiverID s
 	if gate != nil {
 		<-gate
 	}
+
+	s.mutex.Lock()
+	refuse, current := s.refuse, s.current[receiverID]
+	s.mutex.Unlock()
 	if refuse || current != generation {
 		return pairing.ErrCredentialInvalid
 	}
@@ -285,8 +288,8 @@ func TestGenerationChangeDuringUpgradePreventsTheConnection(t *testing.T) {
 	awaitPresence(t, presence, "receiver-1", true)
 }
 
-// Shutdown ends an upgrade that is still committing: the connection never
-// becomes Receiver presence, and the reservation it held is released.
+// Shutdown ends an upgrade that is still committing: the connection closes with
+// the shutdown meaning and never becomes Receiver presence.
 func TestShutdownEndsAnUpgradeStillCommitting(t *testing.T) {
 	presence := NewPresence(time.Now().UTC())
 	receivers := newReceiverStub("receiver-1")
@@ -302,14 +305,18 @@ func TestShutdownEndsAnUpgradeStillCommitting(t *testing.T) {
 		ended <- err
 	}()
 
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the upgrade never reached its final commit")
+	}
 	channel.socket.Close()
 	release()
 
 	select {
 	case err := <-ended:
-		if status := websocket.CloseStatus(err); status != -1 && status != websocket.StatusGoingAway {
-			t.Errorf("shutdown ended the upgrade with %v, want %v", status, websocket.StatusGoingAway)
+		if status := websocket.CloseStatus(err); status != websocket.StatusGoingAway {
+			t.Errorf("shutdown ended the upgrade with %v, want %v", err, websocket.StatusGoingAway)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("shutdown left an upgrade that was still committing serving")
