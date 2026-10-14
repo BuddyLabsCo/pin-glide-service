@@ -124,6 +124,11 @@ func logoutFails(t *testing.T, environment *loginEnvironment, bearer, body strin
 	if decoded.Status != wantStatus {
 		t.Fatalf("problem status field = %d, want %d", decoded.Status, wantStatus)
 	}
+	// The shared problem model stamps every failure with the operation's
+	// request identifier, whichever layer reports the outcome.
+	if decoded.RequestID == "" {
+		t.Errorf("logout problem carries no requestId: %s", payload)
+	}
 	return decoded
 }
 

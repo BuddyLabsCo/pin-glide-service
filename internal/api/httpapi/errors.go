@@ -259,6 +259,7 @@ var businessOutcomes = []struct {
 	{identity.ErrCredentialInvalid, protocol.CredentialInvalid},
 	{identity.ErrCredentialExpired, protocol.CredentialExpired},
 	{identity.ErrCredentialRevoked, protocol.CredentialRevoked},
+	{identity.ErrCredentialSourceConflicting, protocol.ValidationFailed},
 	{identity.ErrRefreshReuse, protocol.RefreshReuseDetected},
 	{identity.ErrOperationSuperseded, protocol.OperationSuperseded},
 	{identity.ErrOperationMismatch, protocol.OperationMismatch},

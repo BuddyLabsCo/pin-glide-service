@@ -127,7 +127,7 @@ func registerLogout(api huma.API, service *domain.Service) {
 			"The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. " +
 			"Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. " +
 			"A request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. " +
-			"A failed or uncertain response never means the service revoked anything, and the client stops forwarding locally at once without reporting remote sign-out it did not receive. " +
+			"A request that never reached the service revokes nothing, and the client stops forwarding locally at once without claiming remote sign-out it did not receive. " +
 			"Account switching, which also removes this Sender's own Pairings, is not part of this release. " +
 			"This response carries no credential and is never cacheable.",
 		Errors: []int{
@@ -143,11 +143,6 @@ func registerLogout(api huma.API, service *domain.Service) {
 		request := domain.LogoutRequest{AccessToken: observability.CredentialFrom(ctx)}
 		if input.Body != nil {
 			request.RefreshToken = input.Body.RefreshToken
-		}
-		// Two sources state no single authority, so the service never picks one
-		// of them; the domain reports the missing-source case.
-		if request.AccessToken != "" && request.RefreshToken != "" {
-			return nil, huma.Error422UnprocessableEntity("Ordinary logout accepts exactly one credential source: the Sender's own management or upload credential in the Authorization header, or its renewal credential in the request body.")
 		}
 		if err := service.Logout(ctx, request); err != nil {
 			return nil, err

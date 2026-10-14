@@ -71,8 +71,8 @@ type RefreshRequest struct {
 // LogoutRequest is one ordinary logout. Exactly one source carries the Sender's
 // own authority: AccessToken is the management or upload credential the client
 // sent in the Authorization header, RefreshToken is the renewal credential it
-// sent in the body instead. The transport rejects a request that offers both
-// sources before the domain decides any authority.
+// sent in the body instead. A request that offers both reports
+// ErrCredentialSourceConflicting.
 type LogoutRequest struct {
 	AccessToken  string
 	RefreshToken string
@@ -122,6 +122,9 @@ var (
 	// ErrCredentialRevoked marks a credential or credential family that was
 	// revoked, including by an earlier replay detection or logout.
 	ErrCredentialRevoked = errors.New("credential revoked")
+	// ErrCredentialSourceConflicting marks a logout that offered more than one
+	// of its own authority sources at once, so no single source authorizes it.
+	ErrCredentialSourceConflicting = errors.New("credential sources conflict")
 	// ErrRefreshReuse marks confirmed reuse of an already consumed renewal
 	// token; the family that token belongs to has been revoked.
 	ErrRefreshReuse = errors.New("refresh credential reused")

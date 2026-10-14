@@ -244,6 +244,12 @@ func (s *Service) Logout(ctx context.Context, request LogoutRequest) (err error)
 		}
 	}()
 
+	// A request that offers both of its own authority sources states no single
+	// authority, so it authorizes nothing.
+	if request.AccessToken != "" && request.RefreshToken != "" {
+		return ErrCredentialSourceConflicting
+	}
+
 	// The header carries the Sender's own access authority; its renewal
 	// credential stands in when access has expired.
 	presented, allowed := request.AccessToken, []Scope{ScopeUserSession, ScopeUploader}
@@ -355,6 +361,7 @@ func isOutcome(err error) bool {
 		ErrCredentialInvalid,
 		ErrCredentialExpired,
 		ErrCredentialRevoked,
+		ErrCredentialSourceConflicting,
 		ErrRefreshReuse,
 		ErrOperationSuperseded,
 		ErrOperationMismatch,
