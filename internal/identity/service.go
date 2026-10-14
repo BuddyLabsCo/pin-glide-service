@@ -88,7 +88,7 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundl
 // indistinguishable to the caller.
 func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope Scope) (string, error) {
 	if rawCredential == "" {
-		return "", ErrCredentialInvalid
+		return "", ErrCredentialMissing
 	}
 	credential, err := findCredential(ctx, s.pool, digest(rawCredential))
 	if err != nil {
@@ -97,10 +97,27 @@ func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope 
 		}
 		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
-	if Scope(credential.Scope) != scope || credential.RevokedAt != nil || !credential.ExpiresAt.After(time.Now().UTC()) {
+	if credential.RevokedAt != nil || Scope(credential.Scope) != scope {
 		return "", ErrCredentialInvalid
 	}
+	if !credential.ExpiresAt.After(time.Now().UTC()) {
+		return "", ErrCredentialExpired
+	}
 	return credential.SenderID, nil
+}
+
+// AccountFor resolves the Account one verified WeChat identity belongs to.
+// Unknown identities report the same outcome as invisible ones, so a caller
+// cannot confirm whether another Account holds one.
+func (s *Service) AccountFor(ctx context.Context, verified WeChatIdentity) (string, error) {
+	account, err := findAccount(ctx, s.pool, verified)
+	if errors.Is(err, ErrSenderNotFound) {
+		return "", err
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	return account, nil
 }
 
 // newBundle issues three independent credentials with the adopted lifetimes.
@@ -127,7 +144,9 @@ func isOutcome(err error) bool {
 		ErrIdentityProvider,
 		ErrSenderNotFound,
 		ErrSenderRevoked,
+		ErrCredentialMissing,
 		ErrCredentialInvalid,
+		ErrCredentialExpired,
 	} {
 		if errors.Is(err, outcome) {
 			return true

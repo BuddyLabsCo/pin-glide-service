@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -22,6 +23,16 @@ func withRequestID(next http.Handler) http.Handler {
 		writer.Header().Set(observability.RequestIDHeader, requestID)
 		ctx := observability.WithRequestID(request.Context(), requestID)
 		next.ServeHTTP(writer, request.WithContext(ctx))
+	})
+}
+
+// withCredential exposes the Authorization header of the current request to the
+// handlers that resolve their own credential. The header name is stated once;
+// the value is never logged or copied elsewhere.
+func withCredential(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		credential := request.Header.Get(observability.CredentialHeader)
+		next.ServeHTTP(writer, request.WithContext(observability.WithCredential(request.Context(), credential)))
 	})
 }
 
@@ -73,8 +84,13 @@ func withAdmission(next http.Handler, admission *Admission) http.Handler {
 			writeProblem(writer, request, NewProblem(request.Context(), protocol.ServiceUnavailable, ""))
 			return
 		}
-		defer release()
-		next.ServeHTTP(writer, request)
+		// The release travels in the context so work that outlives its
+		// transport, such as an upgraded pairing connection, can hold it until
+		// that work really ends.
+		releaseOnce := sync.OnceFunc(release)
+		defer releaseOnce()
+		ctx := WithSessionAdmission(request.Context(), releaseOnce)
+		next.ServeHTTP(writer, request.WithContext(ctx))
 	})
 }
 

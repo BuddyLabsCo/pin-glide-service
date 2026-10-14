@@ -9,7 +9,10 @@ import (
 	"net/http"
 
 	identityapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/identity"
+	pairingapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
 	humago "github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -24,7 +27,18 @@ const (
 type Dependencies struct {
 	Database *sql.DB
 	Identity *identity.Service
-	Logger   *slog.Logger
+	Pairing  *pairing.Service
+	// PairingEvents serves the restricted pairing channel; it is the transport
+	// dependency of the pairing operations, not a domain one.
+	PairingEvents PairingEvents
+	Logger        *slog.Logger
+}
+
+// PairingEvents serves one authenticated pairing subscription until its
+// connection closes. The HTTP composition routes the upgrade to it, and reports
+// a subscription the transport rejected before upgrading.
+type PairingEvents interface {
+	Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) error
 }
 
 // New builds the composed HTTP handler and its admission gate. The gate closes
@@ -38,6 +52,7 @@ func New(dependencies Dependencies) (http.Handler, *Admission) {
 	admission := NewAdmission()
 	handler := withFallback(mux)
 	handler = withNoStore(handler)
+	handler = withCredential(handler)
 	handler = withAdmission(handler, admission)
 	handler = withAccessLog(handler, dependencies.Logger)
 	handler = withRecovery(handler, dependencies.Logger)
@@ -63,9 +78,59 @@ func discardLogger() *slog.Logger {
 func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 	configureErrorModel()
 	api := humago.New(mux, apiConfig())
+	registerSecuritySchemes(api)
 	registerHealth(api, dependencies.Database, dependencies.Logger)
 	identityapi.Register(api, dependencies.Identity)
+	pairingapi.Register(api, pairingapi.Handlers{
+		Sessions: dependencies.Pairing,
+		Senders:  dependencies.Pairing,
+	})
+	registerPairingEvents(mux, dependencies.PairingEvents, dependencies.Logger)
 	return api
+}
+
+// registerSecuritySchemes declares the bearer scheme every protected operation
+// requires. The authority a credential carries differs per operation, so each
+// operation states which credential it accepts.
+func registerSecuritySchemes(api huma.API) {
+	components := api.OpenAPI().Components
+	if components.SecuritySchemes == nil {
+		components.SecuritySchemes = map[string]*huma.SecurityScheme{}
+	}
+	components.SecuritySchemes["bearerAuth"] = &huma.SecurityScheme{
+		Type:        "http",
+		Scheme:      "bearer",
+		Description: "One service credential in the Authorization header. The operation states which credential it accepts.",
+	}
+}
+
+// registerPairingEvents routes the restricted pairing channel. The upgrade is
+// a plain HTTP handler rather than a Huma operation because a hijacked
+// connection has no JSON response Huma could describe. A subscription the
+// service rejects before upgrading is reported through the shared problem
+// mapping, so one code keeps one published outcome on both surfaces.
+func registerPairingEvents(mux *http.ServeMux, events PairingEvents, logger *slog.Logger) {
+	if events == nil {
+		return
+	}
+	// A websocket upgrade is a GET; the operation's description in the
+	// published contracts states its credential and message exchange.
+	mux.HandleFunc("GET /v1/pairing-sessions/{id}/events", func(writer http.ResponseWriter, request *http.Request) {
+		sessionID := request.PathValue("id")
+		release := SessionAdmissionFrom(request.Context())
+		if release == nil {
+			release = func() {}
+		}
+		if err := events.Serve(writer, request, sessionID, release); err != nil {
+			problem := problemForStatus(http.StatusInternalServerError, observability.RequestIDFrom(request.Context()), []error{err})
+			logger.WarnContext(request.Context(), "pairing subscription rejected",
+				slog.String("request_id", problem.RequestID),
+				slog.String("session_id", sessionID),
+				slog.String("code", string(problem.Code)),
+			)
+			writeProblem(writer, request, problem)
+		}
+	})
 }
 
 // apiConfig returns the Huma configuration for the shared HTTP contract. The
@@ -101,7 +166,9 @@ func withFallback(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler, pattern := mux.Handler(request)
 		if pattern != "" {
-			handler.ServeHTTP(writer, request)
+			// Dispatch through the mux rather than the handler it returned:
+			// only ServeMux binds the path values a matched pattern declares.
+			mux.ServeHTTP(writer, request)
 			return
 		}
 

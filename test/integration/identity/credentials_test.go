@@ -36,18 +36,19 @@ func TestSenderCredentialsEnforceScopeAndValidity(t *testing.T) {
 	}
 
 	for _, rejected := range []struct {
-		name  string
-		scope identity.Scope
-		token string
+		name    string
+		scope   identity.Scope
+		token   string
+		outcome error
 	}{
-		{name: "management credential for upload", scope: identity.ScopeUploader, token: issued.UserSession.Token},
-		{name: "upload credential for management", scope: identity.ScopeUserSession, token: issued.Uploader.Token},
-		{name: "renewal credential for management", scope: identity.ScopeUserSession, token: issued.Refresh.Token},
-		{name: "unknown credential", scope: identity.ScopeUserSession, token: "credential-that-was-never-issued"},
-		{name: "missing credential", scope: identity.ScopeUserSession, token: ""},
+		{name: "management credential for upload", scope: identity.ScopeUploader, token: issued.UserSession.Token, outcome: identity.ErrCredentialInvalid},
+		{name: "upload credential for management", scope: identity.ScopeUserSession, token: issued.Uploader.Token, outcome: identity.ErrCredentialInvalid},
+		{name: "renewal credential for management", scope: identity.ScopeUserSession, token: issued.Refresh.Token, outcome: identity.ErrCredentialInvalid},
+		{name: "unknown credential", scope: identity.ScopeUserSession, token: "credential-that-was-never-issued", outcome: identity.ErrCredentialInvalid},
+		{name: "missing credential", scope: identity.ScopeUserSession, token: "", outcome: identity.ErrCredentialMissing},
 	} {
-		if _, err := credentials.Authenticate(ctx, rejected.token, rejected.scope); !errors.Is(err, identity.ErrCredentialInvalid) {
-			t.Errorf("%s was accepted: %v", rejected.name, err)
+		if _, err := credentials.Authenticate(ctx, rejected.token, rejected.scope); !errors.Is(err, rejected.outcome) {
+			t.Errorf("%s reported %v, want %v", rejected.name, err, rejected.outcome)
 		}
 	}
 
@@ -66,7 +67,7 @@ func TestSenderCredentialsEnforceScopeAndValidity(t *testing.T) {
 	// while its row exists.
 	environment.exec(t, `UPDATE pin_glide.identity_credentials SET expires_at = now() - interval '1 second'
 		WHERE sender_id = $1 AND scope = 'user_session'`, issued.SenderID)
-	if _, err := credentials.Authenticate(ctx, issued.UserSession.Token, identity.ScopeUserSession); !errors.Is(err, identity.ErrCredentialInvalid) {
-		t.Errorf("an expired credential still authorizes: %v", err)
+	if _, err := credentials.Authenticate(ctx, issued.UserSession.Token, identity.ScopeUserSession); !errors.Is(err, identity.ErrCredentialExpired) {
+		t.Errorf("an expired credential reported %v, want %v", err, identity.ErrCredentialExpired)
 	}
 }
