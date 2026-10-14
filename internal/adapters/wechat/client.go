@@ -5,6 +5,7 @@ package wechat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,8 +78,12 @@ func (c *Client) Verify(ctx context.Context, wechatCode string) (identity.WeChat
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		// The request URL carries the code and the AppSecret, so only the
-		// transport failure itself is reported.
+		// A transport failure embeds the request URL, which carries the code
+		// and the AppSecret, so only the failure beneath it is reported.
+		var transport *url.Error
+		if errors.As(err, &transport) {
+			err = transport.Err
+		}
 		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider call failed: %v",
 			identity.ErrIdentityProvider, err)
 	}

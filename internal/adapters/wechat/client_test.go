@@ -67,7 +67,7 @@ func TestVerifyMapsProviderAnswersToIdentityOutcomes(t *testing.T) {
 			wantErr: identity.ErrIdentityProvider,
 		},
 		{
-			name:    "provider transport failure",
+			name:    "provider HTTP failure",
 			status:  http.StatusInternalServerError,
 			body:    `upstream error text`,
 			wantErr: identity.ErrIdentityProvider,
@@ -114,6 +114,23 @@ func TestVerifyMapsProviderAnswersToIdentityOutcomes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A transport failure never reports the request URL: it carries the code and
+// the AppSecret.
+func TestVerifyTransportFailureDoesNotReportTheRequestURL(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	unreachable := provider.URL
+	provider.Close()
+
+	client := New("wx-app", "wx-secret")
+	client.endpoint = unreachable
+
+	_, err := client.Verify(context.Background(), "code-one")
+	if !errors.Is(err, identity.ErrIdentityProvider) {
+		t.Fatalf("Verify error = %v, want %v", err, identity.ErrIdentityProvider)
+	}
+	assertNoProviderSecret(t, err, "code-one")
 }
 
 // A process without configured credentials must fail the provider boundary
