@@ -24,6 +24,13 @@ _Avoid_: Hardware identity, hardware fingerprint
 An Account owner's authenticated management context on one Sender.
 _Avoid_: WeChat session, upload authorization
 
+**Refresh Operation**:
+One ordered renewal of a Sender's credential bundle, identified by the client's
+operation ID and the attempt number of one transmission (0 original, 1
+retransmission), so the service can recover one lost response without replaying
+it.
+_Avoid_: Login, rotation
+
 **Pairing**:
 A Sender-owned authorized association between one Sender and one Receiver. It grants the Sender permission to forward Messages to that Receiver.
 _Avoid_: Binding, connection

@@ -9,12 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,25 +64,23 @@ type refreshResponse struct {
 func post(t *testing.T, environment *loginEnvironment, path, body string) (int, []byte, http.Header) {
 	t.Helper()
 
-	response, err := environment.service.Client.Post(environment.service.BaseURL+path, "application/json", strings.NewReader(body))
+	status, payload, header, err := concurrentPost(environment, path, body)
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
-	defer func() { _ = response.Body.Close() }()
+	return status, payload, header
+}
 
-	payload, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatalf("read %s payload: %v", path, err)
-	}
-	return response.StatusCode, payload, response.Header
+// refreshBody is the wire body of one ordered renewal attempt.
+func refreshBody(refreshToken, operationID string, attempt int) string {
+	return fmt.Sprintf(`{"refreshToken":%q,"operationId":%q,"attempt":%d}`, refreshToken, operationID, attempt)
 }
 
 // refreshAttempt posts one ordered renewal attempt of one operation.
 func refreshAttempt(t *testing.T, environment *loginEnvironment, refreshToken, operationID string, attempt int) (int, []byte, http.Header) {
 	t.Helper()
 
-	body := fmt.Sprintf(`{"refreshToken":%q,"operationId":%q,"attempt":%d}`, refreshToken, operationID, attempt)
-	return post(t, environment, refreshPath, body)
+	return post(t, environment, refreshPath, refreshBody(refreshToken, operationID, attempt))
 }
 
 // refreshOK requires one accepted renewal and checks it against the accepted
@@ -269,6 +265,11 @@ func TestRefreshKeepsRecordedAttemptsSuperseded(t *testing.T) {
 	if _, err := credentials.Authenticate(ctx, accepted.Refresh.Token, identity.ScopeRefresh); err != nil {
 		t.Fatalf("the attempt 1 bundle does not authorize: %v", err)
 	}
+	// Ordinary rotation revokes nothing: the access credentials the family
+	// already held keep working until their own expiry.
+	if _, err := credentials.Authenticate(ctx, issued.UserSession.Token, identity.ScopeUserSession); err != nil {
+		t.Errorf("ordinary rotation revoked the earlier management credential: %v", err)
+	}
 
 	// The delayed attempt 0 is a known lower attempt: superseded without
 	// issuance and without revoking the family it would otherwise replay.
@@ -299,6 +300,39 @@ func TestRefreshKeepsRecordedAttemptsSuperseded(t *testing.T) {
 		t.Errorf("renewal without an attempt status = %d, want %d: %s", status, http.StatusUnprocessableEntity, payload)
 	}
 	refreshOK(t, environment, later.Refresh.Token, "operation-attempt", 0)
+}
+
+// A request whose operation ID is already recorded but whose token no
+// operation has consumed is not reuse: the presented token is the family's
+// current renewal credential, so it renews the family and revokes nothing.
+func TestRefreshRenewsAnUnconsumedTokenWithoutRevoking(t *testing.T) {
+	environment := startLogin(t)
+	environment.provider.Accept("code-unconsumed", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-unconsumed"})
+	issued := environment.loginOK(t, `{"wechatCode":"code-unconsumed"}`)
+
+	// The successor the recorded operation issued has not been consumed, so
+	// the higher attempt of that operation renews the family with it.
+	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-consumed", 0)
+	renewed := refreshOK(t, environment, rotated.Refresh.Token, "operation-consumed", 1)
+	if renewed.Refresh.Token == rotated.Refresh.Token {
+		t.Error("the retransmission did not advance the family")
+	}
+
+	// A stale operation ID from the family a fresh login replaced cannot
+	// revoke the family that login authenticated either.
+	refreshOK(t, environment, renewed.Refresh.Token, "operation-stale", 0)
+	environment.provider.Accept("code-unconsumed-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-unconsumed"})
+	authenticated := environment.loginOK(t, `{"wechatCode":"code-unconsumed-again","senderId":"`+issued.SenderID+`"}`)
+	continued := refreshOK(t, environment, authenticated.Refresh.Token, "operation-stale", 1)
+	if continued.AccountID != authenticated.AccountID || continued.SenderID != authenticated.SenderID {
+		t.Errorf("renewal moved the Sender: %s/%s, want %s/%s",
+			continued.AccountID, continued.SenderID, authenticated.AccountID, authenticated.SenderID)
+	}
+
+	credentials := identity.NewService(environment.pool, nil)
+	if _, err := credentials.Authenticate(context.Background(), authenticated.UserSession.Token, identity.ScopeUserSession); err != nil {
+		t.Errorf("a stale operation revoked the family the login authenticated: %v", err)
+	}
 }
 
 // Genuine reuse of a spent token revokes the family that token belongs to and

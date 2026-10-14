@@ -24,30 +24,31 @@ import (
 // concurrentRefresh posts one renewal attempt without using testing.T, so a
 // test can race it with another request.
 func concurrentRefresh(environment *loginEnvironment, refreshToken, operationID string, attempt int) (int, []byte, error) {
-	body := fmt.Sprintf(`{"refreshToken":%q,"operationId":%q,"attempt":%d}`, refreshToken, operationID, attempt)
-	return concurrentPost(environment, refreshPath, body)
+	status, payload, _, err := concurrentPost(environment, refreshPath, refreshBody(refreshToken, operationID, attempt))
+	return status, payload, err
 }
 
 // concurrentLogin posts one login without using testing.T, so a test can race
 // it with another request.
 func concurrentLogin(environment *loginEnvironment, body string) (int, []byte, error) {
-	return concurrentPost(environment, loginPath, body)
+	status, payload, _, err := concurrentPost(environment, loginPath, body)
+	return status, payload, err
 }
 
 // concurrentPost sends one request off the test goroutine and never fails the
 // test itself.
-func concurrentPost(environment *loginEnvironment, path, body string) (int, []byte, error) {
+func concurrentPost(environment *loginEnvironment, path, body string) (int, []byte, http.Header, error) {
 	response, err := environment.service.Client.Post(environment.service.BaseURL+path, "application/json", strings.NewReader(body))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	payload, err := io.ReadAll(response.Body)
 	if err != nil {
-		return response.StatusCode, nil, err
+		return response.StatusCode, nil, nil, err
 	}
-	return response.StatusCode, payload, nil
+	return response.StatusCode, payload, response.Header, nil
 }
 
 // Concurrent attempts of one renewal operation serialize on the Sender:

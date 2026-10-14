@@ -81,30 +81,28 @@ func lockSender(ctx context.Context, tx *sql.Tx, senderID string) (model.Identit
 	return registration, err
 }
 
-// revokeFamilyCredentials revokes every still-usable credential of one family.
-// The rows stay for their retention window, so replay detection can still name
-// the family a spent token belonged to.
-func revokeFamilyCredentials(ctx context.Context, tx *sql.Tx, familyID string, revokedAt time.Time) error {
+// revokeCredentials revokes every still-usable credential that matches
+// predicate. Revoked rows stay for their retention window, so replay detection
+// can still name the family a spent token belonged to.
+func revokeCredentials(ctx context.Context, tx *sql.Tx, predicate postgres.BoolExpression, revokedAt time.Time) error {
 	_, err := table.IdentityCredentials.
 		UPDATE(table.IdentityCredentials.RevokedAt).
 		SET(table.IdentityCredentials.RevokedAt.SET(postgres.TimestampzT(revokedAt))).
-		WHERE(table.IdentityCredentials.FamilyID.EQ(postgres.String(familyID)).
-			AND(table.IdentityCredentials.RevokedAt.IS_NULL())).
+		WHERE(predicate.AND(table.IdentityCredentials.RevokedAt.IS_NULL())).
 		ExecContext(ctx, tx)
 	return err
+}
+
+// revokeFamilyCredentials revokes one family and nothing outside it.
+func revokeFamilyCredentials(ctx context.Context, tx *sql.Tx, familyID string, revokedAt time.Time) error {
+	return revokeCredentials(ctx, tx, table.IdentityCredentials.FamilyID.EQ(postgres.String(familyID)), revokedAt)
 }
 
 // revokeSenderCredentials revokes every still-usable credential of the Sender,
 // which is its current family. A delayed operation carrying an older family
 // therefore cannot authorize, restore or revoke the freshly issued one.
 func revokeSenderCredentials(ctx context.Context, tx *sql.Tx, senderID string, revokedAt time.Time) error {
-	_, err := table.IdentityCredentials.
-		UPDATE(table.IdentityCredentials.RevokedAt).
-		SET(table.IdentityCredentials.RevokedAt.SET(postgres.TimestampzT(revokedAt))).
-		WHERE(table.IdentityCredentials.SenderID.EQ(postgres.String(senderID)).
-			AND(table.IdentityCredentials.RevokedAt.IS_NULL())).
-		ExecContext(ctx, tx)
-	return err
+	return revokeCredentials(ctx, tx, table.IdentityCredentials.SenderID.EQ(postgres.String(senderID)), revokedAt)
 }
 
 // insertCredentials persists one family as digests only. The raw tokens exist

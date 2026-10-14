@@ -166,22 +166,23 @@ func (s *Service) Refresh(ctx context.Context, request RefreshRequest) (bundle B
 	if err != nil {
 		return Bundle{}, err
 	}
-	switch {
-	case recorded && request.Attempt <= int(operation.Attempt):
-		// The attempt this client already committed: report the ordering
-		// conflict before replay detection, so a stale retransmission never
-		// mints credentials and never revokes the family.
+	// The attempt this client already committed: report the ordering conflict
+	// before replay detection, so a stale retransmission never mints
+	// credentials and never revokes the family.
+	if recorded && request.Attempt <= int(operation.Attempt) {
 		return Bundle{}, ErrOperationSuperseded
-	case recorded && !recoverable(operation, credential, now):
+	}
+	// Only a token an operation consumed can be replayed, so only that token
+	// may revoke a family. An unconsumed token is the family's current renewal
+	// credential, which the rotation below either consumes to recover this
+	// operation's lost response or renews the family with.
+	recovering := recorded && recoverable(operation, credential, now)
+	spent, err := tokenConsumed(ctx, tx, credential.TokenDigest)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if spent && !recovering {
 		return Bundle{}, revokeForReuse(ctx, tx, credential, now)
-	case !recorded:
-		spent, err := tokenConsumed(ctx, tx, credential.TokenDigest)
-		if err != nil {
-			return Bundle{}, err
-		}
-		if spent {
-			return Bundle{}, revokeForReuse(ctx, tx, credential, now)
-		}
 	}
 
 	// The rotation continues the family: it issues fresh M/U/F and leaves the
