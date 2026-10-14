@@ -117,6 +117,12 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 			// A restricted credential authorizes nothing outside its session.
 			return ErrCredentialInvalid
 		}
+		// Admission takes the Receiver's lock before the session row, so
+		// redemption takes the same two locks in the same order and waits
+		// instead of deadlocking with a concurrent first handshake.
+		if err := lockReceiver(ctx, tx, session.ReceiverID); err != nil {
+			return err
+		}
 		session, err = lockedSessionByID(ctx, tx, request.SessionID)
 		if err != nil {
 			return err
@@ -150,7 +156,7 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 		if err := recordIssuance(ctx, tx, session.ID, request.OperationID, request.Attempt, generation); err != nil {
 			return err
 		}
-		issued = IssuedCredential{ReceiverID: session.ReceiverID, Token: token, Generation: generation}
+		issued = IssuedCredential{ReceiverID: session.ReceiverID, Token: token}
 		return nil
 	})
 	if err != nil {
@@ -209,7 +215,7 @@ func (s *Service) AdmitReceiver(ctx context.Context, token string, now time.Time
 			}
 			completed = grant
 		}
-		admitted = ReceiverCredential{ReceiverID: presented.ReceiverID, Generation: current.Generation}
+		admitted = ReceiverCredential{ReceiverID: presented.ReceiverID}
 		return nil
 	})
 	if err != nil {

@@ -140,15 +140,13 @@ type AuthorizeRequest struct {
 }
 
 // KeyConfirmation is one client's authenticated report that it saved the
-// derived Pairing key and checked its peer's key confirmation. A Receiver-side
-// recovery may instead report that it no longer holds a key.
+// derived Pairing key and checked its peer's key confirmation. The missing-key
+// report of a recovery client arrives with Receiver credential recovery.
 type KeyConfirmation string
 
 const (
 	// KeyConfirmed reports that the client saved the key and verified its peer.
 	KeyConfirmed KeyConfirmation = "confirmed"
-	// KeyNotAvailable reports a recovery client that no longer holds the key.
-	KeyNotAvailable KeyConfirmation = "not_available"
 )
 
 // CompleteRequest is one participant's key-confirmation report. Exactly one
@@ -178,14 +176,11 @@ type RedeemRequest struct {
 type IssuedCredential struct {
 	ReceiverID string
 	Token      string
-	Generation int64
 }
 
-// ReceiverCredential is the Receiver one presented credential authenticated,
-// with the issuance generation that presentation proves possession of.
+// ReceiverCredential is the Receiver one presented credential authenticated.
 type ReceiverCredential struct {
 	ReceiverID string
-	Generation int64
 }
 
 // Resolved is the result of presenting one restricted Pairing Session
