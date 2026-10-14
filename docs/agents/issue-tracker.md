@@ -23,3 +23,9 @@ Match the language of existing tracker items; if none exist, ask the user first.
 
 - "Publish to the issue tracker": create a GitHub issue.
 - "Fetch the relevant ticket": run `gh issue view <number> --comments`.
+
+## Pull requests
+
+- **Title** — follows the Conventional Commits spec in the form
+  `<type>: [issue-<issue-number>] <subject>`, for example `fix: [issue-42] correct retry backoff`.
+- **Description** — must end with `Closes #<issue-number>`
