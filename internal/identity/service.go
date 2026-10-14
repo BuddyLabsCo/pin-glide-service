@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/model"
@@ -226,6 +227,83 @@ func recoverable(operation model.IdentityRefreshOperations, presented model.Iden
 	return !now.After(operation.ExpiresAt)
 }
 
+// Logout ends one Sender's service access: it revokes that Sender's credential
+// family — both access scopes and the renewal credential — and nothing else. The
+// registration stays active and its Pairings survive, so a later login restores
+// the same installation. Logout takes the lock login, renewal and security
+// revocation take, and validates the presented credential under it, so a
+// delayed logout carrying authority an earlier operation already replaced
+// revokes nothing.
+func (s *Service) Logout(ctx context.Context, request LogoutRequest) (err error) {
+	// A failure that is not an explicit outcome is storage unavailability: the
+	// caller must never read a request the service could not commit as remote
+	// sign-out.
+	defer func() {
+		if err != nil && !isOutcome(err) {
+			err = fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+		}
+	}()
+
+	// A request that offers both of its own authority sources states no single
+	// authority, so it authorizes nothing.
+	if request.AccessToken != "" && request.RefreshToken != "" {
+		return ErrCredentialSourceConflicting
+	}
+
+	// The header carries the Sender's own access authority; its renewal
+	// credential stands in when access has expired.
+	presented, allowed := request.AccessToken, []Scope{ScopeUserSession, ScopeUploader}
+	if presented == "" {
+		presented, allowed = request.RefreshToken, []Scope{ScopeRefresh}
+	}
+	if presented == "" {
+		return ErrCredentialMissing
+	}
+
+	tx, err := s.pool.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	// The credential is read twice for the reason renewal reads it twice: the
+	// first read names the Sender to lock, and only the locked read states
+	// whether this credential still authorizes anything.
+	claimed, err := findCredential(ctx, tx, digest(presented))
+	if err != nil {
+		return err
+	}
+	registration, err := lockSender(ctx, tx, claimed.SenderID)
+	if errors.Is(err, qrm.ErrNoRows) {
+		return ErrCredentialInvalid
+	}
+	if err != nil {
+		return err
+	}
+	if registration.State != model.IdentitySenderRegistrationState_Active {
+		return ErrCredentialRevoked
+	}
+	credential, err := lockCredential(ctx, tx, claimed.TokenDigest)
+	if err != nil {
+		return err
+	}
+	if credential.RevokedAt != nil {
+		return ErrCredentialRevoked
+	}
+	if !credential.ExpiresAt.After(now) {
+		return ErrCredentialExpired
+	}
+	if !slices.Contains(allowed, Scope(credential.Scope)) {
+		return ErrCredentialInvalid
+	}
+
+	if err := revokeSenderCredentials(ctx, tx, credential.SenderID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // revokeForReuse revokes every credential of the family a reused renewal token
 // belongs to, commits that revocation and reports the reuse outcome. The
 // revocation is the point of the operation, so it is committed even though the
@@ -283,6 +361,7 @@ func isOutcome(err error) bool {
 		ErrCredentialInvalid,
 		ErrCredentialExpired,
 		ErrCredentialRevoked,
+		ErrCredentialSourceConflicting,
 		ErrRefreshReuse,
 		ErrOperationSuperseded,
 		ErrOperationMismatch,

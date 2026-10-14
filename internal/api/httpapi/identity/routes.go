@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	domain "github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -18,6 +19,7 @@ const TagIdentity = "identity"
 func Register(api huma.API, service *domain.Service) {
 	registerLogin(api, service)
 	registerRefresh(api, service)
+	registerLogout(api, service)
 }
 
 // registerLogin serves the fresh WeChat login that creates or restores one
@@ -106,5 +108,45 @@ func registerRefresh(api huma.API, service *domain.Service) {
 			Attempt:          input.Body.Attempt,
 		}
 		return output, nil
+	})
+}
+
+// registerLogout serves ordinary logout: one Sender revoking its own service
+// access through exactly one credential source, including while its access
+// credentials have expired. Its description states what logout does not touch
+// and the client's obligation not to claim a sign-out the service never
+// confirmed.
+func registerLogout(api huma.API, service *domain.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "PostAuthLogout",
+		Tags:        []string{TagIdentity},
+		Method:      http.MethodPost,
+		Path:        "/v1/auth/logout",
+		Summary:     "Revoke the Sender's service access",
+		Description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration and without removing its Pairings; other installations and a family a fresh login replaced keep working. " +
+			"The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. " +
+			"Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. " +
+			"A request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. " +
+			"A request that never reached the service revokes nothing, and the client stops forwarding locally at once without claiming remote sign-out it did not receive. " +
+			"Account switching, which also removes this Sender's own Pairings, is not part of this release. " +
+			"This response carries no credential and is never cacheable.",
+		Errors: []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusUnprocessableEntity,
+			http.StatusServiceUnavailable,
+		},
+		// This operation's credential travels in the Authorization header or in
+		// the body, so the published operation states no bearer requirement.
+		Security: []map[string][]string{},
+	}, func(ctx context.Context, input *logoutInput) (*struct{}, error) {
+		request := domain.LogoutRequest{AccessToken: observability.CredentialFrom(ctx)}
+		if input.Body != nil {
+			request.RefreshToken = input.Body.RefreshToken
+		}
+		if err := service.Logout(ctx, request); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	})
 }

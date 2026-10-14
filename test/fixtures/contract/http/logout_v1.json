@@ -1,0 +1,25 @@
+{
+  "operationId": "PostAuthLogout",
+  "path": "/v1/auth/logout",
+  "method": "post",
+  "request": {
+    "schema": "LogoutRequest",
+    "required": [],
+    "properties": ["mode", "refreshToken"]
+  },
+  "success": {
+    "status": "204"
+  },
+  "errors": {
+    "400": ["invalid_request"],
+    "401": [
+      "credential_expired",
+      "credential_invalid",
+      "credential_missing",
+      "credential_revoked"
+    ],
+    "422": ["validation_failed"],
+    "500": ["internal_error"],
+    "503": ["service_unavailable"]
+  }
+}

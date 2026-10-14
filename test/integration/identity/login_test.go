@@ -63,9 +63,10 @@ type bundle struct {
 
 // problem is the decoded whole-request failure payload.
 type problem struct {
-	Status int    `json:"status"`
-	Code   string `json:"code"`
-	Detail string `json:"detail"`
+	Status    int    `json:"status"`
+	Code      string `json:"code"`
+	Detail    string `json:"detail"`
+	RequestID string `json:"requestId"`
 }
 
 // loginEnvironment is one composed service with its disposable database and

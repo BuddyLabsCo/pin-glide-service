@@ -47,6 +47,15 @@ type RefreshBundle struct {
 	Attempt     int    `json:"attempt" doc:"Attempt number this renewal committed"`
 }
 
+// LogoutRequest is the accepted POST /v1/auth/logout body. The body itself is
+// optional: a Sender that still holds access authority sends only the
+// Authorization header, and one whose access has expired sends its renewal
+// credential here instead.
+type LogoutRequest struct {
+	Mode         string `json:"mode,omitempty" enum:"logout" default:"logout" doc:"Logout mode; ordinary logout is the default and the only mode this release implements"`
+	RefreshToken string `json:"refreshToken,omitempty" minLength:"1" maxLength:"512" doc:"Renewal credential F; present exactly when the request carries no Authorization credential"`
+}
+
 type loginInput struct {
 	Body WeChatLoginRequest
 }
@@ -61,6 +70,12 @@ type refreshInput struct {
 
 type refreshOutput struct {
 	Body RefreshBundle
+}
+
+type logoutInput struct {
+	// A pointer makes the whole body optional, so a Sender that holds a valid
+	// access credential sends none.
+	Body *LogoutRequest
 }
 
 // credentialBundle maps one issued family to the payload its holder receives.
