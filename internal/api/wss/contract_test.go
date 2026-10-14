@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +14,10 @@ import (
 
 // fixtureDir holds the shared contract fixtures, relative to this package.
 const fixtureDir = "../../../test/fixtures/contract/asyncapi"
+
+// definitionsPath is the handwritten WSS surface the published description is
+// assembled from.
+const definitionsPath = "../../../protocol/asyncapi.yaml"
 
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -218,4 +223,188 @@ components:
 			}
 		})
 	}
+}
+
+// publishedDefinitions assembles the repository's handwritten WSS surface, so
+// the checks below judge the description this release publishes.
+func publishedDefinitions(t *testing.T) map[string]any {
+	t.Helper()
+
+	definitions, err := os.ReadFile(definitionsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", definitionsPath, err)
+	}
+	shared, err := protocol.WireSchemas()
+	if err != nil {
+		t.Fatalf("wire schemas: %v", err)
+	}
+	assembled, err := Assemble(definitions, shared)
+	if err != nil {
+		t.Fatalf("assemble WSS description: %v", err)
+	}
+	return decode(t, assembled)
+}
+
+// Every closed channel documents the Close meanings of this surface with the
+// codes and reasons the connections actually send, so a client reads one
+// authority instead of a channel description that drifted from the handlers.
+func TestPublishedDescriptionDefinesEveryCloseMeaning(t *testing.T) {
+	channels, ok := publishedDefinitions(t)["channels"].(map[string]any)
+	if !ok || len(channels) == 0 {
+		t.Fatal("the published description declares no channel")
+	}
+
+	want := map[int]protocol.CloseCode{}
+	for _, documented := range protocol.CloseCodes {
+		want[documented.Code] = documented
+	}
+	// Each channel owns its Close list, so a later change to one channel's
+	// meanings cannot silently change another channel's.
+	backings := map[uintptr]string{}
+	for name, value := range channels {
+		channel, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("channel %s is not a mapping", name)
+		}
+		published, ok := channel["x-close-codes"].([]any)
+		if !ok || len(published) == 0 {
+			t.Errorf("channel %s states no Close meanings: %v", name, channel["x-close-codes"])
+			continue
+		}
+		backing := reflect.ValueOf(published).Pointer()
+		if owner, shared := backings[backing]; shared {
+			t.Errorf("channel %s shares its Close meanings with channel %s", name, owner)
+		}
+		backings[backing] = name
+
+		documented := map[int]protocol.CloseCode{}
+		for _, item := range published {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				t.Errorf("channel %s has a Close meaning that is not a mapping: %v", name, item)
+				continue
+			}
+			code, ok := closeCodeValue(entry["code"])
+			if !ok {
+				t.Errorf("channel %s Close meaning has no integer code: %v", name, entry)
+				continue
+			}
+			reason, _ := entry["reason"].(string)
+			documented[code] = protocol.CloseCode{Code: code, Reason: reason}
+		}
+		for code, meaning := range want {
+			stated, found := documented[code]
+			if !found {
+				t.Errorf("channel %s does not document Close %d", name, code)
+				continue
+			}
+			if stated.Reason != meaning.Reason {
+				t.Errorf("channel %s documents Close %d reason %q, want %q", name, code, stated.Reason, meaning.Reason)
+			}
+			if _, reason := closeMeaning(intentForCode(t, code)); reason != meaning.Reason {
+				t.Errorf("Close %d sends reason %q, want the documented %q", code, reason, meaning.Reason)
+			}
+		}
+	}
+}
+
+// closeCodeValue reads one published Close code, whose YAML form is a number
+// the decoder may represent as either signed or unsigned.
+func closeCodeValue(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case uint64:
+		return int(typed), true
+	default:
+		return 0, false
+	}
+}
+
+// intentForCode names the intent one documented Close code belongs to, so the
+// published meaning and the connection that closes are compared by code.
+func intentForCode(t *testing.T, code int) closeIntent {
+	t.Helper()
+
+	for _, means := range closeCodes {
+		if int(means.code) == code {
+			return means.intent
+		}
+	}
+	t.Fatalf("Close %d has no runtime meaning", code)
+	return closeNothing
+}
+
+// The published error message states every business code the service can send,
+// so a client reads the accepted set from the description and a code added to
+// the relay cannot ship without the contract that documents it.
+func TestPublishedDescriptionDefinesEveryReportedErrorCode(t *testing.T) {
+	want := map[string]bool{}
+	for _, outcome := range frameCodes {
+		want[string(outcome.code)] = true
+	}
+	want[string(protocol.InternalError)] = true
+	want[string(recoverableCode(t))] = true
+
+	declared := publishedErrorCodes(t)
+	if len(declared) == 0 {
+		t.Fatal("the published description does not state the error message's business codes")
+	}
+	for reported := range want {
+		if !declared[reported] {
+			t.Errorf("the service reports %q but the published description does not define it", reported)
+		}
+	}
+
+	// A code the registry does not carry is not reported as defined, so the
+	// check above cannot pass by accepting everything.
+	if declared["not_a_published_code"] {
+		t.Error("a code the registry does not carry was reported as defined")
+	}
+}
+
+// publishedErrorCodes returns the business codes the published error message
+// declares, keyed by the value a client matches on.
+func publishedErrorCodes(t *testing.T) map[string]bool {
+	t.Helper()
+
+	schemas, ok := publishedDefinitions(t)["components"].(map[string]any)["schemas"].(map[string]any)
+	if !ok {
+		t.Fatal("the published description embeds no shared schema mapping")
+	}
+	errorSchema, ok := schemas["WSSError"].(map[string]any)
+	if !ok {
+		t.Fatal("the published description does not embed the error message schema")
+	}
+	available, ok := errorSchema["x-error-codes"].([]any)
+	if !ok {
+		t.Fatal("the published error message states no business code")
+	}
+	declared := map[string]bool{}
+	for _, item := range available {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("the published error message carries a code entry that is not a mapping: %v", item)
+		}
+		code, ok := entry["code"].(string)
+		if !ok {
+			t.Fatalf("the published error message carries an entry without a code: %v", entry)
+		}
+		declared[code] = true
+	}
+	return declared
+}
+
+// recoverableCode returns the code one recoverable frame failure reports, so
+// the set of codes a client can receive covers both outcomes.
+func recoverableCode(t *testing.T) protocol.ErrorCode {
+	t.Helper()
+
+	code := frameErrorCodeOf(errUnreachablePeer())
+	if code == protocol.InternalError {
+		t.Fatal("a recoverable frame failure does not report a business code")
+	}
+	return code
 }

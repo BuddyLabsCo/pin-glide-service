@@ -50,6 +50,10 @@ func NewPairingSocket(sessions PairingSessions, hub *Hub, logger *slog.Logger) *
 func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) error {
 	defer release()
 
+	if !subprotocolAccepted(request) {
+		return ErrSubprotocolRequired
+	}
+
 	now := time.Now().UTC()
 	participant, err := s.authenticate(request.Context(), sessionID, now)
 	if err != nil {
@@ -136,7 +140,7 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 func (s *PairingSocket) relay(ctx context.Context, sender pairing.Resolved, frame []byte) error {
 	message, err := decodeRelay(frame)
 	if err != nil {
-		return protocolClose(closeProtocolError, err, frameDetail(err))
+		return protocolClose(relayCloseIntent(err), err, frameDetail(err))
 	}
 	if message.SessionID != sender.Session.ID {
 		return protocolClose(closeProtocolError, errMalformedFrame{}, frameDetail(errMalformedFrame{}))
@@ -191,7 +195,9 @@ func (s *PairingSocket) SessionChanged(sessionID string, view pairing.View) {
 			ExpiresAt:  view.ExpiresAt,
 		})
 	case pairing.StateCompleted, pairing.StateCanceled, pairing.StateSuperseded, pairing.StateExpired:
-		s.hub.CloseSession(sessionID)
+		// The session no longer authorizes this channel, so it ends with the
+		// policy meaning the published description states.
+		s.hub.CloseSession(sessionID, closePolicy)
 	}
 }
 

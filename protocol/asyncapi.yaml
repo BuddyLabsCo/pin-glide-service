@@ -130,6 +130,31 @@ operations:
       - $ref: '#/channels/pairingSessionEvents/messages/credentialReady'
       - $ref: '#/channels/pairingSessionEvents/messages/error'
 
+  acceptReceiverApplicationFrame:
+    action: receive
+    channel:
+      $ref: '#/channels/receiverEvents'
+    summary: Accept a Receiver's application frame
+    description: |-
+      The delivery and Receipt messages this channel carries arrive with live
+      delivery. Until they are published, a text application frame is a
+      protocol error and closes with 1002.
+    security:
+      - $ref: '#/components/securitySchemes/receiverCredential'
+    messages: []
+  publishReceiverControl:
+    action: send
+    channel:
+      $ref: '#/channels/receiverEvents'
+    summary: Keep the delivery connection alive
+    description: |-
+      The service sends native Ping control frames and answers Pong. Close
+      carries the meanings the channel describes; delivery and Receipt messages
+      join this direction with live delivery.
+    security:
+      - $ref: '#/components/securitySchemes/receiverCredential'
+    messages: []
+
 components:
   securitySchemes:
     sessionCredential:
@@ -139,6 +164,13 @@ components:
         The session's restricted pairing credential, or the management
         credential of the Sender that claimed the session. The service derives
         the participant side from whichever credential authenticated.
+    receiverCredential:
+      type: http
+      scheme: bearer
+      description: |-
+        The Receiver's credential, presented on the upgrade request of its one
+        delivery connection. The Receiver identity comes from the authenticated
+        connection rather than from a frame.
   messages:
     pairingState:
       name: pairing_state

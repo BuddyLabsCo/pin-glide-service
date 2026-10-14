@@ -297,6 +297,7 @@ var businessOutcomes = []struct {
 	{pairing.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{wss.ErrReceiverAlreadyConnected, protocol.ReceiverAlreadyConnected},
 	{wss.ErrReceiverUnavailable, protocol.ServiceUnavailable},
+	{wss.ErrSubprotocolRequired, protocol.InvalidRequest},
 }
 
 // codeForStatus names the code reported when the service has only an HTTP

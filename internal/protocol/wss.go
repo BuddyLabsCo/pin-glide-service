@@ -8,6 +8,54 @@ const WSSVersion = 1
 // Subprotocol is the WebSocket subprotocol the service negotiates.
 const Subprotocol = "pin-glide.v1"
 
+// WSSCode is one stable machine-readable code the WSS surface reports. The
+// published description carries the same set, so a code the service can send
+// belongs in WSSCodes.
+type WSSCode struct {
+	// Code is the value clients match on.
+	Code ErrorCode
+	// Description is the stable English explanation the published description
+	// carries for this code.
+	Description string
+}
+
+// WSSCodes lists every business code the WSS surface reports in an error
+// message. An unfamiliar code is still a failure for a client, so this set only
+// grows with a compatible addition and never changes an existing meaning.
+var WSSCodes = []WSSCode{
+	{InvalidRequest, "The received frame is not a message this direction accepts."},
+	{ResourceNotFound, "The Pairing Session does not exist or is not visible to this participant."},
+	{CredentialInvalid, "The presented credential does not authorize this Pairing Session."},
+	{CredentialExpired, "The presented credential has expired."},
+	{PairingSessionExpired, "The Pairing Session passed its absolute lifetime."},
+	{PairingSessionClosed, "The Pairing Session may no longer relay; it completed, was canceled or was superseded."},
+	{PairingNotReady, "The session cannot relay this frame yet, for example because the other participant is not connected."},
+	{ServiceUnavailable, "The service or its storage is temporarily unavailable."},
+	{InternalError, "An unexpected server failure occurred."},
+}
+
+// CloseCode is one documented WebSocket Close meaning of the v1 surface.
+type CloseCode struct {
+	// Code is the standard WebSocket status code.
+	Code int
+	// Reason is the short machine-readable reason the service sends with it.
+	// It is empty only for a close that sends no reason.
+	Reason string
+	// Description states when the service ends a connection this way.
+	Description string
+}
+
+// CloseCodes lists the adopted close meanings in the order the published
+// description documents them. A normal close carries no reason.
+var CloseCodes = []CloseCode{
+	{1000, "", "The connection ended normally."},
+	{1001, "service_shutdown", "The service is shutting down."},
+	{1002, "protocol_error", "The connection sent a frame that is not an accepted message of this protocol version, type or shape."},
+	{1007, "invalid_payload", "The connection sent text that is not valid UTF-8."},
+	{1008, "policy_violation", "The connection's credential, session or policy no longer authorizes it."},
+	{1011, "internal_error", "An unexpected server failure ended the connection."},
+}
+
 // PairingRelayIn is one opaque handshake message a participant sends. The
 // service neither inspects nor keeps the payload.
 type PairingRelayIn struct {

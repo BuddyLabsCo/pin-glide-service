@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -70,6 +71,7 @@ func Assemble(definitions []byte, shared map[string]any) ([]byte, error) {
 	if _, defined := components["schemas"]; defined {
 		return nil, errors.New("WSS definitions must not define payload schemas: they are generated from internal/protocol")
 	}
+	addCloseCodes(document)
 
 	embedded, err := embedSchemas(document, shared)
 	if err != nil {
@@ -84,6 +86,7 @@ func Assemble(definitions []byte, shared map[string]any) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("shared schema %q is not an object", name)
 		}
+		addErrorCodes(name, object)
 		embedded[name] = object
 	}
 	components["schemas"] = embedded
@@ -93,6 +96,52 @@ func Assemble(definitions []byte, shared map[string]any) ([]byte, error) {
 		return nil, fmt.Errorf("encode WSS description: %w", err)
 	}
 	return append([]byte(descriptionHeader), assembled...), nil
+}
+
+// addCloseCodes states every channel's Close meanings from internal/protocol,
+// so the published description and the connections that close carry one
+// authority instead of a repeated table. Close belongs to a channel, so each
+// declared channel receives the complete documented set.
+func addCloseCodes(document map[string]any) {
+	channels, _ := document["channels"].(map[string]any)
+	if len(channels) == 0 {
+		return
+	}
+
+	codes := make([]any, 0, len(protocol.CloseCodes))
+	for _, close := range protocol.CloseCodes {
+		codes = append(codes, map[string]any{
+			"code":        close.Code,
+			"reason":      close.Reason,
+			"description": close.Description,
+		})
+	}
+	for _, value := range channels {
+		channel, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Each channel states its own list, so one document edit cannot reach
+		// the channels assembled beside it.
+		channel["x-close-codes"] = slices.Clone(codes)
+	}
+}
+
+// addErrorCodes states the business codes the error message carries, so a
+// client reads the accepted set from the description rather than inferring it
+// from an open string field.
+func addErrorCodes(name string, schema map[string]any) {
+	if name != "WSSError" {
+		return
+	}
+	codes := make([]any, 0, len(protocol.WSSCodes))
+	for _, code := range protocol.WSSCodes {
+		codes = append(codes, map[string]any{
+			"code":        string(code.Code),
+			"description": code.Description,
+		})
+	}
+	schema["x-error-codes"] = codes
 }
 
 // componentsOf returns the document's components mapping, creating an empty one

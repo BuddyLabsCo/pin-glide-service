@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/coder/websocket"
 )
 
@@ -69,7 +70,8 @@ func TestPairingChannelRelaysOnlyBetweenItsParticipants(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}},
+		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + token}},
+		Subprotocols: []string{protocol.Subprotocol},
 	}); err == nil {
 		_ = socket.CloseNow()
 		t.Fatal("a restricted credential subscribed to another session")
@@ -195,7 +197,8 @@ func assertSubscriptionRejected(t *testing.T, environment *environment, sessionI
 	url := "ws" + strings.TrimPrefix(environment.service.BaseURL, "http") +
 		"/v1/pairing-sessions/" + sessionID + "/events"
 	socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + rejected.credential}},
+		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + rejected.credential}},
+		Subprotocols: []string{protocol.Subprotocol},
 	})
 	if err == nil {
 		_ = socket.CloseNow()
