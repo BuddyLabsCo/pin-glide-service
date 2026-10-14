@@ -5,6 +5,22 @@ import (
 	"sync"
 )
 
+type sessionAdmissionContextKey struct{}
+
+// WithSessionAdmission attaches the admission release of the current request,
+// so a handler whose work outlives its transport holds that admission until
+// the work is really finished.
+func WithSessionAdmission(ctx context.Context, release func()) context.Context {
+	return context.WithValue(ctx, sessionAdmissionContextKey{}, release)
+}
+
+// SessionAdmissionFrom returns the admission release of the current request.
+// A caller that takes it owns calling it exactly once.
+func SessionAdmissionFrom(ctx context.Context) func() {
+	release, _ := ctx.Value(sessionAdmissionContextKey{}).(func())
+	return release
+}
+
 // Admission is the bounded admission gate for runtime work. Requests use it
 // now; WSS connections and admitted Deliveries extend it by holding a token for
 // work that outlives its transport. Shutdown closes the gate to reject new work

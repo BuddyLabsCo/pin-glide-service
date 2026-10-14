@@ -24,6 +24,25 @@ const (
 	// DeviceRegistrationRevoked marks an owned Sender registration that
 	// security revocation closed permanently.
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
+	// CredentialMissing marks a protected operation without a credential.
+	CredentialMissing ErrorCode = "credential_missing"
+	// CredentialInvalid marks a credential that authorizes nothing here.
+	CredentialInvalid ErrorCode = "credential_invalid"
+	// CredentialExpired marks a credential past its recorded lifetime.
+	CredentialExpired ErrorCode = "credential_expired"
+	// FreshIdentityRequired marks an operation that needs fresh owner
+	// verification.
+	FreshIdentityRequired ErrorCode = "fresh_identity_required"
+	// ReceiverLimitReached marks the five-Receiver association limit.
+	ReceiverLimitReached ErrorCode = "receiver_limit_reached"
+	// PairingSessionClaimed marks a session another Sender already claimed.
+	PairingSessionClaimed ErrorCode = "pairing_session_claimed"
+	// PairingSessionExpired marks an authorized caller's expired session.
+	PairingSessionExpired ErrorCode = "pairing_session_expired"
+	// PairingSessionClosed marks a canceled or activated session.
+	PairingSessionClosed ErrorCode = "pairing_session_closed"
+	// PairingNotReady marks a completion report that no side can apply yet.
+	PairingNotReady ErrorCode = "pairing_not_ready"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.

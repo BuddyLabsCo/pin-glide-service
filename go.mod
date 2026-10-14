@@ -3,6 +3,7 @@ module github.com/BuddyLabsCo/pin-glide-service
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-jet/jet/v2 v2.16.0
 	github.com/goccy/go-yaml v1.19.2

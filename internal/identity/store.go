@@ -113,6 +113,21 @@ func insertCredentials(ctx context.Context, tx *sql.Tx, familyID string, bundle 
 	return err
 }
 
+// findAccount reads the Account one verified WeChat identity belongs to.
+func findAccount(ctx context.Context, db qrm.Queryable, verified WeChatIdentity) (string, error) {
+	var account model.IdentityAccounts
+	err := table.IdentityAccounts.
+		SELECT(table.IdentityAccounts.ID).
+		FROM(table.IdentityAccounts).
+		WHERE(table.IdentityAccounts.WechatAppID.EQ(postgres.String(verified.AppID)).
+			AND(table.IdentityAccounts.WechatOpenID.EQ(postgres.String(verified.OpenID)))).
+		QueryContext(ctx, db, &account)
+	if errors.Is(err, qrm.ErrNoRows) {
+		return "", ErrSenderNotFound
+	}
+	return account.ID, err
+}
+
 // findCredential reads the credential record for a digest. The digest is the
 // only credential value the database holds.
 func findCredential(ctx context.Context, db qrm.Queryable, tokenDigest string) (model.IdentityCredentials, error) {
