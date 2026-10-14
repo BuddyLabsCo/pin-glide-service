@@ -102,6 +102,20 @@ func TestReceiverDeliveryChannelClosesOnAnUnknownMessageType(t *testing.T) {
 	socket.requireCloseFrame(t, int(websocket.StatusProtocolError))
 }
 
+// Only text frames are part of this channel, so a binary frame is a
+// message-type violation rather than an encoding outcome and closes with 1002.
+func TestReceiverDeliveryChannelClosesOnABinaryFrame(t *testing.T) {
+	environment := start(t)
+	issued := environment.redeemReceiver(t, "code-receiver-binary", "openid-receiver-binary", "op-receiver-binary")
+
+	socket := dialRawSocket(t, environment.service.BaseURL, "/v1/receiver/events",
+		issued.ReceiverToken, protocol.Subprotocol)
+	socket.writeFrame(t, rawBinary, []byte{0x01, 0x02})
+	if reason := socket.requireCloseFrame(t, int(websocket.StatusProtocolError)); reason != "protocol_error" {
+		t.Errorf("a binary frame closed with reason %q, want protocol_error", reason)
+	}
+}
+
 // Text the service cannot read as UTF-8 closes with 1007. A conforming client
 // library cannot send such a frame, so the test writes the bytes itself.
 func TestReceiverDeliveryChannelClosesOnInvalidTextEncoding(t *testing.T) {

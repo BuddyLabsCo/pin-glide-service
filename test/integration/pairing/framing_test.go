@@ -144,6 +144,70 @@ func TestPairingChannelClosesOnInvalidTextEncoding(t *testing.T) {
 	}
 }
 
+// Only text frames are part of this protocol, so a binary frame is a
+// message-type violation rather than an encoding outcome and closes with 1002.
+func TestPairingChannelClosesOnABinaryFrame(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-pairing-binary", "openid-pairing-binary")
+	created, token := environment.createSession(t, "new_receiver", "", "")
+	environment.authorize(t, created.SessionID, "", sender.UserSession.Token)
+
+	socket := dialRawSocket(t, environment.service.BaseURL,
+		"/v1/pairing-sessions/"+created.SessionID+"/events", token, protocol.Subprotocol)
+	var snapshot struct {
+		Type string `json:"type"`
+	}
+	socket.receiveMessage(t, rawText, &snapshot)
+
+	socket.writeFrame(t, rawBinary, []byte{0x01, 0x02})
+	if reason := socket.requireCloseFrame(t, int(websocket.StatusProtocolError)); reason != "protocol_error" {
+		t.Errorf("a binary frame closed with reason %q, want protocol_error", reason)
+	}
+}
+
+// Storage that fails while a session is live says nothing about the
+// participant's authority, so the failure is reported on the still-usable
+// channel instead of ending it with the policy meaning.
+func TestPairingChannelReportsStorageFailureWithoutEndingTheChannel(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-pairing-storage", "openid-pairing-storage")
+	created, token := environment.createSession(t, "new_receiver", "", "")
+	environment.authorize(t, created.SessionID, "", sender.UserSession.Token)
+
+	socket := environment.dial(t, created.SessionID, token)
+	readInitialSnapshot(t, socket)
+	environment.stopDatabase(t)
+
+	writeFrame(t, socket, relayFrame(created.SessionID,
+		base64.StdEncoding.EncodeToString([]byte("while-storage-is-gone"))))
+
+	var reported struct {
+		Type      string `json:"type"`
+		RequestID string `json:"requestId"`
+		SessionID string `json:"sessionId"`
+		Error     struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	readFrame(t, socket, &reported)
+	if reported.Type != "error" || reported.Error.Code != "service_unavailable" {
+		t.Fatalf("storage failure = %+v, want a service_unavailable error frame", reported)
+	}
+	if reported.RequestID == "" || reported.SessionID != created.SessionID {
+		t.Errorf("storage failure = %+v, want the request ID and session a client correlates against", reported)
+	}
+
+	// The failure is recoverable, so the channel keeps serving: a read that
+	// only runs out of time proves the service did not end it.
+	readTimeout, cancelRead := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelRead()
+	if _, _, err := socket.Read(readTimeout); err == nil {
+		t.Error("the channel sent traffic after a storage failure")
+	} else if websocket.CloseStatus(err) != -1 {
+		t.Errorf("a storage failure ended the channel: %v", err)
+	}
+}
+
 // A session that may no longer relay ends its live channel with the policy
 // meaning, so a client learns the channel is closed instead of waiting for
 // traffic that will not arrive.

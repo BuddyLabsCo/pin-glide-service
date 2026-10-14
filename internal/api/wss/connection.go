@@ -44,26 +44,16 @@ const (
 // an upgrade answer it never negotiated is refused before the 101.
 var ErrSubprotocolRequired = errors.New("pin-glide.v1 subprotocol required")
 
-// closeMeans is the published meaning of one close intent: the standard status
-// code, and the short machine-readable reason the service sends with it. A
-// reason never carries a secret value, so it stays safe on a transport anyone
-// on the path can read.
-type closeMeans struct {
-	intent closeIntent
-	code   websocket.StatusCode
-	reason string
-}
-
-// closeCodes lists the close meanings the v1 surface uses, in the order the
-// published description documents them. It is the single authority for the code
-// and reason of each intent.
-var closeCodes = []closeMeans{
-	{intent: closeNothing, code: websocket.StatusNormalClosure, reason: ""},
-	{intent: closeGoingAway, code: websocket.StatusGoingAway, reason: "service_shutdown"},
-	{intent: closeProtocolError, code: websocket.StatusProtocolError, reason: "protocol_error"},
-	{intent: closeInvalidPayload, code: websocket.StatusInvalidFramePayloadData, reason: "invalid_payload"},
-	{intent: closePolicy, code: websocket.StatusPolicyViolation, reason: "policy_violation"},
-	{intent: closeInternal, code: websocket.StatusInternalError, reason: "internal_error"},
+// closeCodes names the standard WebSocket status code of each close intent. The
+// reason that travels with a Close comes from protocol.CloseCodes, so the
+// published description and the connections that close carry one authority.
+var closeCodes = map[closeIntent]websocket.StatusCode{
+	closeNothing:        websocket.StatusNormalClosure,
+	closeGoingAway:      websocket.StatusGoingAway,
+	closeProtocolError:  websocket.StatusProtocolError,
+	closeInvalidPayload: websocket.StatusInvalidFramePayloadData,
+	closePolicy:         websocket.StatusPolicyViolation,
+	closeInternal:       websocket.StatusInternalError,
 }
 
 // subprotocolAccepted reports whether one upgrade offered the subprotocol the
@@ -150,7 +140,7 @@ func (c *Connection) Serve(ctx context.Context, relay func(frame []byte) error) 
 			break
 		}
 		if messageType != websocket.MessageText {
-			c.Close(closeInvalidPayload)
+			c.Close(closeProtocolError)
 			break
 		}
 		// A text frame the service cannot read as UTF-8 is an invalid payload
@@ -257,12 +247,11 @@ func (c *Connection) reportFrameError(ctx context.Context, err error) bool {
 // closeMeaning maps one intent to the standard status code and a short
 // machine-readable reason, never secret data.
 func closeMeaning(intent closeIntent) (websocket.StatusCode, string) {
-	for _, means := range closeCodes {
-		if means.intent == intent {
-			return means.code, means.reason
-		}
+	code, known := closeCodes[intent]
+	if !known {
+		return websocket.StatusNormalClosure, ""
 	}
-	return websocket.StatusNormalClosure, ""
+	return code, protocol.CloseReason(int(code))
 }
 
 // discardOutput drops the diagnostics of a connection composed without a

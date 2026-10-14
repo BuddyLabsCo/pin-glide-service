@@ -140,7 +140,7 @@ func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now 
 func (s *PairingSocket) relay(ctx context.Context, sender pairing.Resolved, frame []byte) error {
 	message, err := decodeRelay(frame)
 	if err != nil {
-		return protocolClose(relayCloseIntent(err), err, frameDetail(err))
+		return protocolClose(closeProtocolError, err, frameDetail(err))
 	}
 	if message.SessionID != sender.Session.ID {
 		return protocolClose(closeProtocolError, errMalformedFrame{}, frameDetail(errMalformedFrame{}))
@@ -148,6 +148,12 @@ func (s *PairingSocket) relay(ctx context.Context, sender pairing.Resolved, fram
 
 	session, err := s.sessions.SessionByID(ctx, sender.Session.ID)
 	if err != nil {
+		// Storage that cannot answer says nothing about the session's
+		// authority, so the participant learns a recoverable failure and keeps
+		// the channel it can retry on.
+		if errors.Is(err, pairing.ErrStorageUnavailable) {
+			return recoverable(protocol.ServiceUnavailable, frameDetail(err))
+		}
 		return protocolClose(closePolicy, err, frameDetail(err))
 	}
 	if err := session.TerminalError(time.Now().UTC()); err != nil {

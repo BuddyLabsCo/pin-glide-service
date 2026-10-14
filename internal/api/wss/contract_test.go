@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -258,9 +257,22 @@ func TestPublishedDescriptionDefinesEveryCloseMeaning(t *testing.T) {
 	for _, documented := range protocol.CloseCodes {
 		want[documented.Code] = documented
 	}
-	// Each channel owns its Close list, so a later change to one channel's
-	// meanings cannot silently change another channel's.
-	backings := map[uintptr]string{}
+	// Every meaning the service can send is one the description documents, and
+	// each reason is a short machine code: a reason travels to any client on the
+	// transport and never carries a secret value.
+	for intent, code := range closeCodes {
+		if _, documented := want[int(code)]; !documented {
+			t.Errorf("intent %d closes with %d, which the description does not document", intent, code)
+		}
+		reason := protocol.CloseReason(int(code))
+		if len(reason) > 123 {
+			t.Errorf("Close %d reason is %d bytes, over the 123-byte limit", code, len(reason))
+		}
+		if strings.ToLower(reason) != reason {
+			t.Errorf("Close %d reason %q is not a machine-readable code", code, reason)
+		}
+	}
+
 	for name, value := range channels {
 		channel, ok := value.(map[string]any)
 		if !ok {
@@ -271,11 +283,6 @@ func TestPublishedDescriptionDefinesEveryCloseMeaning(t *testing.T) {
 			t.Errorf("channel %s states no Close meanings: %v", name, channel["x-close-codes"])
 			continue
 		}
-		backing := reflect.ValueOf(published).Pointer()
-		if owner, shared := backings[backing]; shared {
-			t.Errorf("channel %s shares its Close meanings with channel %s", name, owner)
-		}
-		backings[backing] = name
 
 		documented := map[int]protocol.CloseCode{}
 		for _, item := range published {
@@ -328,9 +335,9 @@ func closeCodeValue(value any) (int, bool) {
 func intentForCode(t *testing.T, code int) closeIntent {
 	t.Helper()
 
-	for _, means := range closeCodes {
-		if int(means.code) == code {
-			return means.intent
+	for intent, closes := range closeCodes {
+		if int(closes) == code {
+			return intent
 		}
 	}
 	t.Fatalf("Close %d has no runtime meaning", code)

@@ -284,15 +284,14 @@ func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot) {
 
 	messageType, data, err := slot.socket.Read(ctx)
 	if err == nil {
-		if messageType != websocket.MessageText {
-			_ = slot.socket.Close(websocket.StatusInvalidFramePayloadData, "invalid_payload")
-		} else if !utf8.Valid(data) {
-			// Text the service cannot read is an invalid payload, not a
-			// protocol or business failure.
-			_ = slot.socket.Close(websocket.StatusInvalidFramePayloadData, "invalid_payload")
-		} else {
-			_ = slot.socket.Close(websocket.StatusProtocolError, "protocol_error")
+		// Only text frames are part of this channel: text the service cannot
+		// read is an invalid payload, and every other message is a protocol
+		// error rather than traffic the service silently ignores.
+		intent := closeProtocolError
+		if messageType == websocket.MessageText && !utf8.Valid(data) {
+			intent = closeInvalidPayload
 		}
+		_ = slot.socket.Close(closeMeaning(intent))
 	}
 
 	// The reader owns the end of the connection, so it also ends the connection's

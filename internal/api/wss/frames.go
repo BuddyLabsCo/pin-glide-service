@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"unicode/utf8"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -38,24 +37,11 @@ func recoverable(code protocol.ErrorCode, detail string) error {
 	return &frameError{code: code, detail: detail, recoverable: true}
 }
 
-// relayCloseIntent names the close meaning of one frame failure: bytes the
-// service cannot read as UTF-8 are an invalid payload, and every other shape,
-// version or type mismatch is a protocol error.
-func relayCloseIntent(err error) closeIntent {
-	var encoding errInvalidFrameEncoding
-	if errors.As(err, &encoding) {
-		return closeInvalidPayload
-	}
-	return closeProtocolError
-}
-
-// decodeRelay validates one pairing_relay frame and returns it. Only shape and
-// encoding are checked here; the session's authority and state decide whether
-// the frame may be relayed at all.
+// decodeRelay validates one pairing_relay frame and returns it. Only shape is
+// checked here, because the connection has already refused a frame that is not
+// valid UTF-8 text; the session's authority and state decide whether the frame
+// may be relayed at all.
 func decodeRelay(frame []byte) (protocol.PairingRelayIn, error) {
-	if !utf8.Valid(frame) {
-		return protocol.PairingRelayIn{}, errInvalidFrameEncoding{}
-	}
 	var message protocol.PairingRelayIn
 	if err := json.Unmarshal(frame, &message); err != nil {
 		return protocol.PairingRelayIn{}, errMalformedFrame{}
@@ -81,12 +67,6 @@ type errMalformedFrame struct{}
 
 func (errMalformedFrame) Error() string { return "malformed pairing frame" }
 
-// errInvalidFrameEncoding marks a text frame the service cannot read as UTF-8.
-// It maps to the invalid-payload meaning rather than a protocol failure.
-type errInvalidFrameEncoding struct{}
-
-func (errInvalidFrameEncoding) Error() string { return "frame is not valid UTF-8 text" }
-
 // frameCode maps one typed frame failure to the stable code the service
 // reports for it. The published description carries exactly this set of codes,
 // so a business outcome added here belongs in the description as well.
@@ -105,7 +85,6 @@ var frameCodes = []frameCode{
 	{pairing.ErrSessionNotFound, protocol.ResourceNotFound},
 	{pairing.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{errMalformedFrame{}, protocol.InvalidRequest},
-	{errInvalidFrameEncoding{}, protocol.InvalidRequest},
 }
 
 // frameErrorCodeOf names the stable code a frame failure reports.
@@ -126,8 +105,7 @@ func frameErrorCodeOf(cause error) protocol.ErrorCode {
 // includes the rejected frame or any credential.
 func frameDetail(err error) string {
 	var malformed errMalformedFrame
-	var encoding errInvalidFrameEncoding
-	if errors.As(err, &malformed) || errors.As(err, &encoding) {
+	if errors.As(err, &malformed) {
 		return "The frame is not a valid pairing_relay message."
 	}
 	return "The Pairing Session cannot relay this frame."

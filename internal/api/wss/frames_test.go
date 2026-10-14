@@ -2,7 +2,6 @@ package wss
 
 import (
 	"encoding/base64"
-	"errors"
 	"testing"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -43,35 +42,6 @@ func TestRelayFrameCodecRejectsMalformedFrames(t *testing.T) {
 			t.Errorf("%s was accepted", name)
 		} else if code := frameErrorCodeOf(err); code != protocol.InvalidRequest {
 			t.Errorf("%s reported %q, want %q", name, code, protocol.InvalidRequest)
-		} else if intent := relayCloseIntent(err); intent != closeProtocolError {
-			t.Errorf("%s closes with intent %d, want the protocol error", name, intent)
 		}
-	}
-}
-
-// Text the service cannot read as UTF-8 is an invalid payload rather than a
-// version, type or shape violation, so it has its own Close meaning.
-func TestRelayFrameCodecClassifiesInvalidTextEncoding(t *testing.T) {
-	frame := append([]byte(`{"version":1,"type":"pairing_relay","sessionId":"session-a","payload":"`), 0xff)
-	frame = append(frame, []byte(`"}`)...)
-
-	_, err := decodeRelay(frame)
-	if err == nil {
-		t.Fatal("a frame that is not valid UTF-8 was accepted")
-	}
-	if intent := relayCloseIntent(err); intent != closeInvalidPayload {
-		t.Errorf("invalid text encoding closes with intent %d, want the invalid payload", intent)
-	}
-	if code := frameErrorCodeOf(err); code != protocol.InvalidRequest {
-		t.Errorf("invalid text encoding reports %q, want %q", code, protocol.InvalidRequest)
-	}
-}
-
-// The classification stays total: an unexpected failure is a protocol error
-// rather than an invalid payload, so a bug does not become a client-visible
-// encoding outcome.
-func TestRelayCloseIntentDefaultsToAProtocolError(t *testing.T) {
-	if intent := relayCloseIntent(errors.New("unexpected")); intent != closeProtocolError {
-		t.Errorf("an unexpected frame failure closes with intent %d, want the protocol error", intent)
 	}
 }

@@ -56,6 +56,19 @@ var CloseCodes = []CloseCode{
 	{1011, "internal_error", "An unexpected server failure ended the connection."},
 }
 
+// CloseReason returns the machine-readable reason the published description
+// states for one Close code, so the connections that close and the description
+// carry one authority. A code this surface does not document closes with no
+// reason.
+func CloseReason(code int) string {
+	for _, close := range CloseCodes {
+		if close.Code == code {
+			return close.Reason
+		}
+	}
+	return ""
+}
+
 // PairingRelayIn is one opaque handshake message a participant sends. The
 // service neither inspects nor keeps the payload.
 type PairingRelayIn struct {
@@ -100,7 +113,7 @@ type CredentialReady struct {
 type WSSError struct {
 	Version   int          `json:"version" doc:"Application message version; always 1"`
 	Type      string       `json:"type" doc:"Message type; error"`
-	RequestID string       `json:"requestId,omitempty" doc:"Correlation identifier of the operation"`
+	RequestID string       `json:"requestId" doc:"Correlation identifier of the operation; every recoverable failure states one"`
 	SessionID string       `json:"sessionId,omitempty" doc:"Pairing Session when it is readable"`
 	Error     WSSErrorItem `json:"error" doc:"Stable business error"`
 }

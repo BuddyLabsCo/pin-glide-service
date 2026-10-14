@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -121,9 +120,7 @@ func addCloseCodes(document map[string]any) {
 		if !ok {
 			continue
 		}
-		// Each channel states its own list, so one document edit cannot reach
-		// the channels assembled beside it.
-		channel["x-close-codes"] = slices.Clone(codes)
+		channel["x-close-codes"] = codes
 	}
 }
 

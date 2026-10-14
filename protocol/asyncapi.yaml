@@ -41,7 +41,8 @@ channels:
       reconnect receives the current state and nothing sent before it.
 
       A subscription the service rejects before upgrading is an ordinary HTTP
-      problem detail: 401 credential_missing, credential_invalid or
+      problem detail: 400 invalid_request when the upgrade did not offer the
+      pin-glide.v1 subprotocol, 401 credential_missing, credential_invalid or
       credential_expired, 404 resource_not_found, 410 pairing_session_expired or
       pairing_session_closed, or 503 service_unavailable. A credential's own
       validity is decided before the protected session state, so an expired
@@ -83,12 +84,13 @@ channels:
     title: Receiver delivery channel
     description: |-
       The single long-lived delivery channel of one Receiver, authenticated by
-      its Receiver credential on the upgrade request. One Receiver generation
-      has one reserved or active slot: a second handshake with the same
-      credential is rejected before the upgrade with HTTP 409
-      receiver_already_connected and never evicts the connection that already
-      holds the slot. A rejected handshake leaves that connection's presence
-      unchanged.
+      its Receiver credential on the upgrade request. An upgrade must offer the
+      pin-glide.v1 subprotocol, and one that does not is rejected before the
+      upgrade with HTTP 400 invalid_request. One Receiver generation has one
+      reserved or active slot: a second handshake with the same credential is
+      rejected before the upgrade with HTTP 409 receiver_already_connected and
+      never evicts the connection that already holds the slot. A rejected
+      handshake leaves that connection's presence unchanged.
 
       This connection is the Receiver's liveness. Online begins with the
       committed upgrade, and the owning Sender's Receiver list reports the
