@@ -23,6 +23,10 @@ type receiverStub struct {
 	mutex   sync.Mutex
 	current map[string]int64
 	refuse  bool
+	// entered reports that an upgrade reached the final commit, and gate holds
+	// it there until a test releases it.
+	entered chan struct{}
+	gate    chan struct{}
 }
 
 // newReceiverStub composes a stub whose Receivers each admit generation 1.
@@ -55,11 +59,33 @@ func (s *receiverStub) AdmitReceiver(_ context.Context, credential string, _ tim
 // upgrade was in flight.
 func (s *receiverStub) ConfirmReceiverConnection(_ context.Context, receiverID string, generation int64) error {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if s.refuse || s.current[receiverID] != generation {
+	refuse, current := s.refuse, s.current[receiverID]
+	entered, gate := s.entered, s.gate
+	s.mutex.Unlock()
+
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if gate != nil {
+		<-gate
+	}
+	if refuse || current != generation {
 		return pairing.ErrCredentialInvalid
 	}
 	return nil
+}
+
+// holdConfirm makes the next final commit report that it arrived and wait, so a
+// test can end the channel while one upgrade is still committing.
+func (s *receiverStub) holdConfirm() (entered <-chan struct{}, release func()) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.entered = make(chan struct{}, 1)
+	s.gate = make(chan struct{})
+	return s.entered, func() { close(s.gate) }
 }
 
 // supersede commits the next generation of one Receiver, the way an approved
@@ -257,6 +283,40 @@ func TestGenerationChangeDuringUpgradePreventsTheConnection(t *testing.T) {
 	receivers.refuseConnection(false)
 	channel.connected(t, "receiver-1:1")
 	awaitPresence(t, presence, "receiver-1", true)
+}
+
+// Shutdown ends an upgrade that is still committing: the connection never
+// becomes Receiver presence, and the reservation it held is released.
+func TestShutdownEndsAnUpgradeStillCommitting(t *testing.T) {
+	presence := NewPresence(time.Now().UTC())
+	receivers := newReceiverStub("receiver-1")
+	channel := newReceiverChannel(t, receivers, presence)
+	entered, release := receivers.holdConfirm()
+
+	ended := make(chan error, 1)
+	go func() {
+		socket, _, err := channel.dial("receiver-1:1")
+		if err == nil {
+			_, _, err = socket.Read(context.Background())
+		}
+		ended <- err
+	}()
+
+	<-entered
+	channel.socket.Close()
+	release()
+
+	select {
+	case err := <-ended:
+		if status := websocket.CloseStatus(err); status != -1 && status != websocket.StatusGoingAway {
+			t.Errorf("shutdown ended the upgrade with %v, want %v", status, websocket.StatusGoingAway)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown left an upgrade that was still committing serving")
+	}
+	if state := presence.State("receiver-1"); state.Online {
+		t.Errorf("an upgrade shutdown ended published %+v, want offline", state)
+	}
 }
 
 // One Receiver keeps one slot per credential generation, and its presence

@@ -159,9 +159,6 @@ func (s *ReceiverSocket) Serve(writer http.ResponseWriter, request *http.Request
 		return nil
 	}
 
-	// Presence begins with the committed 101. A reservation is not online, and
-	// neither is an acknowledgement.
-	s.presence.online(admitted.ReceiverID, slot.connectionID, time.Now().UTC())
 	s.serve(request.Context(), slot)
 	return nil
 }
@@ -187,16 +184,22 @@ func (s *ReceiverSocket) reserve(credential pairing.ReceiverCredential) (*receiv
 	return slot, nil
 }
 
-// attach records the accepted socket of one reservation, unless shutdown or a
-// generation change already ended that reservation.
+// attach records the accepted socket of one reservation and publishes the
+// Receiver's presence, unless shutdown or a generation change already ended
+// that reservation. Presence is published under the same lock that owns the
+// slot, so ending a Receiver's access cannot interleave here and leave a closed
+// connection reported online.
 func (s *ReceiverSocket) attach(slot *receiverSlot, socket *websocket.Conn) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if s.slots[slot.key] != slot {
+	if s.closed || s.slots[slot.key] != slot {
 		return false
 	}
 	slot.socket = socket
+	// Online begins with the committed 101, which answered the client before
+	// this reservation became a connection. An acknowledgement is not presence.
+	s.presence.online(slot.key.receiverID, slot.connectionID, time.Now().UTC())
 	return true
 }
 
@@ -222,14 +225,14 @@ func (s *ReceiverSocket) release(slot *receiverSlot) {
 // while this handshake was committing. Neither case may publish presence.
 func (s *ReceiverSocket) closeUncommitted(socket *websocket.Conn) {
 	s.mutex.Lock()
-	shuttingDown := s.closed
+	intent := closePolicy
+	if s.closed {
+		intent = closeGoingAway
+	}
 	s.mutex.Unlock()
 
-	if shuttingDown {
-		_ = socket.Close(websocket.StatusGoingAway, "service_shutdown")
-		return
-	}
-	_ = socket.Close(websocket.StatusPolicyViolation, "receiver_superseded")
+	code, reason := closeMeaning(intent)
+	_ = socket.Close(code, reason)
 }
 
 // EndReceiverAccess ends the reserved and active delivery connections of one
