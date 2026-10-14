@@ -15,6 +15,15 @@ const (
 	MethodNotAllowed ErrorCode = "method_not_allowed"
 	// ValidationFailed marks whole-request shape or field validation failures.
 	ValidationFailed ErrorCode = "validation_failed"
+	// WeChatAuthorizationInvalid marks a WeChat authorization code the provider
+	// rejected, so the caller must obtain a fresh one.
+	WeChatAuthorizationInvalid ErrorCode = "wechat_authorization_invalid"
+	// IdentityProviderError marks a WeChat provider that could not verify an
+	// authorization code.
+	IdentityProviderError ErrorCode = "identity_provider_error"
+	// DeviceRegistrationRevoked marks an owned Sender registration that
+	// security revocation closed permanently.
+	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.

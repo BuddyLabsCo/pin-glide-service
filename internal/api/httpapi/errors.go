@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
@@ -71,6 +72,21 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Validation failed",
 		detail: "The request did not pass validation.",
 	},
+	protocol.WeChatAuthorizationInvalid: {
+		status: http.StatusUnauthorized,
+		title:  "WeChat authorization invalid",
+		detail: "The WeChat authorization code is invalid or has already been used.",
+	},
+	protocol.IdentityProviderError: {
+		status: http.StatusBadGateway,
+		title:  "Identity provider error",
+		detail: "The WeChat identity provider could not verify the authorization.",
+	},
+	protocol.DeviceRegistrationRevoked: {
+		status: http.StatusConflict,
+		title:  "Device registration revoked",
+		detail: "This Sender registration was permanently security-revoked and cannot be restored.",
+	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,
 		title:  "Service unavailable",
@@ -123,7 +139,14 @@ func configureErrorModel() {
 }
 
 func problemForStatus(status int, requestID string, errs []error) *Problem {
-	code := codeForStatus(status)
+	code, outcome := outcomeCode(errs)
+	if outcome {
+		// The definition, not Huma's generic failure status, states the status
+		// of a business outcome.
+		status = errorCodeDefinitions[code].status
+	} else {
+		code = codeForStatus(status)
+	}
 	definition := errorCodeDefinitions[code]
 
 	problem := &Problem{
@@ -138,6 +161,35 @@ func problemForStatus(status int, requestID string, errs []error) *Problem {
 		problem.Errors = errorItems(errs)
 	}
 	return problem
+}
+
+// outcomeCode returns the business code of the first typed domain outcome in
+// errs. Handlers report domain failures as errors and rely on this model to
+// name the HTTP outcome, so a domain failure that no entry here recognizes
+// stays a safe internal error instead of leaking its text.
+func outcomeCode(errs []error) (protocol.ErrorCode, bool) {
+	for _, err := range errs {
+		for _, outcome := range businessOutcomes {
+			if errors.Is(err, outcome.cause) {
+				return outcome.code, true
+			}
+		}
+	}
+	return "", false
+}
+
+// businessOutcomes maps the typed causes domain operations report to the
+// stable business code clients see. Code and status stay one-to-one through
+// errorCodeDefinitions.
+var businessOutcomes = []struct {
+	cause error
+	code  protocol.ErrorCode
+}{
+	{identity.ErrWeChatAuthorizationInvalid, protocol.WeChatAuthorizationInvalid},
+	{identity.ErrIdentityProvider, protocol.IdentityProviderError},
+	{identity.ErrSenderNotFound, protocol.ResourceNotFound},
+	{identity.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
+	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
 }
 
 // codeForStatus names the code reported when the service has only an HTTP

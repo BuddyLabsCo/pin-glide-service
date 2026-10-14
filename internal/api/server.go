@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 )
 
 // shutdownTimeout is the total window in which admitted work must finish after
@@ -23,6 +24,9 @@ const shutdownTimeout = 5 * time.Second
 type Dependencies struct {
 	Database *sql.DB
 	Logger   *slog.Logger
+	// WeChat verifies login authorization codes; the web adapter satisfies it
+	// and tests substitute a fake at this external boundary.
+	WeChat identity.Provider
 }
 
 // Serve runs the composed API on listener until ctx is canceled or serving
@@ -32,6 +36,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	handler, admission := httpapi.New(httpapi.Dependencies{
 		Database: dependencies.Database,
 		Logger:   dependencies.Logger,
+		Identity: identity.NewService(dependencies.Database, dependencies.WeChat),
 	})
 	server := &http.Server{
 		Handler:           handler,

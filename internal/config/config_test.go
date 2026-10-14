@@ -47,11 +47,34 @@ func TestLoadRequiresDatabaseURLInProduction(t *testing.T) {
 	}
 }
 
+// The migrate process shares Load and runs in production with only the
+// database URL, so the repository loader cannot require provider credentials;
+// the api process enforces them for itself.
+func TestLoadAllowsProductionWithoutWeChatCredentials(t *testing.T) {
+	loaded, err := config.Load(func(name string) string {
+		switch name {
+		case "PIN_GLIDE_ENV":
+			return "production"
+		case "PIN_GLIDE_DATABASE_URL":
+			return "postgres://example@db.internal:5432/pin_glide"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("Load rejected production configuration without WeChat credentials: %v", err)
+	}
+	if loaded.WeChatAppID != "" || loaded.WeChatAppSecret != "" {
+		t.Errorf("wechat credentials = %q/%q, want absent", loaded.WeChatAppID, loaded.WeChatAppSecret)
+	}
+}
+
 func TestLoadKeepsExplicitValues(t *testing.T) {
 	values := map[string]string{
-		"PIN_GLIDE_ENV":          " production ",
-		"PIN_GLIDE_API_ADDRESS":  " 127.0.0.1:9090 ",
-		"PIN_GLIDE_DATABASE_URL": "postgres://example@db.internal:5432/pin_glide",
+		"PIN_GLIDE_ENV":               " production ",
+		"PIN_GLIDE_API_ADDRESS":       " 127.0.0.1:9090 ",
+		"PIN_GLIDE_DATABASE_URL":      "postgres://example@db.internal:5432/pin_glide",
+		"PIN_GLIDE_WECHAT_APP_ID":     " wx-app ",
+		"PIN_GLIDE_WECHAT_APP_SECRET": " wx-secret ",
 	}
 	loaded, err := config.Load(func(name string) string { return values[name] })
 	if err != nil {
@@ -66,5 +89,8 @@ func TestLoadKeepsExplicitValues(t *testing.T) {
 	}
 	if loaded.DatabaseURL != values["PIN_GLIDE_DATABASE_URL"] {
 		t.Errorf("database URL = %q", loaded.DatabaseURL)
+	}
+	if loaded.WeChatAppID != "wx-app" || loaded.WeChatAppSecret != "wx-secret" {
+		t.Errorf("wechat credentials = %q/%q, want the configured values", loaded.WeChatAppID, loaded.WeChatAppSecret)
 	}
 }

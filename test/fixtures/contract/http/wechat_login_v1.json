@@ -1,0 +1,29 @@
+{
+  "operationId": "PostAuthWechat",
+  "path": "/v1/auth/wechat",
+  "method": "post",
+  "request": {
+    "schema": "WeChatLoginRequest",
+    "required": ["wechatCode"],
+    "properties": ["senderId", "wechatCode"]
+  },
+  "success": {
+    "schema": "CredentialBundle",
+    "status": "200",
+    "required": ["accountId", "refresh", "senderId", "uploader", "userSession"]
+  },
+  "credential": {
+    "schema": "IssuedCredential",
+    "required": ["expiresAt", "token"]
+  },
+  "errors": {
+    "400": "invalid_request",
+    "401": "wechat_authorization_invalid",
+    "404": "resource_not_found",
+    "409": "device_registration_revoked",
+    "422": "validation_failed",
+    "500": "internal_error",
+    "502": "identity_provider_error",
+    "503": "service_unavailable"
+  }
+}

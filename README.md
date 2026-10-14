@@ -103,6 +103,8 @@ configuration from the environment:
 | `PIN_GLIDE_ENV` | `development` | `development` or `production` |
 | `PIN_GLIDE_API_ADDRESS` | `:8080` | Listen address of the API process |
 | `PIN_GLIDE_DATABASE_URL` | local development DSN | PostgreSQL connection string; required in production |
+| `PIN_GLIDE_WECHAT_APP_ID` | none | AppID of the approved WeChat mobile application; required in production |
+| `PIN_GLIDE_WECHAT_APP_SECRET` | none | AppSecret of that application; required in production, never logged |
 
 ## Running the release CLI
 

@@ -76,6 +76,10 @@ Edit `.env` before running the installer:
   credentials are required; there is no fallback. Changing them does not change
   users or passwords in an existing volume; rotate the database credentials
   separately.
+- `WECHAT_APP_ID` and `WECHAT_APP_SECRET`: the approved WeChat Open Platform
+  mobile application whose verified OpenIDs identify Accounts. Both are
+  required for the `api` service to start in production and stay outside
+  images, source files and logs.
 
 The script must be run **from this prepared directory**. It does not download
 itself, install dependencies, generate templates, or upgrade Compose files, and

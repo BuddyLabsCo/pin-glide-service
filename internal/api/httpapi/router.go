@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	identityapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
 	humago "github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -21,28 +23,34 @@ const (
 // Dependencies are the external dependencies of the HTTP API.
 type Dependencies struct {
 	Database *sql.DB
+	Identity *identity.Service
 	Logger   *slog.Logger
 }
 
 // New builds the composed HTTP handler and its admission gate. The gate closes
 // during shutdown so in-flight work drains inside a bounded window.
 func New(dependencies Dependencies) (http.Handler, *Admission) {
-	logger := dependencies.Logger
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
+	dependencies.Logger = loggerOf(dependencies.Logger)
 
 	mux := http.NewServeMux()
-	newAPI(mux, dependencies.Database, logger)
+	newAPI(mux, dependencies)
 
 	admission := NewAdmission()
 	handler := withFallback(mux)
 	handler = withNoStore(handler)
 	handler = withAdmission(handler, admission)
-	handler = withAccessLog(handler, logger)
-	handler = withRecovery(handler, logger)
+	handler = withAccessLog(handler, dependencies.Logger)
+	handler = withRecovery(handler, dependencies.Logger)
 	handler = withRequestID(handler)
 	return handler, admission
+}
+
+// loggerOf keeps the composed surface working without diagnostics of its own.
+func loggerOf(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return discardLogger()
+	}
+	return logger
 }
 
 // discardLogger returns the logger of a surface that only produces a document:
@@ -52,10 +60,11 @@ func discardLogger() *slog.Logger {
 }
 
 // newAPI registers the service operations on mux with the shared error model.
-func newAPI(mux *http.ServeMux, database *sql.DB, logger *slog.Logger) huma.API {
+func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 	configureErrorModel()
 	api := humago.New(mux, apiConfig())
-	registerHealth(api, database, logger)
+	registerHealth(api, dependencies.Database, dependencies.Logger)
+	identityapi.Register(api, dependencies.Identity)
 	return api
 }
 

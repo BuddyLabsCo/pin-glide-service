@@ -22,14 +22,18 @@ const defaultDatabaseURL = "postgres://pin_glide:pin_glide@127.0.0.1:5432/pin_gl
 
 // Config is the process configuration for one api run.
 type Config struct {
-	Environment Environment
-	APIAddress  string
-	DatabaseURL string
+	Environment     Environment
+	APIAddress      string
+	DatabaseURL     string
+	WeChatAppID     string
+	WeChatAppSecret string
 }
 
 // Load reads process configuration from getenv. Development carries defaults so
 // a fresh checkout needs no credentials; production requires an explicit
-// database URL so the service cannot silently attach to another database.
+// database URL so the service cannot silently attach to another database. The
+// WeChat credentials are only read here: the migrate process shares this loader
+// and needs no provider, so the api process enforces them instead.
 func Load(getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
@@ -57,8 +61,10 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return Config{
-		Environment: environment,
-		APIAddress:  apiAddress,
-		DatabaseURL: databaseURL,
+		Environment:     environment,
+		APIAddress:      apiAddress,
+		DatabaseURL:     databaseURL,
+		WeChatAppID:     strings.TrimSpace(getenv("PIN_GLIDE_WECHAT_APP_ID")),
+		WeChatAppSecret: strings.TrimSpace(getenv("PIN_GLIDE_WECHAT_APP_SECRET")),
 	}, nil
 }

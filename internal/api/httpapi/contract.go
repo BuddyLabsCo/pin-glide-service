@@ -24,7 +24,9 @@ const descriptionHeader = "# Generated from the service's Huma registrations; do
 // needs neither a listener nor a database.
 func WriteOpenAPI(writer io.Writer) error {
 	mux := http.NewServeMux()
-	api := newAPI(mux, nil, discardLogger())
+	// The export composes the same registrations without runtime dependencies:
+	// it serves nothing, so the operations are described, not called.
+	api := newAPI(mux, Dependencies{Logger: discardLogger()})
 
 	encoded, err := api.OpenAPI().YAML()
 	if err != nil {
