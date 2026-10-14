@@ -40,26 +40,6 @@ func NewService(pool *sql.DB, provider Provider, authenticator Authenticator) *S
 	return &Service{pool: pool, provider: provider, authenticator: authenticator}
 }
 
-// Create opens one restricted session in the requested mode and returns it
-// together with the raw B credential, which leaves the service only through
-// this result and only to the Receiver side.
-func (s *Service) Create(ctx context.Context, request CreateRequest, now time.Time) (Session, string, error) {
-	session, token := Session{}, ""
-	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
-		created, rawToken, err := s.create(ctx, tx, request, now)
-		if err != nil {
-			return err
-		}
-		session, token = created, rawToken
-		return nil
-	})
-	if err != nil {
-		return Session{}, "", err
-	}
-	s.sessionChanged(session, now)
-	return session, token, nil
-}
-
 // Authorize claims a session for one authenticated Sender. The first
 // successful claim fixes ownership; the same Sender repeating the call gets
 // the same session back, and another Sender receives ErrSessionClaimed.
@@ -225,66 +205,41 @@ func (s *Service) Resolve(ctx context.Context, token string, now time.Time) (Res
 	return Resolved{Session: session, Side: SideReceiver}, nil
 }
 
-// create builds one session and its Receiver context inside the caller's
-// transaction. The mode is fixed here, and no later request can switch it.
-func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest, now time.Time) (Session, string, error) {
-	switch request.Mode {
-	case ModeNewReceiver:
-		if request.ReceiverID != "" {
-			return Session{}, "", ErrInvalidMode
-		}
-	case ModeRecoverReceiver:
-		if request.ReceiverID == "" {
-			return Session{}, "", ErrInvalidMode
-		}
-	default:
-		return Session{}, "", ErrInvalidMode
-	}
-
-	receiverID := request.ReceiverID
-	if request.Mode == ModeNewReceiver {
-		receiverID = newValue()
-		if err := insertReceiverRegistration(ctx, tx, receiverID); err != nil {
-			return Session{}, "", err
-		}
-	} else if _, err := claimedReceiverAccount(ctx, tx, receiverID); err != nil {
-		// Recovery acts on a Receiver that already has an owning Account; an
-		// unknown, unclaimed or revoked one is not visible to anyone.
-		return Session{}, "", err
-	}
-
-	info := sessionInfo{
-		id:         newValue(),
-		mode:       request.Mode,
-		receiverID: receiverID,
-		state:      StateAwaitingAuthorization,
-		createdAt:  now,
-		expiresAt:  now.Add(SessionLifetime),
-	}
-	token := newValue()
-	info.tokenDigest = digest(token)
-	if err := insertSession(ctx, tx, info); err != nil {
-		return Session{}, "", err
-	}
-	return info.session(), token, nil
-}
-
 // authorizeAssociation reserves the Pairing ID and the binding capacity a
-// new_receiver or add_sender session needs for the claiming Sender.
+// new_receiver or add_sender session needs for the claiming Sender. A
+// replacement reserves its own Pairing ID next to the association it intends
+// to retire, so the working association keeps forwarding until both clients
+// confirm the replacement.
 func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session Session, request AuthorizeRequest, now time.Time) error {
 	// The lock serializes this Sender's capacity decisions, so two concurrent
-	// claims cannot both see a free slot.
+	// claims cannot both see a free slot, and no claim interleaves with a
+	// replacement committing its activation.
 	if err := lockSender(ctx, tx, request.SenderID); err != nil {
 		return err
 	}
+	if session.Mode == ModeAddSender {
+		// The credential that created this session authenticated one Receiver
+		// of one Account, so only that Account's Senders may claim it.
+		if err := requireOwnedReceiver(ctx, tx, session.ReceiverID, request.SenderID); err != nil {
+			return err
+		}
+	}
 
-	// Re-pairing a Receiver the Sender already holds reuses its association, so
-	// it needs no free slot of its own.
-	pairingID, err := currentPairing(ctx, tx, request.SenderID, session.ReceiverID)
+	reserved := reservation{
+		pairingID:  newValue(),
+		senderID:   request.SenderID,
+		receiverID: session.ReceiverID,
+		alias:      request.Alias,
+		createdAt:  now,
+	}
+	// Re-pairing a Receiver the Sender already holds replaces that association
+	// without needing a free slot of its own, and inherits the Sender's own
+	// alias unless this claim supplies a replacement.
+	current, err := currentPairing(ctx, tx, request.SenderID, session.ReceiverID)
 	if err != nil {
 		return err
 	}
-	if pairingID == "" {
+	if current.ID == "" {
 		held, err := countReceivers(ctx, tx, request.SenderID)
 		if err != nil {
 			return err
@@ -292,18 +247,17 @@ func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session 
 		if held >= ReceiverLimit {
 			return ErrReceiverLimitReached
 		}
-		pairingID = newValue()
-		if err := insertPendingPairing(ctx, tx, pairingID, request.SenderID, session.ReceiverID, now); err != nil {
-			return err
+	} else {
+		reserved.replacesPairingID = current.ID
+		if reserved.alias == "" {
+			reserved.alias = current.Alias
 		}
 	}
-	if err := reservePairing(ctx, tx, session.ID, pairingID); err != nil {
+	if err := insertPendingPairing(ctx, tx, reserved); err != nil {
 		return err
 	}
-	if request.Alias != "" {
-		if err := setAlias(ctx, tx, pairingID, request.Alias); err != nil {
-			return err
-		}
+	if err := reservePairing(ctx, tx, session.ID, reserved.pairingID); err != nil {
+		return err
 	}
 
 	// A new_receiver session fixes the Receiver's owning Account at its first

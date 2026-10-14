@@ -11,14 +11,15 @@ import (
 	"time"
 )
 
-// Configuration Data: Sender-owned associations, one per Receiver.
+// Configuration Data: Sender-owned associations, one active per Receiver.
 type PairingPairings struct {
-	ID          string       `sql:"primary_key"` // Pairing ID both clients share; allocated before confirmation.
-	SenderID    string       // Sender that owns this association and its alias.
-	ReceiverID  string       // Receiver this association forwards to; one row per Sender.
-	Alias       string       // The owning Sender's own label for this association; empty when unset.
-	State       PairingState // Pending holds capacity until activation; cancellation/expiry releases it.
-	CreatedAt   time.Time    // When the pending association was reserved.
-	ActivatedAt *time.Time   // When both clients confirmed and the association became active.
-	RemovedAt   *time.Time   // When the owning Sender removed the association.
+	ID                string       `sql:"primary_key"` // Pairing ID both clients share; a replacement reserves its own.
+	SenderID          string       // Sender that owns this association and its alias.
+	ReceiverID        string       // Receiver this association forwards to.
+	ReplacesPairingID *string      // Association this reservation replaces on activation; NULL when first.
+	Alias             string       // The owning Sender's own label for this association; empty when unset.
+	State             PairingState // Pending holds capacity until activation; cancellation/expiry releases it.
+	CreatedAt         time.Time    // When the pending association was reserved.
+	ActivatedAt       *time.Time   // When both clients confirmed and this association became the current one.
+	RemovedAt         *time.Time   // When the association was removed or replaced.
 }

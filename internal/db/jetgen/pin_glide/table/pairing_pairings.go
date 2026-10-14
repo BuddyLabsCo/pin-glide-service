@@ -13,19 +13,20 @@ import (
 
 var PairingPairings = newPairingPairingsTable("pin_glide", "pairing_pairings", "")
 
-// Configuration Data: Sender-owned associations, one per Receiver.
+// Configuration Data: Sender-owned associations, one active per Receiver.
 type pairingPairingsTable struct {
 	postgres.Table
 
 	// Columns
-	ID          postgres.ColumnString     // Pairing ID both clients share; allocated before confirmation.
-	SenderID    postgres.ColumnString     // Sender that owns this association and its alias.
-	ReceiverID  postgres.ColumnString     // Receiver this association forwards to; one row per Sender.
-	Alias_      postgres.ColumnString     // The owning Sender's own label for this association; empty when unset.
-	State       postgres.ColumnString     // Pending holds capacity until activation; cancellation/expiry releases it.
-	CreatedAt   postgres.ColumnTimestampz // When the pending association was reserved.
-	ActivatedAt postgres.ColumnTimestampz // When both clients confirmed and the association became active.
-	RemovedAt   postgres.ColumnTimestampz // When the owning Sender removed the association.
+	ID                postgres.ColumnString     // Pairing ID both clients share; a replacement reserves its own.
+	SenderID          postgres.ColumnString     // Sender that owns this association and its alias.
+	ReceiverID        postgres.ColumnString     // Receiver this association forwards to.
+	ReplacesPairingID postgres.ColumnString     // Association this reservation replaces on activation; NULL when first.
+	Alias_            postgres.ColumnString     // The owning Sender's own label for this association; empty when unset.
+	State             postgres.ColumnString     // Pending holds capacity until activation; cancellation/expiry releases it.
+	CreatedAt         postgres.ColumnTimestampz // When the pending association was reserved.
+	ActivatedAt       postgres.ColumnTimestampz // When both clients confirmed and this association became the current one.
+	RemovedAt         postgres.ColumnTimestampz // When the association was removed or replaced.
 
 	AllColumns     postgres.ColumnList
 	MutableColumns postgres.ColumnList
@@ -67,31 +68,33 @@ func newPairingPairingsTable(schemaName, tableName, alias string) *PairingPairin
 
 func newPairingPairingsTableImpl(schemaName, tableName, alias string) pairingPairingsTable {
 	var (
-		IDColumn          = postgres.StringColumn("id")
-		SenderIDColumn    = postgres.StringColumn("sender_id")
-		ReceiverIDColumn  = postgres.StringColumn("receiver_id")
-		Alias_Column      = postgres.StringColumn("alias")
-		StateColumn       = postgres.StringColumn("state")
-		CreatedAtColumn   = postgres.TimestampzColumn("created_at")
-		ActivatedAtColumn = postgres.TimestampzColumn("activated_at")
-		RemovedAtColumn   = postgres.TimestampzColumn("removed_at")
-		allColumns        = postgres.ColumnList{IDColumn, SenderIDColumn, ReceiverIDColumn, Alias_Column, StateColumn, CreatedAtColumn, ActivatedAtColumn, RemovedAtColumn}
-		mutableColumns    = postgres.ColumnList{SenderIDColumn, ReceiverIDColumn, Alias_Column, StateColumn, CreatedAtColumn, ActivatedAtColumn, RemovedAtColumn}
-		defaultColumns    = postgres.ColumnList{Alias_Column, StateColumn, CreatedAtColumn}
+		IDColumn                = postgres.StringColumn("id")
+		SenderIDColumn          = postgres.StringColumn("sender_id")
+		ReceiverIDColumn        = postgres.StringColumn("receiver_id")
+		ReplacesPairingIDColumn = postgres.StringColumn("replaces_pairing_id")
+		Alias_Column            = postgres.StringColumn("alias")
+		StateColumn             = postgres.StringColumn("state")
+		CreatedAtColumn         = postgres.TimestampzColumn("created_at")
+		ActivatedAtColumn       = postgres.TimestampzColumn("activated_at")
+		RemovedAtColumn         = postgres.TimestampzColumn("removed_at")
+		allColumns              = postgres.ColumnList{IDColumn, SenderIDColumn, ReceiverIDColumn, ReplacesPairingIDColumn, Alias_Column, StateColumn, CreatedAtColumn, ActivatedAtColumn, RemovedAtColumn}
+		mutableColumns          = postgres.ColumnList{SenderIDColumn, ReceiverIDColumn, ReplacesPairingIDColumn, Alias_Column, StateColumn, CreatedAtColumn, ActivatedAtColumn, RemovedAtColumn}
+		defaultColumns          = postgres.ColumnList{Alias_Column, StateColumn, CreatedAtColumn}
 	)
 
 	return pairingPairingsTable{
 		Table: postgres.NewTable(schemaName, tableName, alias, allColumns...),
 
 		//Columns
-		ID:          IDColumn,
-		SenderID:    SenderIDColumn,
-		ReceiverID:  ReceiverIDColumn,
-		Alias_:      Alias_Column,
-		State:       StateColumn,
-		CreatedAt:   CreatedAtColumn,
-		ActivatedAt: ActivatedAtColumn,
-		RemovedAt:   RemovedAtColumn,
+		ID:                IDColumn,
+		SenderID:          SenderIDColumn,
+		ReceiverID:        ReceiverIDColumn,
+		ReplacesPairingID: ReplacesPairingIDColumn,
+		Alias_:            Alias_Column,
+		State:             StateColumn,
+		CreatedAt:         CreatedAtColumn,
+		ActivatedAt:       ActivatedAtColumn,
+		RemovedAt:         RemovedAtColumn,
 
 		AllColumns:     allColumns,
 		MutableColumns: mutableColumns,

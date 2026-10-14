@@ -34,10 +34,10 @@ func Register(api huma.API, handlers Handlers) {
 	registerCancel(api, handlers)
 }
 
-// registerCreate installs POST /v1/pairing-sessions, which is deliberately
-// anonymous in both modes: the Receiver side creates the context and holds the
-// restricted token, and the Sender side proves ownership when it claims the
-// session.
+// registerCreate installs POST /v1/pairing-sessions. The Receiver side creates
+// the context and holds the restricted token; a new or recovering Receiver is
+// anonymous, while attaching one more Sender to a credentialed Receiver is
+// authorized by the credential that Receiver already holds.
 func registerCreate(api huma.API, handlers Handlers) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "PostPairingSessions",
@@ -47,20 +47,25 @@ func registerCreate(api huma.API, handlers Handlers) {
 		DefaultStatus: http.StatusCreated,
 		Summary:       "Create a restricted Pairing Session",
 		Description: "Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. " +
-			"new_receiver allocates a Receiver; recover_receiver acts on an existing Receiver. " +
-			"Neither mode takes a credential: the Sender that approves the session supplies its fresh WeChat proof when it claims the session. " +
-			"Associating one more Sender with an already credentialed Receiver needs that Receiver's own credential, so add_sender arrives with Receiver credential issuance rather than with this release. " +
-			"Failures report 404 resource_not_found for a Receiver the caller cannot see, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.",
+			"new_receiver allocates a Receiver. add_sender attaches one more Sender to the Receiver named by receiverId and authenticates with that Receiver's own current credential in the Authorization header; presenting it proves possession and consumes any issuance grant still outstanding, and it authorizes no other Receiver. recover_receiver acts on an existing Receiver and takes no credential at creation. " +
+			"The Sender that approves the session supplies its own authority when it claims the session. " +
+			"Failures report 401 credential_missing, credential_invalid or credential_expired for add_sender, 404 resource_not_found for a Receiver the credential does not authenticate, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.",
 		Errors: []int{
+			http.StatusUnauthorized,
 			http.StatusNotFound,
 			http.StatusUnprocessableEntity,
 			http.StatusServiceUnavailable,
 		},
-		Security: []map[string][]string{},
+		// One operation serves two entry authorities: new_receiver and
+		// recover_receiver are anonymous, add_sender requires the Receiver's
+		// own credential. The empty requirement publishes the anonymous
+		// alternative, and the description states what each mode accepts.
+		Security: []map[string][]string{{}, {"bearerAuth": {}}},
 	}, func(ctx context.Context, input *createInput) (*createOutput, error) {
 		session, token, err := handlers.Sessions.Create(ctx, domain.CreateRequest{
 			Mode:       domain.Mode(input.Body.Mode),
 			ReceiverID: input.Body.ReceiverID,
+			Token:      bearerCredential(ctx),
 		}, time.Now().UTC())
 		if err != nil {
 			return nil, err
@@ -132,7 +137,8 @@ func registerComplete(api huma.API, handlers Handlers) {
 		Path:        "/v1/pairing-sessions/{id}/complete",
 		Summary:     "Report key confirmation for one Pairing Session side",
 		Description: "Records one participant's authenticated report that it saved the derived Pairing key and verified its peer's key confirmation. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. Receiver credential recovery reports through its own retained-key reconciliation instead. " +
-			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
+			"A re-pairing commits its own Pairing ID and retires only the confirming Sender's association that this session replaced, and only while that association is still current; any other outcome fails with 409 operation_superseded and preserves the association that is current. " +
+			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready or operation_superseded, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,

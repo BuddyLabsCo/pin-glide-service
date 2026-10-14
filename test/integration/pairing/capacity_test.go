@@ -132,34 +132,49 @@ func TestPairingCapacityIsAtomicAndReleasesOnCancellation(t *testing.T) {
 }
 
 // A Sender already holding five Receivers can still re-pair one of them: the
-// replacement reuses the existing association and consumes no second slot.
+// replacement reserves its own Pairing ID next to the working association and
+// consumes no second slot. Attaching to a sixth distinct Receiver is refused
+// even for a Receiver of the same Account.
 func TestPairingAnExistingReceiverNeedsNoFreeSlot(t *testing.T) {
 	environment := start(t)
 	sender := environment.sender(t, "code-reuse", "openid-reuse")
+	assistant := environment.sender(t, "code-reuse-assistant", "openid-reuse")
 
-	var held sessionView
-	for index := 0; index < 5; index++ {
+	held, issued := environment.paired(t, sender, "Phone")
+	for index := 0; index < 4; index++ {
 		created, _ := environment.createSession(t, "new_receiver", "", "")
-		status, claimed, payload := environment.authorize(t, created.SessionID, "", sender.UserSession.Token)
-		if status != http.StatusOK {
+		if status, _, payload := environment.authorize(t, created.SessionID, "", sender.UserSession.Token); status != http.StatusOK {
 			t.Fatalf("claim %d status = %d: %s", index, status, payload)
-		}
-		if index == 0 {
-			held = claimed
 		}
 	}
 
-	replacement := environment.insertSenderSession(t, held.ReceiverID)
-	status, replaced, payload := environment.authorize(t, replacement, "", sender.UserSession.Token)
+	replacement, _ := environment.addSender(t, held.ReceiverID, issued.ReceiverToken)
+	status, replaced, payload := environment.authorize(t, replacement.SessionID, "", sender.UserSession.Token)
 	if status != http.StatusOK {
 		t.Fatalf("re-pairing a held Receiver at the limit = %d, want 200: %s", status, payload)
 	}
-	if replaced.PairingID != held.PairingID {
-		t.Errorf("replacement pairing = %q, want the existing %q", replaced.PairingID, held.PairingID)
+	if replaced.PairingID == held.PairingID || replaced.PairingID == "" {
+		t.Errorf("replacement pairing = %q, want a Pairing ID of its own next to %q", replaced.PairingID, held.PairingID)
 	}
 	if count := environment.count(t,
-		`SELECT count(*) FROM pin_glide.pairing_pairings WHERE sender_id = $1 AND state <> 'removed'`,
+		`SELECT count(DISTINCT receiver_id) FROM pin_glide.pairing_pairings
+		WHERE sender_id = $1 AND state <> 'removed'`,
 		sender.SenderID); count != 5 {
-		t.Errorf("re-pairing left %d associations, want the original 5", count)
+		t.Errorf("re-pairing left %d distinct Receivers, want the original 5", count)
+	}
+	if existing := environment.associationOf(t, held.PairingID); existing.state != "active" {
+		t.Errorf("working association = %+v, want it current until the replacement commits", existing)
+	}
+
+	// The Sender's capacity is still full, so an add_sender claim for one more
+	// Receiver of the same Account is refused at the boundary.
+	sixth, sixthCredential := environment.paired(t, assistant, "Desk")
+	offered, _ := environment.addSender(t, sixth.ReceiverID, sixthCredential.ReceiverToken)
+	status, _, payload = environment.authorize(t, offered.SessionID, "", sender.UserSession.Token)
+	if status != http.StatusConflict {
+		t.Fatalf("add_sender at the limit = %d, want 409: %s", status, payload)
+	}
+	if code := decodeProblem(t, payload).Code; code != "receiver_limit_reached" {
+		t.Errorf("add_sender at the limit code = %q, want receiver_limit_reached", code)
 	}
 }

@@ -293,9 +293,10 @@ func releaseDatabase(t *testing.T) (string, string, string, *sql.DB, string) {
 	must(t, os.MkdirAll(bin, 0755))
 	run(t, root, "go", "build", "-o", filepath.Join(bin, "pin-glide-release"), "./cmd/pin-glide-release")
 	run(t, root, "go", "build", "-o", filepath.Join(bin, "psqldef"), "github.com/sqldef/sqldef/v3/cmd/psqldef")
-	// A published image carries the exported release SQL; the test stands in for
-	// it by copying the repository's SQL next to a Git-derived manifest.
-	must(t, filepath.WalkDir(filepath.Join(root, "db"), func(path string, entry fs.DirEntry, err error) error {
+	// A published image carries the exported schema SQL next to a Git-derived
+	// manifest. Each test supplies its own migration and data scripts, so only
+	// the desired schema is copied.
+	must(t, filepath.WalkDir(filepath.Join(root, "db/schema"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

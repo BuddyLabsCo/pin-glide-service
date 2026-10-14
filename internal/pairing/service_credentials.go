@@ -11,7 +11,10 @@ import (
 // activate the reservation the session holds: a new_receiver session then lets
 // its Receiver redeem the first credential, while an add_sender session
 // completes without issuing one. Repeating a successful side's report while
-// its credential remains valid is idempotent.
+// its credential remains valid is idempotent. A reservation that replaces the
+// Sender's current association commits that replacement here, and a
+// replacement whose expected association is no longer current is reported as
+// superseded, which preserves the association that won.
 func (s *Service) Complete(ctx context.Context, request CompleteRequest, now time.Time) (Session, error) {
 	if request.KeyConfirmation != KeyConfirmed {
 		// Only a recovery session may report a missing key, and that report
@@ -19,6 +22,7 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 		return Session{}, ErrInvalidMode
 	}
 
+	superseded := false
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
 		session, err := lockedSessionByID(ctx, tx, request.SessionID)
 		if err != nil {
@@ -67,7 +71,16 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 			return nil
 		}
 		if err := activatePairing(ctx, tx, session, now); err != nil {
-			return err
+			if !errors.Is(err, ErrOperationSuperseded) {
+				return err
+			}
+			// This replacement is stale, so it releases its own reservation
+			// and leaves the association that is current untouched.
+			if err := supersedeSession(ctx, tx, session, now); err != nil {
+				return err
+			}
+			superseded = true
+			return nil
 		}
 		state := StateCredentialReady
 		if session.Mode == ModeAddSender {
@@ -84,6 +97,9 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 		return Session{}, storageError(err)
 	}
 	s.sessionChanged(completed, now)
+	if superseded {
+		return Session{}, ErrOperationSuperseded
+	}
 	return completed, nil
 }
 
@@ -181,42 +197,9 @@ func (s *Service) AdmitReceiver(ctx context.Context, token string, now time.Time
 	admitted := ReceiverCredential{}
 	var completed Session
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
-		presented, err := receiverCredentialByDigest(ctx, tx, digest(token))
-		if err != nil {
-			return err
-		}
-		if err := lockReceiver(ctx, tx, presented.ReceiverID); err != nil {
-			return err
-		}
-		current, err := lockCurrentReceiverCredential(ctx, tx, presented.ReceiverID)
-		if err != nil {
-			return err
-		}
-		if current.TokenDigest != presented.TokenDigest {
-			// A superseded generation is indistinguishable from an unknown
-			// credential, so stale possession proves nothing.
-			return ErrCredentialInvalid
-		}
-		_, state, err := lockRegistration(ctx, tx, presented.ReceiverID)
-		if err != nil {
-			return ErrCredentialInvalid
-		}
-		if state != string(RegistrationActive) {
-			return ErrCredentialInvalid
-		}
-
-		grant, err := outstandingIssuance(ctx, tx, presented.ReceiverID, current.Generation)
-		if err != nil && !errors.Is(err, ErrSessionNotFound) {
-			return err
-		}
-		if err == nil {
-			if err := consumeGrant(ctx, tx, grant.ID, now); err != nil {
-				return err
-			}
-			completed = grant
-		}
-		admitted = ReceiverCredential{ReceiverID: presented.ReceiverID, Generation: current.Generation}
-		return nil
+		var err error
+		admitted, completed, err = admitReceiver(ctx, tx, token, now)
+		return err
 	})
 	if err != nil {
 		return ReceiverCredential{}, err
@@ -227,6 +210,53 @@ func (s *Service) AdmitReceiver(ctx context.Context, token string, now time.Time
 		}
 	}
 	return admitted, nil
+}
+
+// admitReceiver runs the possession decision of one presented Receiver
+// credential inside the caller's transaction: the credential must still be the
+// Receiver's current one, and proving that consumes the issuance grant it came
+// from while one is outstanding. A credential that presented itself here
+// authorizes that Receiver only, so the caller decides what else it may do.
+func admitReceiver(ctx context.Context, tx *sql.Tx, token string, now time.Time) (ReceiverCredential, Session, error) {
+	if token == "" {
+		return ReceiverCredential{}, Session{}, ErrCredentialMissing
+	}
+	presented, err := receiverCredentialByDigest(ctx, tx, digest(token))
+	if err != nil {
+		return ReceiverCredential{}, Session{}, err
+	}
+	if err := lockReceiver(ctx, tx, presented.ReceiverID); err != nil {
+		return ReceiverCredential{}, Session{}, err
+	}
+	current, err := lockCurrentReceiverCredential(ctx, tx, presented.ReceiverID)
+	if err != nil {
+		return ReceiverCredential{}, Session{}, err
+	}
+	if current.TokenDigest != presented.TokenDigest {
+		// A superseded generation is indistinguishable from an unknown
+		// credential, so stale possession proves nothing.
+		return ReceiverCredential{}, Session{}, ErrCredentialInvalid
+	}
+	_, state, err := lockRegistration(ctx, tx, presented.ReceiverID)
+	if err != nil {
+		return ReceiverCredential{}, Session{}, ErrCredentialInvalid
+	}
+	if state != string(RegistrationActive) {
+		return ReceiverCredential{}, Session{}, ErrCredentialInvalid
+	}
+
+	consumed := Session{}
+	grant, err := outstandingIssuance(ctx, tx, presented.ReceiverID, current.Generation)
+	if err != nil && !errors.Is(err, ErrSessionNotFound) {
+		return ReceiverCredential{}, Session{}, err
+	}
+	if err == nil {
+		if err := consumeGrant(ctx, tx, grant.ID, now); err != nil {
+			return ReceiverCredential{}, Session{}, err
+		}
+		consumed = grant
+	}
+	return ReceiverCredential{ReceiverID: presented.ReceiverID, Generation: current.Generation}, consumed, nil
 }
 
 // ConfirmReceiverConnection revalidates one admitted connection's credential
