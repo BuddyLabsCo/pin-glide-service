@@ -32,9 +32,10 @@ func Register(api huma.API, handlers Handlers) {
 	registerCancel(api, handlers)
 }
 
-// registerCreate installs POST /v1/pairing-sessions. The credential depends on
-// the mode: new_receiver is deliberately anonymous, and recover_receiver
-// requires fresh owner proof in the body.
+// registerCreate installs POST /v1/pairing-sessions, which is deliberately
+// anonymous in both modes: the Receiver side creates the context and holds the
+// restricted token, and the Sender side proves ownership when it claims the
+// session.
 func registerCreate(api huma.API, handlers Handlers) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "PostPairingSessions",
@@ -44,23 +45,20 @@ func registerCreate(api huma.API, handlers Handlers) {
 		DefaultStatus: http.StatusCreated,
 		Summary:       "Create a restricted Pairing Session",
 		Description: "Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. " +
-			"new_receiver allocates a Receiver and takes no credential; recover_receiver acts on an existing Receiver of the Account the fresh wechatCode proves and takes no credential either. " +
+			"new_receiver allocates a Receiver; recover_receiver acts on an existing Receiver. " +
+			"Neither mode takes a credential: the Sender that approves the session supplies its fresh WeChat proof when it claims the session. " +
 			"Associating one more Sender with an already credentialed Receiver needs that Receiver's own credential, so add_sender arrives with Receiver credential issuance rather than with this release. " +
-			"Failures report 401 wechat_authorization_invalid, 403 fresh_identity_required, 404 resource_not_found for a Receiver the caller cannot see, 422 validation_failed for a mode and target that do not match, 502 identity_provider_error or 503 service_unavailable.",
+			"Failures report 404 resource_not_found for a Receiver the caller cannot see, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.",
 		Errors: []int{
-			http.StatusUnauthorized,
-			http.StatusForbidden,
 			http.StatusNotFound,
 			http.StatusUnprocessableEntity,
-			http.StatusBadGateway,
 			http.StatusServiceUnavailable,
 		},
 		Security: []map[string][]string{},
 	}, func(ctx context.Context, input *createInput) (*createOutput, error) {
 		session, token, err := handlers.Sessions.Create(ctx, domain.CreateRequest{
-			Mode:         domain.Mode(input.Body.Mode),
-			ReceiverID:   input.Body.ReceiverID,
-			RecoveryCode: input.Body.WeChatCode,
+			Mode:       domain.Mode(input.Body.Mode),
+			ReceiverID: input.Body.ReceiverID,
 		}, time.Now().UTC())
 		if err != nil {
 			return nil, err
@@ -130,7 +128,8 @@ func registerCancel(api huma.API, handlers Handlers) {
 		Method:      http.MethodDelete,
 		Path:        "/v1/pairing-sessions/{id}",
 		Summary:     "Cancel an unfinished Pairing Session",
-		Description: "Cancels a session before activation, releases its reservation and closes its restricted channel. " +
+		Description: "Cancels a session before activation and releases its reservation. " +
+			"Both participants are told the session closed, and the restricted channel stops relaying: its next frame closes the connection. " +
 			"An already activated association is not undone: the call reports 410 pairing_session_closed and ordinary Pairing removal applies. " +
 			"Failures report 401 for an unusable credential, 404 resource_not_found, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable.",
 		Errors: []int{

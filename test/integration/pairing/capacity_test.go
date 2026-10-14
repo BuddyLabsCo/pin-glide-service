@@ -39,15 +39,15 @@ func TestPairingCapacityIsAtomicAndReleasesOnCancellation(t *testing.T) {
 	}
 
 	// An existing Receiver consumes no second slot. Recovery reserves no
-	// association at all, so the repeated Receiver stays one of the four.
+	// association at all, so the repeated Receiver stays one of the four, and
+	// the fresh owner proof its claim requires is what approves the replacement.
 	environment.provider.Accept("code-recover", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-capacity"})
-	if status, payload := environment.post(t, "/v1/pairing-sessions",
-		`{"mode":"recover_receiver","receiverId":"`+first.ReceiverID+`"}`, ""); status != http.StatusForbidden {
-		t.Fatalf("recovery without fresh owner proof = %d, want 403: %s", status, payload)
-	}
-	recovery, restricted := environment.createRecovery(t, first.ReceiverID, "code-recover")
+	recovery, restricted := environment.createRecovery(t, first.ReceiverID)
 	if restricted == "" {
 		t.Error("recovery session returned no restricted credential for its receiver side")
+	}
+	if status, _, payload := environment.claim(t, recovery.SessionID, `{}`, sender.UserSession.Token); status != http.StatusForbidden {
+		t.Errorf("recovery claim without fresh owner proof = %d, want 403: %s", status, payload)
 	}
 	if status, claimed, payload := environment.claim(t, recovery.SessionID,
 		`{"wechatCode":"code-recover"}`, sender.UserSession.Token); status != http.StatusOK {
@@ -93,6 +93,13 @@ func TestPairingCapacityIsAtomicAndReleasesOnCancellation(t *testing.T) {
 		t.Fatalf("sixth association status = %d, want 409: %s", status, payload)
 	}
 
+	// A reservation both clients confirmed still holds its slot until its
+	// Pairing activates, so the limit stays full while second is pending.
+	environment.exec(t, `UPDATE pin_glide.pairing_sessions SET state = 'credential_ready' WHERE id = $1`, second.SessionID)
+	if status, _, payload := environment.authorize(t, vacated.SessionID, "", sender.UserSession.Token); status != http.StatusConflict {
+		t.Fatalf("a confirmed reservation released its slot: %d %s", status, payload)
+	}
+
 	// Cancelling a claimed unfinished session releases its reservation, so the
 	// refused Receiver can be paired afterwards.
 	if status, payload := environment.request(t, http.MethodDelete,
@@ -121,5 +128,38 @@ func TestPairingCapacityIsAtomicAndReleasesOnCancellation(t *testing.T) {
 	// A cancelled session stays closed for its former participants.
 	if status, payload := environment.post(t, "/v1/pairing-sessions/"+first.SessionID+"/authorize", `{}`, sender.UserSession.Token); status != http.StatusGone {
 		t.Errorf("cancelled session claim = %d, want 410: %s", status, payload)
+	}
+}
+
+// A Sender already holding five Receivers can still re-pair one of them: the
+// replacement reuses the existing association and consumes no second slot.
+func TestPairingAnExistingReceiverNeedsNoFreeSlot(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-reuse", "openid-reuse")
+
+	var held sessionView
+	for index := 0; index < 5; index++ {
+		created, _ := environment.createSession(t, "new_receiver", "", "")
+		status, claimed, payload := environment.authorize(t, created.SessionID, "", sender.UserSession.Token)
+		if status != http.StatusOK {
+			t.Fatalf("claim %d status = %d: %s", index, status, payload)
+		}
+		if index == 0 {
+			held = claimed
+		}
+	}
+
+	replacement := environment.insertSenderSession(t, held.ReceiverID)
+	status, replaced, payload := environment.authorize(t, replacement, "", sender.UserSession.Token)
+	if status != http.StatusOK {
+		t.Fatalf("re-pairing a held Receiver at the limit = %d, want 200: %s", status, payload)
+	}
+	if replaced.PairingID != held.PairingID {
+		t.Errorf("replacement pairing = %q, want the existing %q", replaced.PairingID, held.PairingID)
+	}
+	if count := environment.count(t,
+		`SELECT count(*) FROM pin_glide.pairing_pairings WHERE sender_id = $1 AND state <> 'removed'`,
+		sender.SenderID); count != 5 {
+		t.Errorf("re-pairing left %d associations, want the original 5", count)
 	}
 }

@@ -131,7 +131,7 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 	protocol.PairingNotReady: {
 		status: http.StatusConflict,
 		title:  "Pairing not ready",
-		detail: "Both clients have not completed the step this operation requires.",
+		detail: "The Pairing Session cannot perform this step yet.",
 	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,

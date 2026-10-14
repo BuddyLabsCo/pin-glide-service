@@ -17,11 +17,3 @@ type PairingSessionView struct {
 	SenderID          string `json:"senderId,omitempty" doc:"Claiming Sender; absent until a claim succeeds"`
 	PairingID         string `json:"pairingId,omitempty" doc:"Reserved Pairing ID; absent for recovery sessions and unclaimed new sessions"`
 }
-
-// NewPairingSession is the accepted success payload of Pairing Session
-// creation.
-type NewPairingSession struct {
-	Session               PairingSessionView `json:"session"`
-	PairingToken          string             `json:"pairingToken" doc:"Restricted five-minute Pairing token; send it only in the Authorization header"`
-	PairingTokenExpiresAt time.Time          `json:"pairingTokenExpiresAt" doc:"Absolute expiry of the restricted token"`
-}

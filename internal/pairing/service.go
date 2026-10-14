@@ -76,6 +76,11 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest, now t
 		if session.AuthorizedSenderID != request.SenderID {
 			return Session{}, ErrSessionClaimed
 		}
+		// Repeating a claim never extends the lifetime, so a lapsed session
+		// reports its own outcome instead of a fresh snapshot.
+		if session.Expired(now) {
+			return Session{}, ErrSessionExpired
+		}
 		if session.State == StateAwaitingConfirmation || session.State == StateCredentialReady {
 			return session, nil
 		}
@@ -89,6 +94,17 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest, now t
 	}
 	if session.State != StateAwaitingAuthorization {
 		return Session{}, ErrSessionClosed
+	}
+
+	// The fresh owner proof of a recovery session is an external call, so it is
+	// verified before the transaction that claims the session and reserves
+	// capacity.
+	var proof WeChatProof
+	if session.Mode == ModeRecoverReceiver {
+		proof, err = s.verifyOwner(ctx, request.RecoveryCode)
+		if err != nil {
+			return Session{}, err
+		}
 	}
 
 	err = s.inTransaction(ctx, func(tx *sql.Tx) error {
@@ -112,8 +128,8 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest, now t
 		switch session.Mode {
 		case ModeNewReceiver, ModeAddSender:
 			return s.authorizeAssociation(ctx, tx, session, request, now)
-		case ModeRecoverReceiver, "":
-			return s.authorizeRecovery(ctx, tx, session, request, now)
+		case ModeRecoverReceiver:
+			return s.authorizeRecovery(ctx, tx, session, request, proof)
 		default:
 			return ErrInvalidMode
 		}
@@ -209,7 +225,6 @@ func (s *Service) Resolve(ctx context.Context, token string, now time.Time) (Res
 // create builds one session and its Receiver context inside the caller's
 // transaction. The mode is fixed here, and no later request can switch it.
 func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest, now time.Time) (Session, string, error) {
-	var owner string
 	switch request.Mode {
 	case ModeNewReceiver:
 		if request.ReceiverID != "" {
@@ -219,19 +234,6 @@ func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest,
 		if request.ReceiverID == "" {
 			return Session{}, "", ErrInvalidMode
 		}
-		if request.RecoveryCode == "" {
-			return Session{}, "", ErrFreshIdentityRequired
-		}
-		if s.provider == nil {
-			return Session{}, "", ErrIdentityProvider
-		}
-		// The fresh proof is this mode's whole entry authority, so the Account
-		// it names is the one the target Receiver must already belong to.
-		proof, err := s.provider.VerifyIdentity(ctx, request.RecoveryCode)
-		if err != nil {
-			return Session{}, "", err
-		}
-		owner = proof.AccountID
 	default:
 		return Session{}, "", ErrInvalidMode
 	}
@@ -242,14 +244,10 @@ func (s *Service) create(ctx context.Context, tx *sql.Tx, request CreateRequest,
 		if err := insertReceiverRegistration(ctx, tx, receiverID); err != nil {
 			return Session{}, "", err
 		}
-	} else {
-		account, err := claimedReceiverAccount(ctx, tx, receiverID)
-		if err != nil {
-			return Session{}, "", err
-		}
-		if account != owner {
-			return Session{}, "", ErrReceiverNotOwned
-		}
+	} else if _, err := claimedReceiverAccount(ctx, tx, receiverID); err != nil {
+		// Recovery acts on a Receiver that already has an owning Account; an
+		// unknown, unclaimed or revoked one is not visible to anyone.
+		return Session{}, "", err
 	}
 
 	info := sessionInfo{
@@ -276,19 +274,21 @@ func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session 
 	if err := lockSender(ctx, tx, request.SenderID); err != nil {
 		return err
 	}
-	held, err := countReceivers(ctx, tx, request.SenderID)
-	if err != nil {
-		return err
-	}
-	if held >= ReceiverLimit {
-		return ErrReceiverLimitReached
-	}
 
+	// Re-pairing a Receiver the Sender already holds reuses its association, so
+	// it needs no free slot of its own.
 	pairingID, err := currentPairing(ctx, tx, request.SenderID, session.ReceiverID)
 	if err != nil {
 		return err
 	}
 	if pairingID == "" {
+		held, err := countReceivers(ctx, tx, request.SenderID)
+		if err != nil {
+			return err
+		}
+		if held >= ReceiverLimit {
+			return ErrReceiverLimitReached
+		}
 		pairingID = newValue()
 		if err := insertPendingPairing(ctx, tx, pairingID, request.SenderID, session.ReceiverID, now); err != nil {
 			return err
@@ -317,19 +317,22 @@ func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session 
 	return nil
 }
 
-// authorizeRecovery applies the fresh owner approval a recovery session
-// requires. Pure recovery creates no association and reserves no capacity.
-func (s *Service) authorizeRecovery(ctx context.Context, tx *sql.Tx, session Session, request AuthorizeRequest, _ time.Time) error {
-	if request.RecoveryCode == "" {
-		return ErrFreshIdentityRequired
+// verifyOwner verifies one fresh WeChat proof and reports the Account it names.
+// The provider call is an external boundary, so it stays outside every database
+// transaction.
+func (s *Service) verifyOwner(ctx context.Context, recoveryCode string) (WeChatProof, error) {
+	if recoveryCode == "" {
+		return WeChatProof{}, ErrFreshIdentityRequired
 	}
 	if s.provider == nil {
-		return ErrIdentityProvider
+		return WeChatProof{}, ErrIdentityProvider
 	}
-	proof, err := s.provider.VerifyIdentity(ctx, request.RecoveryCode)
-	if err != nil {
-		return err
-	}
+	return s.provider.VerifyIdentity(ctx, recoveryCode)
+}
+
+// authorizeRecovery applies the fresh owner approval a recovery session
+// requires. Pure recovery creates no association and reserves no capacity.
+func (s *Service) authorizeRecovery(ctx context.Context, tx *sql.Tx, session Session, request AuthorizeRequest, proof WeChatProof) error {
 	owner, err := senderAccount(ctx, tx, request.SenderID)
 	if err != nil {
 		return err

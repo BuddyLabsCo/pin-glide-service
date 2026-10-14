@@ -3,12 +3,7 @@ asyncapi: 3.1.0
 channels:
   pairingSessionEvents:
     address: /v1/pairing-sessions/{id}/events
-    description: |-
-      One Pairing Session's handshake channel. A participant subscribes with
-      the session's restricted credential, or with the management credential of
-      the Sender that claimed it. The service relays opaque handshake bytes to
-      the other participant, sends the session state after subscription and on
-      every change, and reports failures without closing a usable session.
+    description: "One Pairing Session's handshake channel. A participant subscribes with\nthe session's restricted credential, or with the management credential of\nthe Sender that claimed it; the service derives the participant side from\nwhichever credential authenticated. It relays opaque handshake bytes to\nthe other participant, sends the session state after subscription and on\nevery change, and reports failures without closing a usable session.\nRelayed bytes are live traffic: the service keeps no history, so a\nreconnect receives the current state and nothing sent before it.\n\nA subscription the service rejects before upgrading is an ordinary HTTP\nproblem detail: 401 credential_missing, credential_invalid or\ncredential_expired, 404 resource_not_found, 410 pairing_session_expired or\npairing_session_closed, or 503 service_unavailable. A credential's own\nvalidity is decided before the protected session state, so an expired\nrestricted credential reports itself while the valid management\ncredential of the session's own Sender reports the expired session.\n\nAfter the upgrade every recoverable failure arrives as an error message\nand the connection stays open. A frame that is not a pairing_relay of this\nversion, an unknown message type and a frame for another session are\nprotocol errors rather than relay traffic, so the service closes with\n1002. Invalid text encoding closes with 1007, a session that may no longer\nrelay closes with 1008, a normal close uses 1000, server shutdown uses\n1001 and an unexpected server failure uses 1011. Close reasons carry a\nshort machine code and never secret data."
     messages:
       error:
         $ref: "#/components/messages/error"
@@ -25,6 +20,11 @@ channels:
 components:
   messages:
     error:
+      description: |-
+        A failure that leaves the session usable, so the connection stays open.
+        pairing_not_ready means the session cannot relay this frame yet, for
+        example because the other participant is not connected; the client
+        retries once its peer is present.
       name: error
       payload:
         $ref: "#/components/schemas/WSSError"

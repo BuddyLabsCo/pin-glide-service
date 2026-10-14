@@ -44,15 +44,16 @@ func NewPairingSocket(sessions PairingSessions, hub *Hub, logger *slog.Logger) *
 
 // Serve upgrades one authenticated subscription and serves it until the
 // connection closes. The admitted work keeps its token for the connection's
-// whole lifetime, so bounded shutdown can join it.
-func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) {
+// whole lifetime, so bounded shutdown can join it. It returns the failure of a
+// subscription the service rejected before upgrading, and nil once the
+// connection answered the client itself.
+func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) error {
 	defer release()
 
 	now := time.Now().UTC()
-	participant, err := s.authenticate(request.Context(), request, sessionID, now)
+	participant, err := s.authenticate(request.Context(), sessionID, now)
 	if err != nil {
-		s.reject(writer, request, sessionID, err)
-		return
+		return err
 	}
 
 	socket, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
@@ -65,7 +66,7 @@ func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request,
 			slog.String("session_id", sessionID),
 			slog.String("cause", err.Error()),
 		)
-		return
+		return nil
 	}
 	socket.SetReadLimit(maxFrameBytes)
 
@@ -77,14 +78,15 @@ func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request,
 	connection.Serve(request.Context(), func(frame []byte) error {
 		return s.relay(request.Context(), participant, frame)
 	})
+	return nil
 }
 
 // authenticate resolves the upgrade credential to one participant. A
 // management credential of the session's claiming Sender is the Sender side;
 // the restricted session credential is the Receiver side. The caller never
 // selects its own side.
-func (s *PairingSocket) authenticate(ctx context.Context, request *http.Request, sessionID string, now time.Time) (pairing.Resolved, error) {
-	token := bearerToken(request.Header.Get("Authorization"))
+func (s *PairingSocket) authenticate(ctx context.Context, sessionID string, now time.Time) (pairing.Resolved, error) {
+	token := observability.CredentialFrom(ctx)
 	session, err := s.sessions.SessionByID(ctx, sessionID)
 	if err != nil {
 		return pairing.Resolved{}, err
@@ -163,18 +165,6 @@ func (s *PairingSocket) SessionChanged(sessionID string, view pairing.View) {
 		Type:    "pairing_state",
 		Session: wireView(view),
 	})
-}
-
-// reject answers a failed subscription with the shared problem detail, so a
-// handshake rejection uses the same error model as every other HTTP failure.
-func (s *PairingSocket) reject(writer http.ResponseWriter, request *http.Request, sessionID string, err error) {
-	problem := problemFor(err, sessionID)
-	s.logger.WarnContext(request.Context(), "pairing subscription rejected",
-		slog.String("request_id", observability.RequestIDFrom(request.Context())),
-		slog.String("session_id", sessionID),
-		slog.String("code", string(problem.code)),
-	)
-	writeProblem(writer, request, problem)
 }
 
 // snapshot builds one session state message.

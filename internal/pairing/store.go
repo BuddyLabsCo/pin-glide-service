@@ -22,8 +22,9 @@ import (
 const lockSenderSQL = `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`
 
 // capacitySQL counts the distinct Receivers one Sender already holds with an
-// active association or a live pending reservation. A re-pairing of an
-// existing Receiver counts once, so it can never consume a second slot, and a
+// active association or a live pending reservation, which includes one both
+// clients have confirmed but not yet activated. A re-pairing of an existing
+// Receiver counts once, so it can never consume a second slot, and a
 // reservation whose session lapsed releases its slot without any cleanup work.
 const capacitySQL = `
 SELECT count(DISTINCT pairings.receiver_id)
@@ -37,7 +38,9 @@ WHERE pairings.sender_id = $1
         SELECT 1
         FROM pin_glide.pairing_sessions AS sessions
         WHERE sessions.pending_pairing_id = pairings.id
-          AND sessions.state IN ('awaiting_authorization', 'awaiting_confirmation')
+          AND sessions.state IN (
+            'awaiting_authorization', 'awaiting_confirmation', 'credential_ready'
+          )
           AND sessions.expires_at > now()
       )
     )

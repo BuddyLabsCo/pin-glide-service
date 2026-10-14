@@ -140,13 +140,14 @@ func (e *environment) createSession(t *testing.T, mode, receiverID, credential s
 	return created.Session, created.PairingToken
 }
 
-// createRecovery opens one recovery session for an existing Receiver using the
-// fresh owner proof that mode requires at creation.
-func (e *environment) createRecovery(t *testing.T, receiverID, code string) (sessionView, string) {
+// createRecovery opens one recovery session for an existing Receiver. Creation
+// takes no credential, as it does for a new Receiver: the fresh owner approval
+// belongs to the claim.
+func (e *environment) createRecovery(t *testing.T, receiverID string) (sessionView, string) {
 	t.Helper()
 
 	status, payload := e.post(t, "/v1/pairing-sessions",
-		`{"mode":"recover_receiver","receiverId":"`+receiverID+`","wechatCode":"`+code+`"}`, "")
+		`{"mode":"recover_receiver","receiverId":"`+receiverID+`"}`, "")
 	if status != http.StatusCreated {
 		t.Fatalf("create recovery session status = %d, want 201: %s", status, payload)
 	}
@@ -161,6 +162,21 @@ func (e *environment) createRecovery(t *testing.T, receiverID, code string) (ses
 		t.Fatalf("created recovery session is incomplete: %s", payload)
 	}
 	return created.Session, created.PairingToken
+}
+
+// insertSenderSession writes the session row that add_sender creation will
+// write once Receiver credential issuance exists, so the replacement path of an
+// already associated Receiver is reachable before that slice lands.
+func (e *environment) insertSenderSession(t *testing.T, receiverID string) string {
+	t.Helper()
+
+	const sessionID = "session-add-sender-fixture"
+	// token_digest is unique per session; nothing holds this value.
+	e.exec(t, `INSERT INTO pin_glide.pairing_sessions
+			(id, mode, receiver_id, state, token_digest, expires_at)
+		VALUES ($1, 'add_sender', $2, 'awaiting_authorization', $3, now() + interval '5 minutes')`,
+		sessionID, receiverID, strings.Repeat("a", 64))
+	return sessionID
 }
 
 // authorize claims one session for a Sender and returns the resulting view.
@@ -308,6 +324,17 @@ func TestPairingSessionCreationAndSenderClaim(t *testing.T) {
 	// never authorizes management.
 	if status, payload := environment.post(t, "/v1/pairing-sessions/"+created.SessionID+"/authorize", `{}`, token); status != http.StatusUnauthorized {
 		t.Errorf("restricted credential authorized a claim: %d %s", status, payload)
+	}
+
+	// A lapsed session reports its own outcome to the Sender that claimed it:
+	// repeating the claim never extends the lifetime.
+	environment.exec(t, `UPDATE pin_glide.pairing_sessions SET expires_at = now() - interval '1 second' WHERE id = $1`, created.SessionID)
+	status, _, payload = environment.authorize(t, created.SessionID, "", senderA.UserSession.Token)
+	if status != http.StatusGone {
+		t.Fatalf("claim of a lapsed session = %d, want 410: %s", status, payload)
+	}
+	if decoded := decodeProblem(t, payload); decoded.Code != "pairing_session_expired" {
+		t.Errorf("lapsed claim code = %q, want pairing_session_expired", decoded.Code)
 	}
 }
 

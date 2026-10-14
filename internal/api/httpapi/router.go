@@ -11,6 +11,7 @@ import (
 	identityapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/identity"
 	pairingapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
@@ -34,9 +35,10 @@ type Dependencies struct {
 }
 
 // PairingEvents serves one authenticated pairing subscription until its
-// connection closes. The HTTP composition routes the upgrade to it.
+// connection closes. The HTTP composition routes the upgrade to it, and reports
+// a subscription the transport rejected before upgrading.
 type PairingEvents interface {
-	Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func())
+	Serve(writer http.ResponseWriter, request *http.Request, sessionID string, release func()) error
 }
 
 // New builds the composed HTTP handler and its admission gate. The gate closes
@@ -83,7 +85,7 @@ func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 		Sessions: dependencies.Pairing,
 		Senders:  dependencies.Pairing,
 	})
-	registerPairingEvents(mux, dependencies.PairingEvents)
+	registerPairingEvents(mux, dependencies.PairingEvents, dependencies.Logger)
 	return api
 }
 
@@ -104,8 +106,10 @@ func registerSecuritySchemes(api huma.API) {
 
 // registerPairingEvents routes the restricted pairing channel. The upgrade is
 // a plain HTTP handler rather than a Huma operation because a hijacked
-// connection has no JSON response Huma could describe.
-func registerPairingEvents(mux *http.ServeMux, events PairingEvents) {
+// connection has no JSON response Huma could describe. A subscription the
+// service rejects before upgrading is reported through the shared problem
+// mapping, so one code keeps one published outcome on both surfaces.
+func registerPairingEvents(mux *http.ServeMux, events PairingEvents, logger *slog.Logger) {
 	if events == nil {
 		return
 	}
@@ -117,7 +121,15 @@ func registerPairingEvents(mux *http.ServeMux, events PairingEvents) {
 		if release == nil {
 			release = func() {}
 		}
-		events.Serve(writer, request, sessionID, release)
+		if err := events.Serve(writer, request, sessionID, release); err != nil {
+			problem := problemForStatus(http.StatusInternalServerError, observability.RequestIDFrom(request.Context()), []error{err})
+			logger.WarnContext(request.Context(), "pairing subscription rejected",
+				slog.String("request_id", problem.RequestID),
+				slog.String("session_id", sessionID),
+				slog.String("code", string(problem.Code)),
+			)
+			writeProblem(writer, request, problem)
+		}
 	})
 }
 

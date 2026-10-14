@@ -116,13 +116,13 @@ func (s Session) Expired(now time.Time) bool {
 	return !s.ExpiresAt.After(now)
 }
 
-// CreateRequest is one request for a restricted session. RecoveryCode is the
-// fresh owner proof a recovery session requires and is the entry authority of
-// that mode.
+// CreateRequest is one request for a restricted session. A recovery session is
+// created anonymously, like a new-receiver one: the fresh owner approval and
+// its WeChat proof belong to the claim, which is the operation that acts on the
+// target Receiver.
 type CreateRequest struct {
-	Mode         Mode
-	ReceiverID   string
-	RecoveryCode string
+	Mode       Mode
+	ReceiverID string
 }
 
 // AuthorizeRequest is one Sender's claim of a session. Alias replaces the

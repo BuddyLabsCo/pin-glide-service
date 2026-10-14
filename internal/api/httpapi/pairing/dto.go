@@ -12,12 +12,12 @@ import (
 const TagPairing = "pairing"
 
 // CreateRequest is the accepted POST /v1/pairing-sessions body. The mode fixes
-// the session's purpose; receiverId is present exactly for the modes that act
-// on an existing Receiver.
+// the session's purpose; receiverId is present exactly for the mode that acts
+// on an existing Receiver. Creation itself carries no credential, so the
+// Receiver side holds only the restricted token it receives here.
 type CreateRequest struct {
 	Mode       string `json:"mode" required:"true" enum:"new_receiver,recover_receiver" doc:"Fixed session mode: new_receiver allocates a Receiver, recover_receiver replaces a lost Receiver credential"`
 	ReceiverID string `json:"receiverId,omitempty" maxLength:"128" doc:"Existing Receiver for recover_receiver; omit it for new_receiver"`
-	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh WeChat authorization proving the Account owner for recover_receiver"`
 }
 
 // AuthorizeRequest is the accepted POST

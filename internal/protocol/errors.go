@@ -41,7 +41,9 @@ const (
 	PairingSessionExpired ErrorCode = "pairing_session_expired"
 	// PairingSessionClosed marks a canceled or activated session.
 	PairingSessionClosed ErrorCode = "pairing_session_closed"
-	// PairingNotReady marks a completion report that no side can apply yet.
+	// PairingNotReady marks a Pairing Session that cannot perform the requested
+	// step yet: the peer participant may not be connected, or the session may
+	// not have both confirmations.
 	PairingNotReady ErrorCode = "pairing_not_ready"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"

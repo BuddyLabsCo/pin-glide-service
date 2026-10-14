@@ -26,10 +26,6 @@ components:
           description: Existing Receiver for recover_receiver; omit it for new_receiver
           maxLength: 128
           type: string
-        wechatCode:
-          description: Fresh WeChat authorization proving the Account owner for recover_receiver
-          maxLength: 512
-          type: string
       required:
         - mode
       type: object
@@ -336,7 +332,7 @@ paths:
         - identity
   /v1/pairing-sessions:
     post:
-      description: Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. new_receiver allocates a Receiver and takes no credential; recover_receiver acts on an existing Receiver of the Account the fresh wechatCode proves and takes no credential either. Associating one more Sender with an already credentialed Receiver needs that Receiver's own credential, so add_sender arrives with Receiver credential issuance rather than with this release. Failures report 401 wechat_authorization_invalid, 403 fresh_identity_required, 404 resource_not_found for a Receiver the caller cannot see, 422 validation_failed for a mode and target that do not match, 502 identity_provider_error or 503 service_unavailable.
+      description: "Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. new_receiver allocates a Receiver; recover_receiver acts on an existing Receiver. Neither mode takes a credential: the Sender that approves the session supplies its fresh WeChat proof when it claims the session. Associating one more Sender with an already credentialed Receiver needs that Receiver's own credential, so add_sender arrives with Receiver credential issuance rather than with this release. Failures report 404 resource_not_found for a Receiver the caller cannot see, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable."
       operationId: PostPairingSessions
       requestBody:
         content:
@@ -351,18 +347,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreatedSession"
           description: Created
-        "401":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-          description: Unauthorized
-        "403":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-          description: Forbidden
         "404":
           content:
             application/problem+json:
@@ -381,12 +365,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
           description: Internal Server Error
-        "502":
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-          description: Bad Gateway
         "503":
           content:
             application/problem+json:
@@ -399,7 +377,7 @@ paths:
         - pairing
   /v1/pairing-sessions/{id}:
     delete:
-      description: "Cancels a session before activation, releases its reservation and closes its restricted channel. An already activated association is not undone: the call reports 410 pairing_session_closed and ordinary Pairing removal applies. Failures report 401 for an unusable credential, 404 resource_not_found, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable."
+      description: "Cancels a session before activation and releases its reservation. Both participants are told the session closed, and the restricted channel stops relaying: its next frame closes the connection. An already activated association is not undone: the call reports 410 pairing_session_closed and ordinary Pairing removal applies. Failures report 401 for an unusable credential, 404 resource_not_found, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable."
       operationId: DeletePairingSession
       parameters:
         - description: Pairing Session ID
