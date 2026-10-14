@@ -103,6 +103,9 @@ var (
 	// ErrCredentialInvalid marks a credential that does not authorize the
 	// requested operation for any reason.
 	ErrCredentialInvalid = errors.New("credential invalid")
+	// ErrCredentialMissing marks an operation without a usable credential
+	// source; a protected operation requires exactly one.
+	ErrCredentialMissing = errors.New("credential missing")
 	// ErrCredentialExpired marks a credential whose recorded expiry has
 	// passed. An expired credential never revokes anything.
 	ErrCredentialExpired = errors.New("credential expired")

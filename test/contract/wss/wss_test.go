@@ -52,6 +52,14 @@ func coverageProblems(description map[string]any) []string {
 		}
 		for _, requirement := range security {
 			required, _ := requirement.(map[string]any)
+			if referenced, ok := required["$ref"].(string); ok {
+				// AsyncAPI 3 names a requirement by referencing a declared
+				// security scheme; the 2.x inline map is still read, so a
+				// document using either form is checked rather than ignored.
+				required = map[string]any{
+					strings.TrimPrefix(referenced, "#/components/securitySchemes/"): []any{},
+				}
+			}
 			for scheme := range required {
 				if _, declared := schemes[scheme]; !declared {
 					problems = append(problems, fmt.Sprintf("operation %s requires undeclared security scheme %s", name, scheme))

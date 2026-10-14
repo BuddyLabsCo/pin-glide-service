@@ -7,6 +7,7 @@ import (
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -87,6 +88,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Device registration revoked",
 		detail: "This Sender registration was permanently security-revoked and cannot be restored.",
 	},
+	protocol.CredentialMissing: {
+		status: http.StatusUnauthorized,
+		title:  "Credential missing",
+		detail: "This operation requires exactly one service credential.",
+	},
 	protocol.CredentialInvalid: {
 		status: http.StatusUnauthorized,
 		title:  "Credential invalid",
@@ -116,6 +122,36 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		status: http.StatusConflict,
 		title:  "Operation mismatch",
 		detail: "The recorded operation consumed a different renewal credential, so this attempt is not that operation's retransmission.",
+	},
+	protocol.FreshIdentityRequired: {
+		status: http.StatusForbidden,
+		title:  "Fresh identity required",
+		detail: "This operation requires fresh verification of the owning WeChat Account.",
+	},
+	protocol.ReceiverLimitReached: {
+		status: http.StatusConflict,
+		title:  "Receiver limit reached",
+		detail: "A Sender can have at most 5 associated Receivers.",
+	},
+	protocol.PairingSessionClaimed: {
+		status: http.StatusConflict,
+		title:  "Pairing session claimed",
+		detail: "Another Sender already claimed this Pairing Session.",
+	},
+	protocol.PairingSessionExpired: {
+		status: http.StatusGone,
+		title:  "Pairing session expired",
+		detail: "This Pairing Session passed its absolute five-minute lifetime.",
+	},
+	protocol.PairingSessionClosed: {
+		status: http.StatusGone,
+		title:  "Pairing session closed",
+		detail: "This Pairing Session was canceled, replaced or already produced its credential.",
+	},
+	protocol.PairingNotReady: {
+		status: http.StatusConflict,
+		title:  "Pairing not ready",
+		detail: "The Pairing Session cannot perform this step yet.",
 	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,
@@ -219,6 +255,7 @@ var businessOutcomes = []struct {
 	{identity.ErrIdentityProvider, protocol.IdentityProviderError},
 	{identity.ErrSenderNotFound, protocol.ResourceNotFound},
 	{identity.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
+	{identity.ErrCredentialMissing, protocol.CredentialMissing},
 	{identity.ErrCredentialInvalid, protocol.CredentialInvalid},
 	{identity.ErrCredentialExpired, protocol.CredentialExpired},
 	{identity.ErrCredentialRevoked, protocol.CredentialRevoked},
@@ -227,6 +264,20 @@ var businessOutcomes = []struct {
 	{identity.ErrOperationMismatch, protocol.OperationMismatch},
 	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
+	{pairing.ErrSessionNotFound, protocol.ResourceNotFound},
+	{pairing.ErrSessionExpired, protocol.PairingSessionExpired},
+	{pairing.ErrSessionClosed, protocol.PairingSessionClosed},
+	{pairing.ErrSessionClaimed, protocol.PairingSessionClaimed},
+	{pairing.ErrReceiverLimitReached, protocol.ReceiverLimitReached},
+	{pairing.ErrInvalidMode, protocol.ValidationFailed},
+	{pairing.ErrReceiverNotOwned, protocol.ResourceNotFound},
+	{pairing.ErrFreshIdentityRequired, protocol.FreshIdentityRequired},
+	{pairing.ErrWeChatAuthorizationInvalid, protocol.WeChatAuthorizationInvalid},
+	{pairing.ErrIdentityProvider, protocol.IdentityProviderError},
+	{pairing.ErrCredentialMissing, protocol.CredentialMissing},
+	{pairing.ErrCredentialInvalid, protocol.CredentialInvalid},
+	{pairing.ErrCredentialExpired, protocol.CredentialExpired},
+	{pairing.ErrStorageUnavailable, protocol.ServiceUnavailable},
 }
 
 // codeForStatus names the code reported when the service has only an HTTP

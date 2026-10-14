@@ -26,5 +26,105 @@ servers:
         default: localhost:8080
         description: Host and port of the public HTTPS/WSS origin.
 
-channels: {}
-operations: {}
+channels:
+  pairingSessionEvents:
+    address: /v1/pairing-sessions/{id}/events
+    title: Restricted Pairing Session channel
+    description: |-
+      One Pairing Session's handshake channel. A participant subscribes with
+      the session's restricted credential, or with the management credential of
+      the Sender that claimed it; the service derives the participant side from
+      whichever credential authenticated. It relays opaque handshake bytes to
+      the other participant, sends the session state after subscription and on
+      every change, and reports failures without closing a usable session.
+      Relayed bytes are live traffic: the service keeps no history, so a
+      reconnect receives the current state and nothing sent before it.
+
+      A subscription the service rejects before upgrading is an ordinary HTTP
+      problem detail: 401 credential_missing, credential_invalid or
+      credential_expired, 404 resource_not_found, 410 pairing_session_expired or
+      pairing_session_closed, or 503 service_unavailable. A credential's own
+      validity is decided before the protected session state, so an expired
+      restricted credential reports itself while the valid management
+      credential of the session's own Sender reports the expired session.
+
+      After the upgrade every recoverable failure arrives as an error message
+      and the connection stays open. A frame that is not a pairing_relay of this
+      version, an unknown message type and a frame for another session are
+      protocol errors rather than relay traffic, so the service closes with
+      1002. Invalid text encoding closes with 1007, a session that may no longer
+      relay closes with 1008, a normal close uses 1000, server shutdown uses
+      1001 and an unexpected server failure uses 1011. Close reasons carry a
+      short machine code and never secret data.
+    parameters:
+      id:
+        description: Pairing Session identifier the QR references.
+    messages:
+      pairingState:
+        $ref: '#/components/messages/pairingState'
+      pairingRelayIn:
+        $ref: '#/components/messages/pairingRelayIn'
+      pairingRelayOut:
+        $ref: '#/components/messages/pairingRelayOut'
+      error:
+        $ref: '#/components/messages/error'
+
+operations:
+  acceptPairingHandshake:
+    action: receive
+    channel:
+      $ref: '#/channels/pairingSessionEvents'
+    summary: Receive one opaque handshake frame from a participant
+    security:
+      - $ref: '#/components/securitySchemes/sessionCredential'
+    messages:
+      - $ref: '#/channels/pairingSessionEvents/messages/pairingRelayIn'
+  publishPairingTraffic:
+    action: send
+    channel:
+      $ref: '#/channels/pairingSessionEvents'
+    summary: Send session state, relayed bytes and recoverable errors
+    security:
+      - $ref: '#/components/securitySchemes/sessionCredential'
+    messages:
+      - $ref: '#/channels/pairingSessionEvents/messages/pairingState'
+      - $ref: '#/channels/pairingSessionEvents/messages/pairingRelayOut'
+      - $ref: '#/channels/pairingSessionEvents/messages/error'
+
+components:
+  securitySchemes:
+    sessionCredential:
+      type: http
+      scheme: bearer
+      description: |-
+        The session's restricted pairing credential, or the management
+        credential of the Sender that claimed the session. The service derives
+        the participant side from whichever credential authenticated.
+  messages:
+    pairingState:
+      name: pairing_state
+      title: Pairing Session state
+      description: The session state after an authorized subscription and after every change.
+      payload:
+        $ref: '#/components/schemas/PairingState'
+    pairingRelayIn:
+      name: pairing_relay
+      title: Opaque handshake frame from a participant
+      payload:
+        $ref: '#/components/schemas/PairingRelayIn'
+    pairingRelayOut:
+      name: pairing_relay
+      title: The peer's opaque handshake frame
+      description: The payload is unchanged; the side is derived from authentication.
+      payload:
+        $ref: '#/components/schemas/PairingRelayOut'
+    error:
+      name: error
+      title: Recoverable application error
+      description: |-
+        A failure that leaves the session usable, so the connection stays open.
+        pairing_not_ready means the session cannot relay this frame yet, for
+        example because the other participant is not connected; the client
+        retries once its peer is present.
+      payload:
+        $ref: '#/components/schemas/WSSError'
