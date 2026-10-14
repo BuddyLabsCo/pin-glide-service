@@ -86,9 +86,12 @@ internal/api/
 └── wss/
     ├── router.go     # Upgrade and handshake
     ├── connection.go # Frame I/O, heartbeat and connection-ID-owned cleanup
-    ├── delivery.go   # Delivery service calls and frame mapping
-    └── pairing.go    # Pairing service calls and frame mapping
+    ├── pairing.go    # Restricted pairing-session channel (M and receiver-side B)
+    └── receiver.go   # Receiver delivery channel: admission, slot and presence
 ```
+
+WSS channel files are named by the channel each carries, one file per channel;
+remaining helpers are named by responsibility.
 
 ### 3.3 Adapter package
 
@@ -194,7 +197,7 @@ Schema prefixes name relations within the shared database.
 | Test kind | Location |
 | --- | --- |
 | Go unit tests | Colocated `*_test.go` |
-| PostgreSQL integration tests | `test/integration/<domain>/` |
+| Integration tests | `test/integration/` |
 | HTTP/WSS contract tests | `test/contract/{http,wss}/` |
 | Compose/release smoke tests | `test/smoke/` |
 | Provider fakes | `test/fakes/{wechat,bailian}/` |
