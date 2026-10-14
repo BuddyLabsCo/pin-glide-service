@@ -302,33 +302,31 @@ func TestRefreshKeepsRecordedAttemptsSuperseded(t *testing.T) {
 	refreshOK(t, environment, later.Refresh.Token, "operation-attempt", 0)
 }
 
-// A request whose operation ID is already recorded but whose token no
-// operation has consumed is not reuse: the presented token is the family's
-// current renewal credential, so it renews the family and revokes nothing.
-func TestRefreshRenewsAnUnconsumedTokenWithoutRevoking(t *testing.T) {
+// A higher attempt is a retransmission of the operation it claims only when it
+// presents the credential that operation consumed. Any other credential has
+// been consumed by nothing, so the attempt changes nothing at all: it neither
+// renews with it nor revokes its family.
+func TestRefreshRejectsAnAttemptThatIsNotItsRetransmission(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-unconsumed", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-unconsumed"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-unconsumed"}`)
+	environment.provider.Accept("code-mismatch", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-mismatch"})
+	issued := environment.loginOK(t, `{"wechatCode":"code-mismatch"}`)
 
-	// The successor the recorded operation issued has not been consumed, so
-	// the higher attempt of that operation renews the family with it.
-	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-consumed", 0)
-	renewed := refreshOK(t, environment, rotated.Refresh.Token, "operation-consumed", 1)
+	// The successor the recorded operation issued is still current, so it is
+	// not that operation's retransmission and must not be consumed.
+	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-mismatch", 0)
+	refreshFails(t, environment, rotated.Refresh.Token, "operation-mismatch", 1,
+		http.StatusConflict, "operation_mismatch")
+	renewed := refreshOK(t, environment, rotated.Refresh.Token, "operation-after-mismatch", 0)
 	if renewed.Refresh.Token == rotated.Refresh.Token {
-		t.Error("the retransmission did not advance the family")
+		t.Error("the rejected attempt consumed the credential it refused")
 	}
 
-	// A stale operation ID from the family a fresh login replaced cannot
-	// revoke the family that login authenticated either.
-	refreshOK(t, environment, renewed.Refresh.Token, "operation-stale", 0)
-	environment.provider.Accept("code-unconsumed-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-unconsumed"})
-	authenticated := environment.loginOK(t, `{"wechatCode":"code-unconsumed-again","senderId":"`+issued.SenderID+`"}`)
-	continued := refreshOK(t, environment, authenticated.Refresh.Token, "operation-stale", 1)
-	if continued.AccountID != authenticated.AccountID || continued.SenderID != authenticated.SenderID {
-		t.Errorf("renewal moved the Sender: %s/%s, want %s/%s",
-			continued.AccountID, continued.SenderID, authenticated.AccountID, authenticated.SenderID)
-	}
-
+	// A stale operation ID of the family a fresh login replaced is not an
+	// operation of the family that login authenticated either.
+	environment.provider.Accept("code-mismatch-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-mismatch"})
+	authenticated := environment.loginOK(t, `{"wechatCode":"code-mismatch-again","senderId":"`+issued.SenderID+`"}`)
+	refreshFails(t, environment, authenticated.Refresh.Token, "operation-mismatch", 1,
+		http.StatusConflict, "operation_mismatch")
 	credentials := identity.NewService(environment.pool, nil)
 	if _, err := credentials.Authenticate(context.Background(), authenticated.UserSession.Token, identity.ScopeUserSession); err != nil {
 		t.Errorf("a stale operation revoked the family the login authenticated: %v", err)

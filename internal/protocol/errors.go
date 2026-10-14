@@ -38,6 +38,10 @@ const (
 	// OperationSuperseded marks an attempt at or below the attempt another
 	// request already committed for the same operation.
 	OperationSuperseded ErrorCode = "operation_superseded"
+	// OperationMismatch marks a higher attempt that claims a recorded operation
+	// without presenting the credential that operation consumed. It neither
+	// issues nor revokes anything.
+	OperationMismatch ErrorCode = "operation_mismatch"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.

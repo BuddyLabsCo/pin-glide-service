@@ -112,6 +112,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Operation superseded",
 		detail: "A recorded attempt of this operation is equal to or higher than the submitted attempt.",
 	},
+	protocol.OperationMismatch: {
+		status: http.StatusConflict,
+		title:  "Operation mismatch",
+		detail: "The recorded operation consumed a different renewal credential, so this attempt is not that operation's retransmission.",
+	},
 	protocol.ServiceUnavailable: {
 		status: http.StatusServiceUnavailable,
 		title:  "Service unavailable",
@@ -219,6 +224,7 @@ var businessOutcomes = []struct {
 	{identity.ErrCredentialRevoked, protocol.CredentialRevoked},
 	{identity.ErrRefreshReuse, protocol.RefreshReuseDetected},
 	{identity.ErrOperationSuperseded, protocol.OperationSuperseded},
+	{identity.ErrOperationMismatch, protocol.OperationMismatch},
 	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
 }

@@ -76,6 +76,7 @@ func registerRefresh(api huma.API, service *domain.Service) {
 			"Attempt 0 is the original request and attempt 1 its one permitted retransmission of an uncertain outcome; either can commit first, and the service never replays a lost response. "+
 			"A recorded attempt equal to or higher than the submitted one reports 409 operation_superseded without issuing or revoking anything. "+
 			"A higher attempt of the recorded operation recovers one lost response only while the consumed token is that operation's recorded predecessor, inside a %g-second overlap and before that token's original expiry, and receives a freshly minted bundle. "+
+			"A higher attempt that presents a credential no operation has consumed is not that operation's retransmission and reports 409 operation_mismatch without issuing or revoking anything. "+
 			"Any other use of a consumed token reports 401 refresh_reuse_detected and revokes only that Sender's family, so unknown or expired tokens never revoke anything. "+
 			"Existing userSession and uploader tokens keep their original expiry during ordinary rotation. Raw credentials appear only in this response, which is never cacheable.", domain.RefreshOverlap.Seconds()),
 		Errors: []int{

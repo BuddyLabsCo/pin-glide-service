@@ -110,8 +110,9 @@ func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope 
 // The operation ID and attempt the client persisted with that token order the
 // rotation: the family's current token rotates, the token an operation already
 // consumed recovers one lost response for that same operation inside
-// RefreshOverlap, a recorded attempt that is equal or higher is superseded, and
-// any other use of a spent token revokes that family alone.
+// RefreshOverlap, a recorded attempt that is equal or higher is superseded, any
+// other use of a spent token revokes that family alone, and a higher attempt
+// that presents a credential no operation consumed is rejected untouched.
 func (s *Service) Refresh(ctx context.Context, request RefreshRequest) (bundle Bundle, err error) {
 	// A failure that is not an explicit outcome is storage unavailability:
 	// renewal cannot complete without PostgreSQL.
@@ -172,15 +173,20 @@ func (s *Service) Refresh(ctx context.Context, request RefreshRequest) (bundle B
 	if recorded && request.Attempt <= int(operation.Attempt) {
 		return Bundle{}, ErrOperationSuperseded
 	}
-	// Only a token an operation consumed can be replayed, so only that token
-	// may revoke a family. An unconsumed token is the family's current renewal
-	// credential, which the rotation below either consumes to recover this
-	// operation's lost response or renews the family with.
-	recovering := recorded && recoverable(operation, credential, now)
 	spent, err := tokenConsumed(ctx, tx, credential.TokenDigest)
 	if err != nil {
 		return Bundle{}, err
 	}
+	// A higher attempt is a retransmission of the recorded operation only when
+	// it presents the credential that operation consumed. Any other credential
+	// has been consumed by nothing, so the attempt is rejected without
+	// consuming it and without crediting it to the operation's record.
+	if recorded && !spent {
+		return Bundle{}, ErrOperationMismatch
+	}
+	// A consumed token is replayable only as the recovery of the one operation
+	// that may recover it; every other use revokes the family it belongs to.
+	recovering := recorded && recoverable(operation, credential, now)
 	if spent && !recovering {
 		return Bundle{}, revokeForReuse(ctx, tx, credential, now)
 	}
@@ -261,6 +267,7 @@ func isOutcome(err error) bool {
 		ErrCredentialRevoked,
 		ErrRefreshReuse,
 		ErrOperationSuperseded,
+		ErrOperationMismatch,
 		ErrAttemptUnsupported,
 	} {
 		if errors.Is(err, outcome) {

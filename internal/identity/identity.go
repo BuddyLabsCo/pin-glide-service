@@ -116,6 +116,10 @@ var (
 	// another request already committed for the same operation. It neither
 	// issues credentials nor revokes anything.
 	ErrOperationSuperseded = errors.New("operation superseded")
+	// ErrOperationMismatch marks a higher attempt that claims a recorded
+	// operation without presenting the credential that operation consumed. It
+	// neither issues credentials nor revokes anything.
+	ErrOperationMismatch = errors.New("operation mismatch")
 	// ErrAttemptUnsupported marks an attempt outside the adopted 0/1 protocol.
 	ErrAttemptUnsupported = errors.New("refresh attempt unsupported")
 	// ErrStorageUnavailable marks a required database operation that failed.
