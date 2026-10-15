@@ -10,6 +10,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -40,6 +43,25 @@ func (e *environment) revokeDeviceOK(t *testing.T, deviceID, credential, code, o
 	if len(payload) != 0 {
 		t.Fatalf("revocation of %s returned a body: %s", deviceID, payload)
 	}
+}
+
+// acceptedRevocationErrors reads the accepted owner revocation contract, so a
+// refusal this test expects is the one that contract defines for the operation
+// rather than a second copy of it.
+func acceptedRevocationErrors(t *testing.T) map[string][]string {
+	t.Helper()
+
+	contents, err := os.ReadFile("../../fixtures/contract/http/device_revocation_v1.json")
+	if err != nil {
+		t.Fatalf("read accepted revocation contract: %v", err)
+	}
+	var fixture struct {
+		Errors map[string][]string `json:"errors"`
+	}
+	if err := json.Unmarshal(contents, &fixture); err != nil {
+		t.Fatalf("decode accepted revocation contract: %v", err)
+	}
+	return fixture.Errors
 }
 
 // An Account owner revokes one Receiver for every Sender that shares it: the
@@ -165,6 +187,7 @@ func TestReceiverRevocationNeedsAnOwnedReceiverAndFreshSameAccountProof(t *testi
 
 	environment.provider.Fail("code-revoke-invalid", identity.ErrWeChatAuthorizationInvalid)
 	environment.provider.Fail("code-revoke-broken", identity.ErrIdentityProvider)
+	accepted := acceptedRevocationErrors(t)
 
 	for _, refused := range []struct {
 		name       string
@@ -221,6 +244,10 @@ func TestReceiverRevocationNeedsAnOwnedReceiverAndFreshSameAccountProof(t *testi
 		},
 	} {
 		t.Run(refused.name, func(t *testing.T) {
+			if !slices.Contains(accepted[strconv.Itoa(refused.wantStatus)], refused.wantCode) {
+				t.Fatalf("the accepted contract defines no %s for status %d",
+					refused.wantCode, refused.wantStatus)
+			}
 			body := `{}`
 			if refused.code != "" {
 				body = `{"wechatCode":"` + refused.code + `"}`

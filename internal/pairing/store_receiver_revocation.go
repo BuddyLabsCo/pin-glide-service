@@ -3,15 +3,14 @@ package pairing
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
-)
 
-// senderRegistrationExistsSQL reports whether one Sender registration holds a
-// device ID. A device ID names at most one registration kind, so this decides
-// which branch acts on the request; the branch itself decides ownership and
-// state under its own locks.
-const senderRegistrationExistsSQL = `
-SELECT EXISTS (SELECT 1 FROM pin_glide.identity_sender_registrations WHERE id = $1)`
+	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/model"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/table"
+	"github.com/go-jet/jet/v2/postgres"
+	"github.com/go-jet/jet/v2/qrm"
+)
 
 // receiverGrantsSQL locks every grant one Receiver could still redeem: the
 // issuance a live session still owes, whichever pairing work its Sender started,
@@ -48,10 +47,17 @@ WHERE receiver_id = $1 AND state IN ('active', 'pending')`
 
 // senderRegistrationExists reports whether deviceID names a Sender
 // registration, so a device revocation acts on the role that registration has.
-func senderRegistrationExists(ctx context.Context, db *sql.DB, deviceID string) (bool, error) {
-	var exists bool
-	err := db.QueryRowContext(ctx, senderRegistrationExistsSQL, deviceID).Scan(&exists)
-	return exists, err
+func senderRegistrationExists(ctx context.Context, db qrm.Queryable, deviceID string) (bool, error) {
+	var row model.IdentitySenderRegistrations
+	err := table.IdentitySenderRegistrations.
+		SELECT(table.IdentitySenderRegistrations.ID).
+		FROM(table.IdentitySenderRegistrations).
+		WHERE(table.IdentitySenderRegistrations.ID.EQ(postgres.String(deviceID))).
+		QueryContext(ctx, db, &row)
+	if errors.Is(err, qrm.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // lockReceiverGrants locks the grants of one Receiver that may still be

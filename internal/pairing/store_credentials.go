@@ -27,8 +27,10 @@ FROM pin_glide.identity_receiver_credentials
 WHERE receiver_id = $1`
 
 // revokeReceiverCredentialsSQL supersedes every credential of a Receiver that
-// still authorizes. The replacement row is written in the same transaction,
-// so a Receiver never loses access without gaining its next generation.
+// still authorizes. An issuance writes the replacement row in the same
+// transaction, so a Receiver never loses access without gaining its next
+// generation, while an owner revocation closes the last generation and leaves
+// nothing to replace it with.
 const revokeReceiverCredentialsSQL = `
 UPDATE pin_glide.identity_receiver_credentials
 SET revoked_at = $2

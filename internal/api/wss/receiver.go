@@ -252,15 +252,43 @@ func (s *ReceiverSocket) closeUncommitted(socket *websocket.Conn) {
 // Receiver with no live connection simply receives nothing: this channel keeps
 // no backlog.
 func (s *ReceiverSocket) PairingRemoved(senderID, receiverID, pairingID string) {
-	message := protocol.PairingRemoved{
+	s.writeControl(receiverID, protocol.PairingRemoved{
 		Version:   protocol.WSSVersion,
 		Type:      "pairing_removed",
 		SenderID:  senderID,
 		PairingID: pairingID,
-	}
+	}, "pairing removal", slog.String("pairing_id", pairingID))
+}
+
+// DeviceRevoked reports one Receiver's owner security revocation to its live
+// delivery connections: each committed connection receives the adopted
+// device_revoked control and then closes with the policy meaning, and a
+// reservation still committing is closed when it tries to attach. The domain
+// committed the closure before calling here, so the control is best effort and
+// never delays or prevents it, and the write is bounded like every other
+// service-initiated control.
+func (s *ReceiverSocket) DeviceRevoked(receiverID string) {
+	s.writeControl(receiverID, protocol.DeviceRevoked{
+		Version:    protocol.WSSVersion,
+		Type:       "device_revoked",
+		ReceiverID: receiverID,
+	}, "device revocation")
+
+	// The closure follows the control even when it could not be written: what
+	// the domain committed never depends on the peer reading it.
+	s.EndReceiverAccess(receiverID)
+}
+
+// writeControl reports one service-initiated control message to every committed
+// connection of one Receiver. The write is bounded like every other control, so
+// a connection that can no longer carry the message neither delays nor prevents
+// the change the domain already committed.
+func (s *ReceiverSocket) writeControl(receiverID string, message any, event string, extra ...any) {
 	encoded, err := json.Marshal(message)
 	if err != nil {
-		s.logger.Error("pairing removal could not be encoded",
+		// Every shape is fixed by its wire type, so this cannot happen for a
+		// value the service builds itself.
+		s.logger.Error(event+" could not be encoded",
 			slog.String("receiver_id", receiverID),
 			slog.String("cause", err.Error()),
 		)
@@ -272,51 +300,12 @@ func (s *ReceiverSocket) PairingRemoved(senderID, receiverID, pairingID string) 
 		err := socket.Write(ctx, websocket.MessageText, encoded)
 		cancel()
 		if err != nil {
-			s.logger.Warn("pairing removal not delivered",
-				slog.String("receiver_id", receiverID),
-				slog.String("pairing_id", pairingID),
-				slog.String("cause", err.Error()),
+			s.logger.Warn(event+" not delivered",
+				append(append([]any{slog.String("receiver_id", receiverID)}, extra...),
+					slog.String("cause", err.Error()))...,
 			)
 		}
 	}
-}
-
-// DeviceRevoked reports one Receiver's owner security revocation to its live
-// delivery connections: each committed connection receives the adopted
-// device_revoked control and then closes with the policy meaning, and a
-// reservation still committing is closed when it tries to attach. The domain
-// committed the closure before calling here, so the control is best effort and
-// never delays or prevents it, and the write is bounded like every other
-// service-initiated control.
-func (s *ReceiverSocket) DeviceRevoked(receiverID string) {
-	message := protocol.DeviceRevoked{
-		Version:    protocol.WSSVersion,
-		Type:       "device_revoked",
-		ReceiverID: receiverID,
-	}
-	encoded, err := json.Marshal(message)
-	if err != nil {
-		// The shape is fixed by the wire type, so this cannot happen for a
-		// value the service builds itself; the closure below still happens.
-		s.logger.Error("device revocation could not be encoded",
-			slog.String("receiver_id", receiverID),
-			slog.String("cause", err.Error()),
-		)
-	} else {
-		for _, socket := range s.committedSockets(receiverID) {
-			ctx, cancel := context.WithTimeout(context.Background(), controlWriteTimeout)
-			err := socket.Write(ctx, websocket.MessageText, encoded)
-			cancel()
-			if err != nil {
-				s.logger.Warn("device revocation not delivered",
-					slog.String("receiver_id", receiverID),
-					slog.String("cause", err.Error()),
-				)
-			}
-		}
-	}
-
-	s.EndReceiverAccess(receiverID)
 }
 
 // committedSockets reports the accepted sockets of one Receiver's slots, so a
