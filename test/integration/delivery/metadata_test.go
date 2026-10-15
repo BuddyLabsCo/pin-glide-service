@@ -128,14 +128,14 @@ func TestMessageMetadataReportsRetainedOutcomes(t *testing.T) {
 	}
 }
 
-// TestRegisteredWorkWithoutAnOwnerIsInterrupted shows registered work this
-// process does not own, which is what a restart leaves behind: a submission of
-// that identity is answered as interrupted rather than sent again.
+// TestRegisteredWorkWithoutAnOwnerIsInterrupted shows registered work no live
+// process owns, which is what a restart leaves behind: the identity is
+// finalized as interrupted rather than resumed, and a reconnected Receiver
+// receives only traffic admitted after the restart.
 func TestRegisteredWorkWithoutAnOwnerIsInterrupted(t *testing.T) {
 	environment := start(t)
 	sender := environment.sender(t, "code-orphan", "openid-orphan")
 	receiverID, pairingID, receiverToken := environment.paired(t, sender, "Orphan")
-	socket := receiverConnected(t, environment, receiverToken)
 
 	const messageID = "message-orphan"
 	environment.exec(t, `
@@ -144,13 +144,17 @@ INSERT INTO pin_glide.delivery_deliveries
 VALUES ($1, $2, $3, $4, $5, 'processing', now())`,
 		"delivery-orphan", sender.SenderID, messageID, receiverID, pairingID)
 
+	// The process that registered that work is gone, so the identity keeps its
+	// registered processing state with no owner left to confirm it.
+	environment.restart(t)
+	socket := receiverConnected(t, environment, receiverToken)
+
 	status, response, payload := environment.upload(t, sender.Uploader.Token,
 		uploadBody(messageID, entryOf(receiverID, pairingID)))
 	if status != http.StatusMultiStatus {
 		t.Fatalf("upload status = %d: %s", status, payload)
 	}
 	expectResult(t, response, 0, receiverID, "interrupted", "interrupted")
-	expectNoDelivery(t, socket)
 
 	status, views, payload := environment.message(t, sender.Uploader.Token, messageID)
 	if status != http.StatusOK {
@@ -168,5 +172,18 @@ VALUES ($1, $2, $3, $4, $5, 'processing', now())`,
 	}
 	if orphan.CompletedAt == nil {
 		t.Error("the interrupted work carries no completion time")
+	}
+
+	// The reconnected Receiver receives only new traffic: the interrupted
+	// identity is never recovered or re-sent, while a new Message still arrives.
+	newer := environment.sendUpload(sender.Uploader.Token,
+		uploadBody("message-orphan-next", entryOf(receiverID, pairingID)))
+	frame := readDelivery(t, socket)
+	if frame.MessageID != "message-orphan-next" {
+		t.Fatalf("the forwarded frame = %+v, want the Message admitted after the restart", frame)
+	}
+	receipt(t, socket, frame)
+	if status, _, payload := awaitUpload(t, newer); status != http.StatusMultiStatus {
+		t.Fatalf("upload status = %d: %s", status, payload)
 	}
 }

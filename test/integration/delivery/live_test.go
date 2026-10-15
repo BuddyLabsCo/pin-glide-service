@@ -217,3 +217,46 @@ func TestRetainedTerminalResultIsReusedWithoutSendingAgain(t *testing.T) {
 		t.Errorf("a rejection rewrote the retained outcome to %q", stored)
 	}
 }
+
+// TestAdmittedWorkKeepsItsAuthorityThroughRevocation shows the authorization
+// decision an admitted request froze: revoking the Receiver while that request's
+// send is in flight adds no check in front of it, while a new request validates
+// the current authority again, and its rejection cannot rewrite the earlier
+// Delivery's terminal record.
+func TestAdmittedWorkKeepsItsAuthorityThroughRevocation(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-frozen", "openid-frozen")
+	receiverID, pairingID, _ := environment.paired(t, sender, "Frozen")
+
+	const messageID = "message-frozen"
+	answered := environment.directUpload(sender.Uploader.Token, directRequest(messageID, receiverID, pairingID))
+	frame := environment.channel.nextWrite(t)
+	if frame.MessageID != messageID || frame.PairingID != pairingID {
+		t.Fatalf("the attempted write = %+v, want the admitted entry of %s", frame, messageID)
+	}
+
+	// The entry was validated and authorized before this send began, so the
+	// revocation that follows is not a second decision about it.
+	environment.revoke(t, sender, receiverID, "openid-frozen")
+	environment.channel.confirm()
+	environment.delivery.Receipt(sender.SenderID, messageID, receiverID)
+
+	outcome := <-answered
+	expectOutcome(t, outcome, 0, receiverID, "received", nil)
+	if stored := environment.statusOf(t, sender.SenderID, messageID, receiverID); stored != "received" {
+		t.Errorf("the stored Delivery status = %q, want received", stored)
+	}
+
+	// A new request is authorized on its own, and rejecting it leaves the
+	// stored outcome of the earlier Delivery alone.
+	status, response, payload := environment.upload(t, sender.Uploader.Token,
+		uploadBody(messageID, entryOf(receiverID, pairingID)))
+	if status != http.StatusMultiStatus {
+		t.Fatalf("upload status = %d: %s", status, payload)
+	}
+	expectResult(t, response, 0, receiverID, "rejected", "receiver_not_authorized")
+	if stored := environment.statusOf(t, sender.SenderID, messageID, receiverID); stored != "received" {
+		t.Errorf("a rejection rewrote the stored outcome to %q", stored)
+	}
+	environment.channel.expectNoWrite(t)
+}
