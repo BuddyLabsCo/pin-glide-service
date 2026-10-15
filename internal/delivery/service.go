@@ -29,6 +29,16 @@ type Service struct {
 
 	mutex sync.Mutex
 	live  map[key]*work
+
+	// stopping is closed when this process stops taking Delivery work, which
+	// also ends the wait of the work it still owns.
+	stopping chan struct{}
+	// closing is the same fact as stopping, held by the mutex that serializes
+	// it with the registration of each entry.
+	closing bool
+	// running counts the registered work still executing, so Shutdown joins it
+	// before the process stops touching its storage.
+	running sync.WaitGroup
 }
 
 // NewService composes the delivery service on its storage, live Receiver
@@ -42,6 +52,35 @@ func NewService(pool *sql.DB, channel Channel, authenticator Authenticator) *Ser
 		receiptTimeout: ReceiptTimeout,
 		batchBudget:    BatchBudget,
 		live:           map[key]*work{},
+		stopping:       make(chan struct{}),
+	}
+}
+
+// Shutdown stops this process from registering further Delivery work and joins
+// the registered work it still owns inside ctx's window. A Delivery this
+// process can no longer confirm finalizes interrupted where storage permits,
+// and nothing recovers, retries or resends its ciphertext.
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.mutex.Lock()
+	if !s.closing {
+		s.closing = true
+		close(s.stopping)
+	}
+	s.mutex.Unlock()
+
+	// Wait has no context of its own, so the join is raced against the window
+	// rather than blocking the caller past it.
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		s.running.Wait()
+	}()
+
+	select {
+	case <-joined:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -94,7 +133,14 @@ func (s *Service) Upload(ctx context.Context, uploadCredential string, request R
 		failed  error
 	)
 	for index, item := range request.Items {
+		// Registering under the lock Shutdown takes is what makes its join
+		// complete: no entry starts after the process stopped accepting work.
+		if !s.startWork() {
+			return nil, ErrStatusUnavailable
+		}
 		waiting.Go(func() {
+			defer s.running.Done()
+
 			result, err := s.admit(batch, senderID, request.MessageID, index, item, duplicated[item.ReceiverID])
 			if err != nil {
 				mutex.Lock()
@@ -112,6 +158,19 @@ func (s *Service) Upload(ctx context.Context, uploadCredential string, request R
 		return nil, failed
 	}
 	return results, nil
+}
+
+// startWork counts one entry of registered work, or reports that the process
+// stopped taking Delivery work.
+func (s *Service) startWork() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.closing {
+		return false
+	}
+	s.running.Add(1)
+	return true
 }
 
 // Deliveries returns the retained metadata of one Sender's own Message.
@@ -251,12 +310,24 @@ func (s *Service) send(ctx context.Context, identity key, item Item, live *work)
 	live.opened = true
 	s.mutex.Unlock()
 
+	// Work that outlived the process taking it, or its own batch budget, never
+	// starts a send: it has no outcome to confirm and is interrupted instead.
+	if s.isStopping() || ctx.Err() != nil {
+		return protocol.DeliveryInterrupted, nil
+	}
+
 	delivered, err := s.channel.Deliver(identity.receiverID, frame, s.writeTimeout)
 	if !delivered {
-		if err != nil {
+		switch {
+		case s.isStopping():
+			// Shutdown ended this attempt, so its failure is this process
+			// stopping rather than an outcome of the Receiver's transport.
+			return protocol.DeliveryInterrupted, nil
+		case err != nil:
 			return protocol.DeliverySendFailed, nil
+		default:
+			return protocol.DeliveryOffline, nil
 		}
-		return protocol.DeliveryOffline, nil
 	}
 
 	select {
@@ -268,6 +339,28 @@ func (s *Service) send(ctx context.Context, identity key, item Item, live *work)
 		// The batch budget ended this wait before any Receipt confirmed
 		// arrival, so the registered work has no confirmable outcome.
 		return protocol.DeliveryInterrupted, nil
+	case <-s.stopping:
+		// Bounded shutdown ended this wait without an outcome of its own.
+	}
+
+	// A Receipt this process recorded as shutdown ended the wait still confirms
+	// arrival, so it decides the outcome shutdown could not, and that outcome is
+	// still stored while storage is reachable.
+	select {
+	case <-live.receipt:
+		return protocol.DeliveryReceived, nil
+	default:
+		return protocol.DeliveryInterrupted, nil
+	}
+}
+
+// isStopping reports whether this process stopped taking Delivery work.
+func (s *Service) isStopping() bool {
+	select {
+	case <-s.stopping:
+		return true
+	default:
+		return false
 	}
 }
 

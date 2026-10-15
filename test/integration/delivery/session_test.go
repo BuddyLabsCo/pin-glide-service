@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
+	domain "github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
@@ -42,6 +43,12 @@ type environment struct {
 	pool        *sql.DB
 	postgres    *harness.Postgres
 	databaseURL string
+	// channel is the live transport a test decides about, and delivery is the
+	// same domain service composed on it instead of on a Receiver connection.
+	// Both share this environment's database and credentials, so a test can ask
+	// for a write outcome a real Receiver cannot be made to produce.
+	channel  *controlledChannel
+	delivery *domain.Service
 }
 
 // start composes the service against the shipped schema.
@@ -58,12 +65,16 @@ func start(t *testing.T) *environment {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	provider := wechatfake.New()
+	channel := newControlledChannel()
 	return &environment{
 		service:     harness.StartService(t, postgres.DSN, provider, nil),
 		provider:    provider,
 		pool:        pool,
 		postgres:    postgres,
 		databaseURL: postgres.DSN,
+		channel:     channel,
+		delivery: domain.NewService(pool, channel,
+			domain.NewAuthenticator(identity.NewService(pool, provider))),
 	}
 }
 
@@ -76,6 +87,18 @@ type bundle struct {
 	Uploader struct {
 		Token string `json:"token"`
 	} `json:"uploader"`
+}
+
+// restart replaces the running composed service with a new process over the
+// same database, which is what a restart is here: live work is gone while the
+// retained identities, outcomes and credentials remain.
+func (e *environment) restart(t *testing.T) {
+	t.Helper()
+
+	if err := e.service.Stop(); err != nil {
+		t.Fatalf("stop the composed service: %v", err)
+	}
+	e.service = harness.StartService(t, e.databaseURL, e.provider, nil)
 }
 
 // problem is the decoded RFC 9457 problem detail.

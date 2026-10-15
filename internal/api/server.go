@@ -69,6 +69,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	receiverSocket := wss.NewReceiverSocket(pairingService, presence, dependencies.Logger)
 	service.receivers = receiverSocket
 	deliveryService := delivery.NewService(dependencies.Database, receiverSocket, delivery.NewAuthenticator(identityService))
+	service.delivery = deliveryService
 	// A Receipt arrives on that same connection, so the transport hands each
 	// one to the work that is waiting for it.
 	receiverSocket.SetReceiptSink(deliveryService)
@@ -123,6 +124,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 type server struct {
 	hub       *wss.Hub
 	receivers *wss.ReceiverSocket
+	delivery  *delivery.Service
 	http      *http.Server
 }
 
@@ -134,6 +136,10 @@ func (s *server) drain(admission *httpapi.Admission) error {
 	defer cancel()
 
 	admission.Close()
+	// Admitted Delivery work stops before the connection it may be writing to:
+	// it finalizes interrupted while storage is still reachable, and joining it
+	// first keeps the window from closing sockets underneath a live write.
+	deliveryErr := s.delivery.Shutdown(ctx)
 	// A live connection outlives its transport and its handler owns the
 	// admission, so shutdown ends the connections first: draining the HTTP
 	// server beforehand would wait for readers that only end when they are
@@ -144,7 +150,7 @@ func (s *server) drain(admission *httpapi.Admission) error {
 	// A pairing connection holds its admission until it closes, so this wait
 	// also joins the connections shutdown just ended.
 	admissionErr := admission.Wait(ctx)
-	if err := errors.Join(shutdownErr, admissionErr); err != nil {
+	if err := errors.Join(deliveryErr, shutdownErr, admissionErr); err != nil {
 		return fmt.Errorf("shut down api server: %w", err)
 	}
 	return nil
