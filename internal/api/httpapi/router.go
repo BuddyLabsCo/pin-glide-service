@@ -74,7 +74,7 @@ func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 	api := humago.New(mux, apiConfig())
 	registerSecuritySchemes(api)
 	registerHealth(api, dependencies.Database, dependencies.Logger)
-	identityapi.Register(api, dependencies.Identity)
+	identityapi.Register(api, dependencies.Identity, dependencies.Pairing)
 	pairingapi.Register(api, pairingapi.Handlers{
 		Sessions: dependencies.Pairing,
 		Senders:  dependencies.Pairing,

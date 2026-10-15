@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/enum"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/table"
 	"github.com/go-jet/jet/v2/postgres"
@@ -66,6 +67,22 @@ func restoreSender(ctx context.Context, tx *sql.Tx, senderID, accountID string) 
 	return nil
 }
 
+// closeSender permanently closes one registration and records when owner
+// security revocation did it. The row stays, which is the minimal permanent
+// revoked identity a later login has to be refused against; the closed state
+// and its time are written together, which the table also enforces.
+func closeSender(ctx context.Context, tx *sql.Tx, senderID string, revokedAt time.Time) error {
+	_, err := table.IdentitySenderRegistrations.
+		UPDATE(table.IdentitySenderRegistrations.State, table.IdentitySenderRegistrations.RevokedAt).
+		SET(
+			enum.IdentitySenderRegistrationState.Revoked,
+			postgres.TimestampzT(revokedAt),
+		).
+		WHERE(table.IdentitySenderRegistrations.ID.EQ(postgres.String(senderID))).
+		ExecContext(ctx, tx)
+	return err
+}
+
 // lockSender locks one Sender registration for the rest of the transaction and
 // returns it. Every path that reads or mutates that Sender's credential family
 // — login, renewal and revocation — takes this lock first, so their outcomes
@@ -79,6 +96,25 @@ func lockSender(ctx context.Context, tx *sql.Tx, senderID string) (model.Identit
 		FOR(postgres.UPDATE()).
 		QueryContext(ctx, tx, &registration)
 	return registration, err
+}
+
+// registrationState reads one Sender registration's state without locking it.
+// An unknown registration reports the invalid-credential outcome, because a
+// credential whose Sender is not there authorizes nothing.
+func registrationState(ctx context.Context, db qrm.Queryable, senderID string) (model.IdentitySenderRegistrationState, error) {
+	var registration model.IdentitySenderRegistrations
+	err := table.IdentitySenderRegistrations.
+		SELECT(table.IdentitySenderRegistrations.State).
+		FROM(table.IdentitySenderRegistrations).
+		WHERE(table.IdentitySenderRegistrations.ID.EQ(postgres.String(senderID))).
+		QueryContext(ctx, db, &registration)
+	if errors.Is(err, qrm.ErrNoRows) {
+		return "", ErrCredentialInvalid
+	}
+	if err != nil {
+		return "", err
+	}
+	return registration.State, nil
 }
 
 // revokeCredentials revokes every still-usable credential that matches

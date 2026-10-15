@@ -147,12 +147,13 @@ components:
       properties:
         mode:
           default: logout
-          description: Logout mode; ordinary logout is the default and the only mode this release implements
+          description: logout revokes this Sender's credentials and preserves its Pairings; switch_account also removes its own Pairings and requires its management credential in the Authorization header
           enum:
             - logout
+            - switch_account
           type: string
         refreshToken:
-          description: Renewal credential F; present exactly when the request carries no Authorization credential
+          description: Renewal credential F; present exactly when the request carries no Authorization credential. switch_account always requires a management credential in the header instead
           maxLength: 512
           minLength: 1
           type: string
@@ -399,6 +400,17 @@ components:
       required:
         - wechatCode
       type: object
+    WeChatProofRequest:
+      additionalProperties: false
+      properties:
+        wechatCode:
+          description: Fresh single-use WeChat authorization code obtained by the Account owner
+          maxLength: 512
+          minLength: 1
+          type: string
+      required:
+        - wechatCode
+      type: object
   securitySchemes:
     bearerAuth:
       description: One service credential in the Authorization header. The operation states which credential it accepts.
@@ -439,7 +451,7 @@ paths:
         - system
   /v1/auth/logout:
     post:
-      description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration and without removing its Pairings; other installations and a family a fresh login replaced keep working. The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. A request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. A request that never reached the service revokes nothing, and the client stops forwarding locally at once without claiming remote sign-out it did not receive. Account switching, which also removes this Sender's own Pairings, is not part of this release. This response carries no credential and is never cacheable."
+      description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration; other installations and a family a fresh login replaced keep working. The default logout mode preserves the Sender's Pairings, and switch_account additionally removes only that Sender's own associations and cancels its unfinished reserved Pairing work in the same commit, because the next Account must not inherit them. Switching removes associations, so only the management credential may request it, and the client clears its local identity and pairing keys itself before requesting a new registration. The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. An ordinary logout request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. A switch_account request is decided by the management credential in its Authorization header alone, so a renewal credential in the body adds nothing to it, and one without that header credential reports 401 credential_missing, an unknown, wrongly scoped or already replaced one 401 credential_invalid, an expired one 401 credential_expired, and one whose registration an owner permanently closed 401 credential_revoked. Ending this Sender's access never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. A request that never reached the service revokes nothing, and the client stops forwarding locally at once without claiming remote sign-out it did not receive. This response carries no credential and is never cacheable."
       operationId: PostAuthLogout
       requestBody:
         content:
@@ -607,6 +619,87 @@ paths:
           description: Service Unavailable
       security: []
       summary: Verify WeChat login and issue Sender credentials
+      tags:
+        - identity
+  /v1/devices/{id}/revoke:
+    post:
+      description: "Permanently closes one Sender registration that belongs to the Account the fresh WeChat proof verifies: every credential of that Sender is invalidated, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit. The Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. Revoking a registration never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. This response carries no credential and is never cacheable."
+      operationId: PostDeviceRevoke
+      parameters:
+        - description: Sender registration ID (deviceId) to revoke permanently
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Sender registration ID (deviceId) to revoke permanently
+            maxLength: 128
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeChatProofRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Gateway
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Permanently revoke one owned Sender registration
       tags:
         - identity
   /v1/pairing-sessions:

@@ -254,6 +254,14 @@ var (
 	ErrInvalidMode = errors.New("pairing session mode is not usable for this request")
 	// ErrReceiverNotOwned marks a Receiver that is not visible to this Sender.
 	ErrReceiverNotOwned = errors.New("receiver not owned by this sender")
+	// ErrSenderNotOwned marks a Sender registration that does not exist or that
+	// the verifying Account does not own; the two are deliberately
+	// indistinguishable, so a caller cannot confirm another Account's
+	// registrations.
+	ErrSenderNotOwned = errors.New("sender registration not owned by this account")
+	// ErrSenderRevoked marks an owned registration that security revocation
+	// permanently closed and that must never be restored.
+	ErrSenderRevoked = errors.New("sender registration revoked")
 	// ErrAssociationNotFound marks a Pairing that is not this Sender's own
 	// active association. An unknown, foreign, pending or already removed
 	// Pairing is deliberately indistinguishable, so a caller cannot confirm
@@ -295,6 +303,9 @@ var (
 	// ErrCredentialExpired marks a restricted credential past its lifetime,
 	// which ends with its session.
 	ErrCredentialExpired = errors.New("pairing credential expired")
+	// ErrCredentialRevoked marks a management credential whose family or
+	// registration a previous operation already revoked.
+	ErrCredentialRevoked = errors.New("pairing credential revoked")
 	// ErrStorageUnavailable marks a required database operation that failed.
 	ErrStorageUnavailable = errors.New("storage unavailable")
 )

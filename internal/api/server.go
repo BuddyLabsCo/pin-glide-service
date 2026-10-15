@@ -48,6 +48,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 		dependencies.Database,
 		pairing.NewProvider(dependencies.WeChat, identityService),
 		pairing.NewAuthenticator(identityService),
+		pairing.NewSenderMutations(identityService),
 	)
 	socket := wss.NewPairingSocket(pairingService, service.hub, dependencies.Logger)
 	pairingService.SetNotifier(socket)

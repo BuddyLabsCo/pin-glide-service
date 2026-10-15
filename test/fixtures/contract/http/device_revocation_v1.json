@@ -1,0 +1,30 @@
+{
+  "operationId": "PostDeviceRevoke",
+  "path": "/v1/devices/{id}/revoke",
+  "method": "post",
+  "request": {
+    "schema": "WeChatProofRequest",
+    "required": ["wechatCode"],
+    "properties": ["wechatCode"]
+  },
+  "success": {
+    "status": "204"
+  },
+  "errors": {
+    "400": ["invalid_request"],
+    "401": [
+      "credential_expired",
+      "credential_invalid",
+      "credential_missing",
+      "credential_revoked",
+      "wechat_authorization_invalid"
+    ],
+    "403": ["fresh_identity_required"],
+    "404": ["resource_not_found"],
+    "409": ["device_registration_revoked"],
+    "422": ["validation_failed"],
+    "500": ["internal_error"],
+    "502": ["identity_provider_error"],
+    "503": ["service_unavailable"]
+  }
+}

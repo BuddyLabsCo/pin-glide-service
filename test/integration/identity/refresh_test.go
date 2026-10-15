@@ -64,7 +64,7 @@ type refreshResponse struct {
 func post(t *testing.T, environment *loginEnvironment, path, body string) (int, []byte, http.Header) {
 	t.Helper()
 
-	status, payload, header, err := concurrentPost(environment, path, body)
+	status, payload, header, err := concurrentPost(environment, path, body, "")
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}

@@ -24,21 +24,30 @@ import (
 // concurrentRefresh posts one renewal attempt without using testing.T, so a
 // test can race it with another request.
 func concurrentRefresh(environment *loginEnvironment, refreshToken, operationID string, attempt int) (int, []byte, error) {
-	status, payload, _, err := concurrentPost(environment, refreshPath, refreshBody(refreshToken, operationID, attempt))
+	status, payload, _, err := concurrentPost(environment, refreshPath, refreshBody(refreshToken, operationID, attempt), "")
 	return status, payload, err
 }
 
 // concurrentLogin posts one login without using testing.T, so a test can race
 // it with another request.
 func concurrentLogin(environment *loginEnvironment, body string) (int, []byte, error) {
-	status, payload, _, err := concurrentPost(environment, loginPath, body)
+	status, payload, _, err := concurrentPost(environment, loginPath, body, "")
 	return status, payload, err
 }
 
-// concurrentPost sends one request off the test goroutine and never fails the
-// test itself.
-func concurrentPost(environment *loginEnvironment, path, body string) (int, []byte, http.Header, error) {
-	response, err := environment.service.Client.Post(environment.service.BaseURL+path, "application/json", strings.NewReader(body))
+// concurrentPost sends one request off the test goroutine, carrying the
+// presented credential when the caller supplies one, and never fails the test
+// itself.
+func concurrentPost(environment *loginEnvironment, path, body, bearer string) (int, []byte, http.Header, error) {
+	request, err := http.NewRequest(http.MethodPost, environment.service.BaseURL+path, strings.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	response, err := environment.service.Client.Do(request)
 	if err != nil {
 		return 0, nil, nil, err
 	}

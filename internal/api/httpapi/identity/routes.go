@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	domain "github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -16,10 +17,19 @@ const TagIdentity = "identity"
 // Register installs the Sender authentication operations. A failed operation
 // returns the domain's typed outcome; the shared HTTP error model maps it to
 // the stable business code the published contract defines.
-func Register(api huma.API, service *domain.Service) {
+func Register(api huma.API, service *domain.Service, senders SenderRevocation) {
 	registerLogin(api, service)
 	registerRefresh(api, service)
-	registerLogout(api, service)
+	registerLogout(api, service, senders)
+	registerRevokeDevice(api, senders)
+}
+
+// SenderRevocation is the two identity operations that change a Sender's whole
+// registration rather than only its credentials: an Account switch, which the
+// logout operation requests, and owner security revocation.
+type SenderRevocation interface {
+	SwitchAccount(ctx context.Context, managementCredential string, now time.Time) error
+	SenderRevocation(ctx context.Context, managementCredential, senderID, wechatCode string, now time.Time) error
 }
 
 // registerLogin serves the fresh WeChat login that creates or restores one
@@ -111,24 +121,26 @@ func registerRefresh(api huma.API, service *domain.Service) {
 	})
 }
 
-// registerLogout serves ordinary logout: one Sender revoking its own service
-// access through exactly one credential source, including while its access
-// credentials have expired. Its description states what logout does not touch
-// and the client's obligation not to claim a sign-out the service never
-// confirmed.
-func registerLogout(api huma.API, service *domain.Service) {
+// registerLogout serves the two ways one Sender ends its own service access:
+// ordinary logout, which revokes its credential family and preserves its
+// Pairings, and the Account switch, which also removes its own associations so
+// the next Account cannot inherit them. Its description states what each mode
+// leaves behind and the client's obligation not to claim a sign-out the service
+// never confirmed.
+func registerLogout(api huma.API, service *domain.Service, senders SenderRevocation) {
 	huma.Register(api, huma.Operation{
 		OperationID: "PostAuthLogout",
 		Tags:        []string{TagIdentity},
 		Method:      http.MethodPost,
 		Path:        "/v1/auth/logout",
 		Summary:     "Revoke the Sender's service access",
-		Description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration and without removing its Pairings; other installations and a family a fresh login replaced keep working. " +
+		Description: "Revokes the current Sender's credential family, which is both access scopes and the renewal credential, without permanently closing its Device Registration; other installations and a family a fresh login replaced keep working. " +
+			"The default logout mode preserves the Sender's Pairings, and switch_account additionally removes only that Sender's own associations and cancels its unfinished reserved Pairing work in the same commit, because the next Account must not inherit them. Switching removes associations, so only the management credential may request it, and the client clears its local identity and pairing keys itself before requesting a new registration. " +
 			"The Sender's own authority for this operation is exactly one source: its management or upload credential in the Authorization header, or its renewal credential in the refreshToken body field. " +
 			"Renewing access first is never required, so a renewal credential authorizes logout while the access credentials have expired. " +
-			"A request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. " +
+			"An ordinary logout request offering both sources is rejected as 422 validation_failed, as was one without a usable source: an absent credential reports 401 credential_missing, an unknown or wrongly scoped one 401 credential_invalid, an expired one 401 credential_expired, and a credential an earlier logout or a fresh login revoked 401 credential_revoked. A switch_account request is decided by the management credential in its Authorization header alone, so a renewal credential in the body adds nothing to it, and one without that header credential reports 401 credential_missing, an unknown, wrongly scoped or already replaced one 401 credential_invalid, an expired one 401 credential_expired, and one whose registration an owner permanently closed 401 credential_revoked. " +
+			"Ending this Sender's access never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. " +
 			"A request that never reached the service revokes nothing, and the client stops forwarding locally at once without claiming remote sign-out it did not receive. " +
-			"Account switching, which also removes this Sender's own Pairings, is not part of this release. " +
 			"This response carries no credential and is never cacheable.",
 		Errors: []int{
 			http.StatusBadRequest,
@@ -140,11 +152,63 @@ func registerLogout(api huma.API, service *domain.Service) {
 		// the body, so the published operation states no bearer requirement.
 		Security: []map[string][]string{},
 	}, func(ctx context.Context, input *logoutInput) (*struct{}, error) {
-		request := domain.LogoutRequest{AccessToken: observability.CredentialFrom(ctx)}
+		accessToken := observability.CredentialFrom(ctx)
+		mode := ""
+		if input.Body != nil {
+			mode = input.Body.Mode
+		}
+		// Switching Accounts removes this Sender's own associations together
+		// with its family, so it is not an ordinary logout that happens to
+		// touch more: the two are separate operations behind one route.
+		if mode == "switch_account" {
+			if err := senders.SwitchAccount(ctx, accessToken, time.Now().UTC()); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+
+		request := domain.LogoutRequest{AccessToken: accessToken}
 		if input.Body != nil {
 			request.RefreshToken = input.Body.RefreshToken
 		}
 		if err := service.Logout(ctx, request); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+}
+
+// registerRevokeDevice installs POST /v1/devices/{id}/revoke: the Account
+// owner's permanent security revocation of one of its own registrations,
+// authorized by fresh WeChat proof of the same Account.
+func registerRevokeDevice(api huma.API, senders SenderRevocation) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "PostDeviceRevoke",
+		Tags:          []string{TagIdentity},
+		Method:        http.MethodPost,
+		Path:          "/v1/devices/{id}/revoke",
+		Summary:       "Permanently revoke one owned Sender registration",
+		DefaultStatus: http.StatusNoContent,
+		Description: "Permanently closes one Sender registration that belongs to the Account the fresh WeChat proof verifies: every credential of that Sender is invalidated, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit. " +
+			"The Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. " +
+			"Revoking a registration never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. " +
+			"Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. " +
+			"The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. " +
+			"Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. " +
+			"This response carries no credential and is never cacheable.",
+		Errors: []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+		},
+		Security: []map[string][]string{{"bearerAuth": {}}},
+	}, func(ctx context.Context, input *revokeDeviceInput) (*struct{}, error) {
+		if err := senders.SenderRevocation(ctx, observability.CredentialFrom(ctx), input.ID,
+			input.Body.WeChatCode, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		return nil, nil
