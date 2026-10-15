@@ -59,7 +59,7 @@ func registerUpload(api huma.API, service *domain.Service) {
 			"A caller that disconnects or times out does not cancel the work it registered, which keeps running to its own terminal outcome inside the same batch budget, and a bounded service shutdown ends that work as interrupted instead of writing ciphertext after the process stopped accepting it. " +
 			"A Receipt means arrival only: it is reported once the receiver's minimal correlation is readable, before the Receiver validates, decrypts or displays anything. Late or duplicated Receipts never change a terminal result. " +
 			"The service validates the accepted encryption profile without decrypting content, keeps ciphertext only in memory for the attempt, and never stores or logs a ciphertext, a key or a plaintext. It performs no retry, no offline queue and no history replay. " +
-			"A 207 result carrying offline, rejected or interrupted means this invocation did not forward that entry, and does not disprove an earlier Delivery of the same Message. " +
+			"A 207 result carrying offline or rejected means this invocation did not forward that entry, and does not disprove an earlier Delivery of the same Message, while interrupted, send_failed and ack_timeout may follow an arrival. " +
 			"When a reliable terminal result cannot be obtained, the whole request reports 503 delivery_status_unavailable instead of a pending success, because delivery may already have occurred. " +
 			"The 207 response uses application/json and carries requestId once at the top level.",
 		Errors: []int{
