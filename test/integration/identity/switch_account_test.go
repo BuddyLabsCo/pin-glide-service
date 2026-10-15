@@ -8,8 +8,13 @@ package identity_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 )
@@ -92,6 +97,29 @@ func switchAccountOK(t *testing.T, environment *loginEnvironment, bearer string)
 	if cacheControl := header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Errorf("switch Cache-Control = %q, want no-store", cacheControl)
 	}
+}
+
+// concurrentSwitch posts one Account switch without using testing.T, so a test
+// can race it against another request on the same Sender.
+func concurrentSwitch(environment *loginEnvironment, bearer string) (int, []byte, error) {
+	request, err := http.NewRequest(http.MethodPost,
+		environment.service.BaseURL+logoutPath, strings.NewReader(switchAccountBody))
+	if err != nil {
+		return 0, nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	response, err := environment.service.Client.Do(request)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		return response.StatusCode, nil, err
+	}
+	return response.StatusCode, payload, nil
 }
 
 // An Account switch removes exactly the switching Sender's own associations
@@ -246,5 +274,157 @@ func TestDelayedAccountSwitchCannotRevokeASuccessorFamily(t *testing.T) {
 	authorizes(t, environment, restored.UserSession.Token, identity.ScopeUserSession)
 	if state := environment.associationState(t, "pairing-switch-serial"); state != "pending" {
 		t.Errorf("a superseded switch changed the association state to %q", state)
+	}
+}
+
+// A fresh login replaces the credential family of one Sender, and the family it
+// issues survives a switch racing that login: the switch either commits first,
+// so the login replaced the family it revoked, or it presents authority the
+// login already replaced and revokes nothing. A switch that revoked the
+// replacement instead would leave the restored installation without authority.
+func TestAccountSwitchCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
+	environment := startLogin(t)
+	environment.provider.Accept("code-switch-race", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race"})
+	issued := environment.loginOK(t, `{"wechatCode":"code-switch-race"}`)
+
+	for round := range 3 {
+		code := fmt.Sprintf("code-switch-race-%d", round)
+		environment.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race"})
+
+		var wait sync.WaitGroup
+		var switchedStatus int
+		var switchedPayload []byte
+		var switchFailure error
+		var loginPayload []byte
+		var loginFailure error
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			switchedStatus, switchedPayload, switchFailure = concurrentSwitch(environment, issued.UserSession.Token)
+		}()
+		go func() {
+			defer wait.Done()
+			status, payload, err := concurrentLogin(environment,
+				fmt.Sprintf(`{"wechatCode":%q,"senderId":%q}`, code, issued.SenderID))
+			loginPayload = payload
+			switch {
+			case err != nil:
+				loginFailure = err
+			case status != http.StatusOK:
+				loginFailure = fmt.Errorf("login status = %d: %s", status, payload)
+			}
+		}()
+		wait.Wait()
+		if switchFailure != nil {
+			t.Fatalf("racing switch: %v", switchFailure)
+		}
+		if loginFailure != nil {
+			t.Fatalf("racing login: %v", loginFailure)
+		}
+		switch {
+		case switchedStatus == http.StatusNoContent || switchedStatus == http.StatusUnauthorized:
+		default:
+			t.Fatalf("racing switch status = %d, want 204 or 401: %s", switchedStatus, switchedPayload)
+		}
+
+		// Whichever committed first, the family the login issued authorizes.
+		issued = decodeBundle(t, loginPayload)
+		authorizes(t, environment, issued.UserSession.Token, identity.ScopeUserSession)
+		authorizes(t, environment, issued.Refresh.Token, identity.ScopeRefresh)
+	}
+}
+
+// A switch waits for the Sender's unfinished session work before it takes the
+// Sender's own lock, which is the order a claim, a completion and an explicit
+// removal take those two locks in. The reverse order lets a switch and a key
+// confirmation deadlock, which PostgreSQL resolves by aborting one of them as
+// unavailable instead of serializing them.
+func TestAccountSwitchWaitsForASessionWithoutTheSenderLock(t *testing.T) {
+	environment := startLogin(t)
+	environment.provider.Accept("code-switch-order", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-order"})
+	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-order"}`)
+	environment.seedPairing(t, "receiver-switch-order", "pairing-switch-order", switcher.SenderID)
+	environment.exec(t, `UPDATE pin_glide.pairing_pairings SET state = 'pending' WHERE id = 'pairing-switch-order'`)
+	environment.exec(t, `INSERT INTO pin_glide.pairing_sessions
+			(id, mode, receiver_id, authorized_sender_id, pending_pairing_id, state, token_digest, expires_at)
+		VALUES ('session-switch-order', 'new_receiver', 'receiver-switch-order', $1,
+			'pairing-switch-order', 'awaiting_confirmation', 'digest-switch-order', now() + interval '5 minutes')`,
+		switcher.SenderID)
+
+	ctx := context.Background()
+	prober, err := environment.pool.Conn(ctx)
+	if err != nil {
+		t.Fatalf("take a probe connection: %v", err)
+	}
+	t.Cleanup(func() { _ = prober.Close() })
+	// One completion holds the session row of the work the switch has to wait
+	// for, which is what a key confirmation holds while it takes the Sender's
+	// own lock afterwards.
+	holder, err := environment.pool.Conn(ctx)
+	if err != nil {
+		t.Fatalf("take a holder connection: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = holder.ExecContext(context.Background(), `ROLLBACK`)
+		_ = holder.Close()
+	})
+	if _, err := holder.ExecContext(ctx, `BEGIN`); err != nil {
+		t.Fatalf("begin the holder transaction: %v", err)
+	}
+	if _, err := holder.ExecContext(ctx,
+		`SELECT id FROM pin_glide.pairing_sessions WHERE id = 'session-switch-order' FOR UPDATE`); err != nil {
+		t.Fatalf("hold the session row: %v", err)
+	}
+
+	type answer struct {
+		status  int
+		payload []byte
+		err     error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		status, payload, err := concurrentSwitch(environment, switcher.UserSession.Token)
+		answered <- answer{status: status, payload: payload, err: err}
+	}()
+
+	// The switch waits for that row without taking the Sender's lock, so the
+	// lock stays free for the work it waits for.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var acquired bool
+		if err := prober.QueryRowContext(ctx,
+			`SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, switcher.SenderID).Scan(&acquired); err != nil {
+			t.Fatalf("probe the Sender's lock: %v", err)
+		}
+		if !acquired {
+			t.Fatalf("the switch took the Sender's lock while it waits for the session that lock protects")
+		}
+		if _, err := prober.ExecContext(ctx,
+			`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, switcher.SenderID); err != nil {
+			t.Fatalf("release the probe: %v", err)
+		}
+		select {
+		case got := <-answered:
+			t.Fatalf("the switch answered %d while the session it waits for is held: %s", got.status, got.payload)
+		case <-time.After(25 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+	}
+
+	if _, err := holder.ExecContext(ctx, `ROLLBACK`); err != nil {
+		t.Fatalf("release the session row: %v", err)
+	}
+	select {
+	case got := <-answered:
+		if got.err != nil {
+			t.Fatalf("the waited switch: %v", got.err)
+		}
+		if got.status != http.StatusNoContent {
+			t.Fatalf("the waited switch status = %d, want %d: %s", got.status, http.StatusNoContent, got.payload)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the switch never answered after the session row was released")
 	}
 }

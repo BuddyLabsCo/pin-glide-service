@@ -17,7 +17,7 @@ import (
 type SenderMutations interface {
 	// SwitchAccount revokes one Sender's credential family inside this
 	// transaction.
-	SwitchAccount(ctx context.Context, tx *sql.Tx, senderID string, now time.Time) error
+	SwitchAccount(ctx context.Context, tx *sql.Tx, senderID, managementCredential string, now time.Time) error
 	// RevokeSender closes one Sender registration and revokes every credential
 	// it holds inside this transaction.
 	RevokeSender(ctx context.Context, tx *sql.Tx, senderID, ownerAccount string, now time.Time) error
@@ -83,14 +83,14 @@ func (s *Service) SwitchAccount(ctx context.Context, managementCredential string
 	if managementCredential == "" {
 		return ErrCredentialMissing
 	}
-	// The credential is read once to name the Sender whose transaction this
-	// is; the transaction then re-reads it and decides with the locked state.
+	// The credential is read once to name the Sender whose transaction this is;
+	// the transaction then re-reads it under its locks and decides with that.
 	senderID, err := s.authenticator.Authenticate(ctx, managementCredential, string(identity.ScopeUserSession))
 	if err != nil {
 		return managementOutcome(err)
 	}
 	err = s.senderTransaction(ctx, senderID, now, func(ctx context.Context, tx *sql.Tx) error {
-		return s.revocations.SwitchAccount(ctx, tx, senderID, now)
+		return s.revocations.SwitchAccount(ctx, tx, senderID, managementCredential, now)
 	})
 	return err
 }
@@ -138,17 +138,22 @@ func senderOutcome(err error) error {
 func (s *Service) senderTransaction(ctx context.Context, senderID string, now time.Time, change func(ctx context.Context, tx *sql.Tx) error) error {
 	cleanUp := senderCleanUp{}
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
-		// The Sender's transaction-scoped lock is taken before its rows change,
-		// which is the order a claim and a completion take their locks in, so
-		// this change cannot interleave with either.
+		// The Sender's unfinished work is locked before the Sender's own
+		// advisory lock, which is the order a claim, a completion and an
+		// explicit removal take those two locks in, so this change waits for
+		// them instead of deadlocking with them. Neither change below writes
+		// one of these reservations, so locking them here reads the same set.
+		reservations, err := lockSenderReservations(ctx, tx, senderID, now)
+		if err != nil {
+			return err
+		}
 		if err := lockSender(ctx, tx, senderID); err != nil {
 			return err
 		}
 		if err := change(ctx, tx); err != nil {
 			return err
 		}
-		var err error
-		cleanUp, err = cleanSenderPairings(ctx, tx, senderID, now)
+		cleanUp, err = cleanSenderPairings(ctx, tx, senderID, now, reservations)
 		return err
 	})
 	if err != nil {
@@ -174,11 +179,7 @@ func (s *Service) senderTransaction(ctx context.Context, senderID string, now ti
 // and removes that Sender's own associations inside the caller's transaction.
 // Another Sender's association with the same Receiver, the Receiver's
 // credential and its delivery connection are not touched.
-func cleanSenderPairings(ctx context.Context, tx *sql.Tx, senderID string, now time.Time) (senderCleanUp, error) {
-	reservations, err := lockSenderReservations(ctx, tx, senderID, now)
-	if err != nil {
-		return senderCleanUp{}, err
-	}
+func cleanSenderPairings(ctx context.Context, tx *sql.Tx, senderID string, now time.Time, reservations []lockedReservation) (senderCleanUp, error) {
 	cleanUp := senderCleanUp{}
 	for _, reservation := range reservations {
 		// Closing a session releases its reservation exactly as an explicit
@@ -194,9 +195,10 @@ func cleanSenderPairings(ctx context.Context, tx *sql.Tx, senderID string, now t
 	}
 	// Whatever this Sender still holds afterwards is removed with the same
 	// commit.
-	cleanUp.Removed, err = removeSenderAssociations(ctx, tx, senderID, now)
+	removed, err := removeSenderAssociations(ctx, tx, senderID, now)
 	if err != nil {
 		return senderCleanUp{}, err
 	}
+	cleanUp.Removed = removed
 	return cleanUp, nil
 }

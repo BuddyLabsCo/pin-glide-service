@@ -45,9 +45,9 @@ type senderMutations struct {
 }
 
 // SwitchAccount revokes one Sender's credential family inside the caller's
-// transaction.
-func (m senderMutations) SwitchAccount(ctx context.Context, tx *sql.Tx, senderID string, now time.Time) error {
-	return credentialOutcome(m.accounts.SwitchAccountTx(ctx, tx, senderID, now))
+// transaction against the presented management credential.
+func (m senderMutations) SwitchAccount(ctx context.Context, tx *sql.Tx, senderID, managementCredential string, now time.Time) error {
+	return credentialOutcome(m.accounts.SwitchAccountTx(ctx, tx, senderID, managementCredential, now))
 }
 
 // RevokeSender closes one Sender registration and revokes every credential it

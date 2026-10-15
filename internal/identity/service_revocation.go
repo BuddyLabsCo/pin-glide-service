@@ -29,10 +29,12 @@ import (
 // registration.
 //
 // The caller resolves the presented credential and names the Sender it
-// authorizes before this transaction, and the Sender's lock serializes this
-// change with every other one of the same Sender, so the registration state
-// read under that lock is the authority this decides with.
-func (s *Service) SwitchAccountTx(ctx context.Context, tx *sql.Tx, senderID string, now time.Time) error {
+// authorizes before this transaction, and the credential is read again under
+// this transaction's locks, exactly as ordinary logout reads its own source
+// again. A switch whose authority an earlier login, renewal or logout already
+// replaced therefore revokes nothing instead of revoking the family that
+// replaced its own.
+func (s *Service) SwitchAccountTx(ctx context.Context, tx *sql.Tx, senderID, presentedCredential string, now time.Time) error {
 	sender, err := lockSender(ctx, tx, senderID)
 	if errors.Is(err, qrm.ErrNoRows) {
 		return ErrCredentialInvalid
@@ -41,9 +43,21 @@ func (s *Service) SwitchAccountTx(ctx context.Context, tx *sql.Tx, senderID stri
 		return err
 	}
 	if sender.State != model.IdentitySenderRegistrationState_Active {
-		// A registration an owner permanently closed authorizes no switch, and
-		// a replacement that raced this request left its own family current.
+		// A registration an owner permanently closed authorizes no switch.
 		return ErrCredentialRevoked
+	}
+	presented, err := lockCredential(ctx, tx, digest(presentedCredential))
+	if err != nil {
+		return err
+	}
+	// These are the outcomes the first read reports, so a switch refused under
+	// the lock reports the same fact as one refused before it.
+	if presented.SenderID != senderID || presented.RevokedAt != nil ||
+		Scope(presented.Scope) != ScopeUserSession {
+		return ErrCredentialInvalid
+	}
+	if !presented.ExpiresAt.After(now) {
+		return ErrCredentialExpired
 	}
 	return revokeSenderCredentials(ctx, tx, senderID, now)
 }

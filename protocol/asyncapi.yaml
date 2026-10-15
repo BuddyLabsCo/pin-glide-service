@@ -75,6 +75,15 @@ channels:
       association. A replacement whose expected association already changed
       fails with operation_superseded and preserves the association that is
       current instead.
+
+      A Sender's own Account switch and an owner security revocation cancel that
+      Sender's unfinished sessions in the same commit that changes its
+      authority, so a channel whose session was canceled closes like any other
+      canceled session instead of relaying a confirmation that would activate
+      an association its Sender no longer holds. Authority is decided when a
+      subscription is admitted, so a connection keeps the participant it
+      authenticated until it closes, and a reconnect validates its credential
+      again.
     parameters:
       id:
         description: Pairing Session identifier the QR references.
@@ -124,7 +133,10 @@ channels:
       its own association is announced as pairing_removed, which withdraws that
       Sender's forwarding authority for the named Pairing while the Receiver's
       credential, its connection and every other Sender's association keep
-      working.
+      working. A Sender's Account switch and its owner security revocation
+      announce pairing_removed for every association that Sender still held and
+      leave the Receiver's credential, its connection and every other Sender's
+      association untouched.
     messages:
       pairingRemoved:
         $ref: '#/components/messages/pairingRemoved'
