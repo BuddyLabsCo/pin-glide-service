@@ -19,7 +19,7 @@ type modelConfigurationsTable struct {
 
 	// Columns
 	ID          postgres.ColumnString     // Stable identity of the configuration row; the table holds exactly one.
-	WorkspaceID postgres.ColumnString     // Bailian workspace that serves the published Beijing endpoint.
+	WorkspaceID postgres.ColumnString     // Bailian workspace; one lowercase host label, never a URL or host path.
 	Model       postgres.ColumnString     // Model ID the Sender requests at Bailian; inference stays on the Sender.
 	Enabled     postgres.ColumnBool       // Whether the service may issue temporary credentials from this row.
 	UpdatedAt   postgres.ColumnTimestampz // When the configuration row was last changed.

@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS pin_glide.model_configurations (
     ),
     CONSTRAINT chk_model_configurations_values_are_present CHECK (
         workspace_id <> '' AND model <> ''
+    ),
+    CONSTRAINT chk_model_configurations_workspace_id_is_a_host_label CHECK (
+        workspace_id ~ '^[a-z0-9][a-z0-9-]*$'
     )
 );
 
@@ -18,7 +21,7 @@ IS 'Configuration Data: the one enabled non-secret model configuration row.';
 COMMENT ON COLUMN pin_glide.model_configurations.id
 IS 'Stable identity of the configuration row; the table holds exactly one.';
 COMMENT ON COLUMN pin_glide.model_configurations.workspace_id
-IS 'Bailian workspace that serves the published Beijing endpoint.';
+IS 'Bailian workspace; one lowercase host label, never a URL or host path.';
 COMMENT ON COLUMN pin_glide.model_configurations.model
 IS 'Model ID the Sender requests at Bailian; inference stays on the Sender.';
 COMMENT ON COLUMN pin_glide.model_configurations.enabled

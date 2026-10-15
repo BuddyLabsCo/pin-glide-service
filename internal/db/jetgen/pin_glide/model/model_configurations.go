@@ -14,7 +14,7 @@ import (
 // Configuration Data: the one enabled non-secret model configuration row.
 type ModelConfigurations struct {
 	ID          string    `sql:"primary_key"` // Stable identity of the configuration row; the table holds exactly one.
-	WorkspaceID string    // Bailian workspace that serves the published Beijing endpoint.
+	WorkspaceID string    // Bailian workspace; one lowercase host label, never a URL or host path.
 	Model       string    // Model ID the Sender requests at Bailian; inference stays on the Sender.
 	Enabled     bool      // Whether the service may issue temporary credentials from this row.
 	UpdatedAt   time.Time // When the configuration row was last changed.

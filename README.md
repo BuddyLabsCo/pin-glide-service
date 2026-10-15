@@ -110,6 +110,10 @@ configuration from the environment:
 Temporary model credentials come from that parent key plus the enabled
 non-secret `pin_glide.model_configurations` row an operator maintains; see
 `deploy/compose/README.md` for the deployment steps.
+The repository verifies that boundary with the fake in `test/fakes/bailian` and
+the adapter's own HTTP tests; confirming the real temporary-key endpoint, its
+lifetime parameter, its answer and the parent key's permissions is a separate
+request-driven acceptance step.
 
 ## Running the release CLI
 
