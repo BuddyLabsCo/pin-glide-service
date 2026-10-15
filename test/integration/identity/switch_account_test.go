@@ -9,9 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,27 +97,32 @@ func switchAccountOK(t *testing.T, environment *loginEnvironment, bearer string)
 	}
 }
 
-// concurrentSwitch posts one Account switch without using testing.T, so a test
-// can race it against another request on the same Sender.
-func concurrentSwitch(environment *loginEnvironment, bearer string) (int, []byte, error) {
-	request, err := http.NewRequest(http.MethodPost,
-		environment.service.BaseURL+logoutPath, strings.NewReader(switchAccountBody))
-	if err != nil {
-		return 0, nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+bearer)
-	response, err := environment.service.Client.Do(request)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
+// seedUnfinishedWork seeds one Sender's claimed Pairing Session together with
+// the reservation it holds for the Receiver: the unfinished authorized work a
+// credential change exists to cancel.
+func (e *loginEnvironment) seedUnfinishedWork(t *testing.T, sessionID, receiverID, pairingID, senderID string) {
+	t.Helper()
 
-	payload, err := io.ReadAll(response.Body)
-	if err != nil {
-		return response.StatusCode, nil, err
+	e.seedPairing(t, receiverID, pairingID, senderID)
+	e.exec(t, `INSERT INTO pin_glide.pairing_sessions
+			(id, mode, receiver_id, authorized_sender_id, pending_pairing_id, state, token_digest, expires_at)
+		VALUES ($1, 'new_receiver', $2, $3, $4, 'awaiting_confirmation', $5, now() + interval '5 minutes')`,
+		sessionID, receiverID, senderID, pairingID, "digest-"+sessionID)
+}
+
+// waitForPausedConfirmation waits until the key confirmation is inside the
+// pause that holds its session row, so the request it races starts while that
+// row is already locked.
+func waitForPausedConfirmation(t *testing.T, environment *loginEnvironment) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for environment.count(t, `SELECT count(*) FROM pg_stat_activity WHERE wait_event = 'PgSleep'`) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the key confirmation never reached its session")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return response.StatusCode, payload, nil
 }
 
 // An Account switch removes exactly the switching Sender's own associations
@@ -178,13 +181,8 @@ func TestAccountSwitchCancelsUnfinishedPairingWork(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-switch-pending", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-pending"})
 	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-pending"}`)
-	environment.seedPairing(t, "receiver-switch-pending", "pairing-switch-pending", switcher.SenderID)
-	environment.exec(t, `UPDATE pin_glide.pairing_pairings SET state = 'pending' WHERE id = 'pairing-switch-pending'`)
-	environment.exec(t, `INSERT INTO pin_glide.pairing_sessions
-			(id, mode, receiver_id, authorized_sender_id, pending_pairing_id, state, token_digest, expires_at)
-		VALUES ('session-switch-pending', 'new_receiver', 'receiver-switch-pending', $1,
-			'pairing-switch-pending', 'awaiting_confirmation', 'digest-switch-pending', now() + interval '5 minutes')`,
-		switcher.SenderID)
+	environment.seedUnfinishedWork(t, "session-switch-pending", "receiver-switch-pending",
+		"pairing-switch-pending", switcher.SenderID)
 
 	switchAccountOK(t, environment, switcher.UserSession.Token)
 
@@ -300,7 +298,8 @@ func TestAccountSwitchCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 		wait.Add(2)
 		go func() {
 			defer wait.Done()
-			switchedStatus, switchedPayload, switchFailure = concurrentSwitch(environment, issued.UserSession.Token)
+			switchedStatus, switchedPayload, _, switchFailure = concurrentPost(
+				environment, logoutPath, switchAccountBody, issued.UserSession.Token)
 		}()
 		go func() {
 			defer wait.Done()
@@ -339,92 +338,61 @@ func TestAccountSwitchCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 // removal take those two locks in. The reverse order lets a switch and a key
 // confirmation deadlock, which PostgreSQL resolves by aborting one of them as
 // unavailable instead of serializing them.
-func TestAccountSwitchWaitsForASessionWithoutTheSenderLock(t *testing.T) {
+func TestAccountSwitchSerializesWithAnInFlightKeyConfirmation(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-order", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-order"})
-	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-order"}`)
-	environment.seedPairing(t, "receiver-switch-order", "pairing-switch-order", switcher.SenderID)
-	environment.exec(t, `UPDATE pin_glide.pairing_pairings SET state = 'pending' WHERE id = 'pairing-switch-order'`)
-	environment.exec(t, `INSERT INTO pin_glide.pairing_sessions
-			(id, mode, receiver_id, authorized_sender_id, pending_pairing_id, state, token_digest, expires_at)
-		VALUES ('session-switch-order', 'new_receiver', 'receiver-switch-order', $1,
-			'pairing-switch-order', 'awaiting_confirmation', 'digest-switch-order', now() + interval '5 minutes')`,
-		switcher.SenderID)
+	environment.provider.Accept("code-switch-race-lock", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race-lock"})
+	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-race-lock"}`)
+	environment.seedUnfinishedWork(t, "session-switch-race-lock", "receiver-switch-race-lock",
+		"pairing-switch-race-lock", switcher.SenderID)
+	// The Receiver's key is already confirmed, so the Sender's report is the one
+	// that activates the pairing and takes the Sender's lock afterwards.
+	environment.exec(t, `UPDATE pin_glide.pairing_sessions SET receiver_confirmed_at = now()
+		WHERE id = 'session-switch-race-lock'`)
+	// The pause sits exactly where a key confirmation has locked its session row
+	// and has not taken the Sender's lock yet, which is the overlap a switch has
+	// to wait out.
+	environment.exec(t, `CREATE FUNCTION pin_glide.pairing_sessions_test_pause_confirmation() RETURNS trigger
+		LANGUAGE plpgsql AS $$ BEGIN
+			IF NEW.sender_confirmed_at IS NOT NULL AND OLD.sender_confirmed_at IS NULL THEN
+				PERFORM pg_sleep(2);
+			END IF;
+			RETURN NEW;
+		END $$`)
+	environment.exec(t, `CREATE TRIGGER trg_pairing_sessions_test_pause_confirmation
+		BEFORE UPDATE ON pin_glide.pairing_sessions
+		FOR EACH ROW EXECUTE FUNCTION pin_glide.pairing_sessions_test_pause_confirmation()`)
 
-	ctx := context.Background()
-	prober, err := environment.pool.Conn(ctx)
-	if err != nil {
-		t.Fatalf("take a probe connection: %v", err)
-	}
-	t.Cleanup(func() { _ = prober.Close() })
-	// One completion holds the session row of the work the switch has to wait
-	// for, which is what a key confirmation holds while it takes the Sender's
-	// own lock afterwards.
-	holder, err := environment.pool.Conn(ctx)
-	if err != nil {
-		t.Fatalf("take a holder connection: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = holder.ExecContext(context.Background(), `ROLLBACK`)
-		_ = holder.Close()
-	})
-	if _, err := holder.ExecContext(ctx, `BEGIN`); err != nil {
-		t.Fatalf("begin the holder transaction: %v", err)
-	}
-	if _, err := holder.ExecContext(ctx,
-		`SELECT id FROM pin_glide.pairing_sessions WHERE id = 'session-switch-order' FOR UPDATE`); err != nil {
-		t.Fatalf("hold the session row: %v", err)
-	}
-
-	type answer struct {
-		status  int
-		payload []byte
-		err     error
-	}
-	answered := make(chan answer, 1)
+	var wait sync.WaitGroup
+	var confirmedStatus int
+	var confirmedPayload []byte
+	var confirmedFailure error
+	wait.Add(1)
 	go func() {
-		status, payload, err := concurrentSwitch(environment, switcher.UserSession.Token)
-		answered <- answer{status: status, payload: payload, err: err}
+		defer wait.Done()
+		confirmedStatus, confirmedPayload, _, confirmedFailure = concurrentPost(environment,
+			"/v1/pairing-sessions/session-switch-race-lock/complete",
+			`{"keyConfirmation":"confirmed"}`, switcher.UserSession.Token)
 	}()
+	waitForPausedConfirmation(t, environment)
 
-	// The switch waits for that row without taking the Sender's lock, so the
-	// lock stays free for the work it waits for.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		var acquired bool
-		if err := prober.QueryRowContext(ctx,
-			`SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, switcher.SenderID).Scan(&acquired); err != nil {
-			t.Fatalf("probe the Sender's lock: %v", err)
-		}
-		if !acquired {
-			t.Fatalf("the switch took the Sender's lock while it waits for the session that lock protects")
-		}
-		if _, err := prober.ExecContext(ctx,
-			`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, switcher.SenderID); err != nil {
-			t.Fatalf("release the probe: %v", err)
-		}
-		select {
-		case got := <-answered:
-			t.Fatalf("the switch answered %d while the session it waits for is held: %s", got.status, got.payload)
-		case <-time.After(25 * time.Millisecond):
-		}
-		if time.Now().After(deadline) {
-			break
-		}
+	switchedStatus, switchedPayload, _, switchFailure := concurrentPost(
+		environment, logoutPath, switchAccountBody, switcher.UserSession.Token)
+	wait.Wait()
+	if switchFailure != nil {
+		t.Fatalf("switch racing a key confirmation: %v", switchFailure)
 	}
-
-	if _, err := holder.ExecContext(ctx, `ROLLBACK`); err != nil {
-		t.Fatalf("release the session row: %v", err)
+	if switchedStatus != http.StatusNoContent {
+		t.Fatalf("switch racing a key confirmation = %d, want %d: %s",
+			switchedStatus, http.StatusNoContent, switchedPayload)
 	}
-	select {
-	case got := <-answered:
-		if got.err != nil {
-			t.Fatalf("the waited switch: %v", got.err)
-		}
-		if got.status != http.StatusNoContent {
-			t.Fatalf("the waited switch status = %d, want %d: %s", got.status, http.StatusNoContent, got.payload)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the switch never answered after the session row was released")
+	if confirmedFailure != nil {
+		t.Fatalf("racing key confirmation: %v", confirmedFailure)
+	}
+	if confirmedStatus != http.StatusOK {
+		t.Fatalf("racing key confirmation = %d, want %d: %s",
+			confirmedStatus, http.StatusOK, confirmedPayload)
+	}
+	if state := environment.associationState(t, "pairing-switch-race-lock"); state != "removed" {
+		t.Errorf("the switched Sender's association state = %q, want removed", state)
 	}
 }

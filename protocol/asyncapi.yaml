@@ -77,13 +77,13 @@ channels:
       current instead.
 
       A Sender's own Account switch and an owner security revocation cancel that
-      Sender's unfinished sessions in the same commit that changes its
-      authority, so a channel whose session was canceled closes like any other
-      canceled session instead of relaying a confirmation that would activate
-      an association its Sender no longer holds. Authority is decided when a
-      subscription is admitted, so a connection keeps the participant it
-      authenticated until it closes, and a reconnect validates its credential
-      again.
+      Sender's unfinished reserved Pairing work in the same commit that changes
+      its authority, so a channel whose claimed session was canceled closes like
+      any other canceled session instead of relaying a key confirmation that
+      would activate an association its Sender no longer holds. Authority is
+      decided when a subscription is admitted, so a connection keeps the
+      participant it authenticated until it closes, and a reconnect validates
+      its credential again.
     parameters:
       id:
         description: Pairing Session identifier the QR references.

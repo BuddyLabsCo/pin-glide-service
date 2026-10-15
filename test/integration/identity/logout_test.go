@@ -382,7 +382,7 @@ func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		loggedOutStatus, loggedOutPayload, _, logoutFailure = concurrentPost(
-			environment, logoutPath, logoutRefreshBody(racing.Refresh.Token))
+			environment, logoutPath, logoutRefreshBody(racing.Refresh.Token), "")
 	}()
 	go func() {
 		defer wait.Done()
