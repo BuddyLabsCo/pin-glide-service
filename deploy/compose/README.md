@@ -88,6 +88,8 @@ Edit `.env` before running the installer:
 Temporary model credentials additionally need the enabled, non-secret model
 configuration row in PostgreSQL: the service never invents a Workspace ID, and
 reports `503 model_configuration_unavailable` until an operator supplies one.
+The stored ID is one lowercase Workspace label such as `llm-abc123`, never the
+endpoint host or a URL, so the parent key can only reach that Workspace.
 After a successful migration, set or replace it in place:
 
 ```sh

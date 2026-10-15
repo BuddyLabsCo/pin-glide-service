@@ -468,3 +468,21 @@ func TestModelCredentialsReturnTheProviderKeyWithItsConfigurationSnapshot(t *tes
 		t.Errorf("%d database rows contain the raw provider credential", stored)
 	}
 }
+
+// The enabled row is the only source of the Workspace ID that becomes both the
+// published base URL and the parent-key request, so the shipped schema itself
+// refuses a stored value that is not one Workspace label.
+func TestModelConfigurationRefusesAWorkspaceValueThatIsNotOneLabel(t *testing.T) {
+	environment := start(t)
+
+	_, err := environment.pool.ExecContext(context.Background(),
+		`INSERT INTO pin_glide.model_configurations (id, workspace_id, model)
+		VALUES ('default', 'evil.example/', 'qwen3.7-flash')`)
+	if err == nil || !strings.Contains(err.Error(), "chk_model_configurations_workspace_id_is_a_host_label") {
+		t.Fatalf("inserting a URL-shaped workspace ID = %v, want the host-label constraint", err)
+	}
+
+	// The same statement with one label is accepted, so the refusal above is
+	// the constraint rather than a schema the test cannot reach.
+	environment.configure(t, "llm-workspace", "qwen3.7-flash")
+}
