@@ -245,6 +245,17 @@ func TestOwnAssociationListRenameAndRemovalRespectScope(t *testing.T) {
 		t.Errorf("the other Sender's reservation = %q after the removal, want pending", reservation.state)
 	}
 
+	assertPairingRemoved(t, delivery, first.SenderID, held.PairingID)
+	receiverPresence(t, environment.service, issued.ReceiverID, true, 5*time.Second)
+	assertDeliveryStaysOpen(t, delivery)
+}
+
+// assertPairingRemoved requires the next control frame on one Receiver's
+// delivery connection to announce that exactly this Sender's association was
+// removed.
+func assertPairingRemoved(t *testing.T, delivery *websocket.Conn, senderID, pairingID string) {
+	t.Helper()
+
 	var control struct {
 		Version   int    `json:"version"`
 		Type      string `json:"type"`
@@ -252,19 +263,24 @@ func TestOwnAssociationListRenameAndRemovalRespectScope(t *testing.T) {
 		PairingID string `json:"pairingId"`
 	}
 	readFrame(t, delivery, &control)
-	if control.Type != "pairing_removed" || control.Version != 1 || control.SenderID != first.SenderID || control.PairingID != held.PairingID {
-		t.Errorf("removal control = %+v, want pairing_removed of %q by %q", control, held.PairingID, first.SenderID)
+	if control.Type != "pairing_removed" || control.Version != 1 ||
+		control.SenderID != senderID || control.PairingID != pairingID {
+		t.Errorf("control frame = %+v, want pairing_removed of %q by %q", control, pairingID, senderID)
 	}
-	receiverPresence(t, environment.service, issued.ReceiverID, true, 5*time.Second)
+}
 
-	// The removal message is not a close: the shared delivery connection keeps
-	// serving the other Sender's association.
+// assertDeliveryStaysOpen requires one delivery connection to stay open and
+// silent. A read whose own context expires closes that connection, so this is
+// the last interaction a test may have with the socket it checks.
+func assertDeliveryStaysOpen(t *testing.T, delivery *websocket.Conn) {
+	t.Helper()
+
 	quiet, cancelQuiet := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancelQuiet()
 	if _, _, err := delivery.Read(quiet); err == nil {
 		t.Error("the shared delivery connection received unexpected traffic")
 	} else if websocket.CloseStatus(err) != -1 {
-		t.Errorf("removal closed the shared delivery connection: %v", err)
+		t.Errorf("the shared delivery connection closed: %v", err)
 	}
 }
 

@@ -6,12 +6,8 @@
 package pairing_test
 
 import (
-	"context"
 	"net/http"
 	"testing"
-	"time"
-
-	"github.com/coder/websocket"
 )
 
 // switchAccountBody is the wire body of one Account switch.
@@ -45,31 +41,12 @@ func TestAccountSwitchAnnouncesItsRemovedAssociationToTheReceiver(t *testing.T) 
 		t.Fatalf("switch status = %d, want %d: %s", status, http.StatusNoContent, payload)
 	}
 
-	var control struct {
-		Version   int    `json:"version"`
-		Type      string `json:"type"`
-		SenderID  string `json:"senderId"`
-		PairingID string `json:"pairingId"`
-	}
-	readFrame(t, delivery, &control)
-	if control.Type != "pairing_removed" || control.Version != 1 ||
-		control.SenderID != first.SenderID || control.PairingID != held.PairingID {
-		t.Errorf("switch control = %+v, want pairing_removed of %q by %q", control, held.PairingID, first.SenderID)
-	}
+	assertPairingRemoved(t, delivery, first.SenderID, held.PairingID)
 	if state := environment.associationOf(t, claimed.PairingID); state.state != "active" {
 		t.Errorf("the other Sender's association = %q after the switch, want its untouched active one", state.state)
 	}
 	if status, kept, payload := environment.listOwnReceivers(t, second.UserSession.Token); status != http.StatusOK || len(kept) != 1 {
 		t.Errorf("the other Sender's list = %d %+v, want its association kept: %s", status, kept, payload)
 	}
-
-	// The announcement is not a close: the shared delivery connection keeps
-	// serving the other Sender's association.
-	quiet, cancelQuiet := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancelQuiet()
-	if _, _, err := delivery.Read(quiet); err == nil {
-		t.Error("the shared delivery connection received unexpected traffic")
-	} else if websocket.CloseStatus(err) != -1 {
-		t.Errorf("the announcement closed the shared delivery connection: %v", err)
-	}
+	assertDeliveryStaysOpen(t, delivery)
 }
