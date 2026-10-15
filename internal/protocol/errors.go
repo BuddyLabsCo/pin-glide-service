@@ -21,6 +21,9 @@ const (
 	// IdentityProviderError marks a WeChat provider that could not verify an
 	// authorization code.
 	IdentityProviderError ErrorCode = "identity_provider_error"
+	// ModelProviderError marks a model provider that could not issue a
+	// temporary credential or answered unusably.
+	ModelProviderError ErrorCode = "model_provider_error"
 	// DeviceRegistrationRevoked marks an owned Sender registration that
 	// security revocation closed permanently.
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
@@ -66,6 +69,9 @@ const (
 	ModeForbidsCredentialIssue ErrorCode = "mode_forbids_credential_issue"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
+	// ModelConfigurationUnavailable marks an absent or disabled model
+	// configuration the service cannot issue credentials from.
+	ModelConfigurationUnavailable ErrorCode = "model_configuration_unavailable"
 	// InternalError marks an unexpected failure with a safe public detail.
 	InternalError ErrorCode = "internal_error"
 )

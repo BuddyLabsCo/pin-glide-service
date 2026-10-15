@@ -63,8 +63,9 @@ func TestLoadAllowsProductionWithoutWeChatCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load rejected production configuration without WeChat credentials: %v", err)
 	}
-	if loaded.WeChatAppID != "" || loaded.WeChatAppSecret != "" {
-		t.Errorf("wechat credentials = %q/%q, want absent", loaded.WeChatAppID, loaded.WeChatAppSecret)
+	if loaded.WeChatAppID != "" || loaded.WeChatAppSecret != "" || loaded.BailianAPIKey != "" {
+		t.Errorf("provider credentials = %q/%q/%q, want absent",
+			loaded.WeChatAppID, loaded.WeChatAppSecret, loaded.BailianAPIKey)
 	}
 }
 
@@ -75,6 +76,7 @@ func TestLoadKeepsExplicitValues(t *testing.T) {
 		"PIN_GLIDE_DATABASE_URL":      "postgres://example@db.internal:5432/pin_glide",
 		"PIN_GLIDE_WECHAT_APP_ID":     " wx-app ",
 		"PIN_GLIDE_WECHAT_APP_SECRET": " wx-secret ",
+		"PIN_GLIDE_BAILIAN_API_KEY":   " sk-parent ",
 	}
 	loaded, err := config.Load(func(name string) string { return values[name] })
 	if err != nil {
@@ -92,5 +94,8 @@ func TestLoadKeepsExplicitValues(t *testing.T) {
 	}
 	if loaded.WeChatAppID != "wx-app" || loaded.WeChatAppSecret != "wx-secret" {
 		t.Errorf("wechat credentials = %q/%q, want the configured values", loaded.WeChatAppID, loaded.WeChatAppSecret)
+	}
+	if loaded.BailianAPIKey != "sk-parent" {
+		t.Errorf("bailian API key = %q, want the configured value", loaded.BailianAPIKey)
 	}
 }

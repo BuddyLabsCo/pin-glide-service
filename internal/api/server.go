@@ -15,6 +15,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 )
 
@@ -29,6 +30,9 @@ type Dependencies struct {
 	// WeChat verifies login authorization codes; the web adapter satisfies it
 	// and tests substitute a fake at this external boundary.
 	WeChat identity.Provider
+	// Bailian mints temporary provider credentials; the HTTP adapter satisfies
+	// it and tests substitute a fake at this external boundary.
+	Bailian model.Provider
 	// Presence is the Receiver liveness this process publishes. A nil value
 	// composes the private registry of this run; a caller that also reads
 	// presence supplies the registry the delivery channel writes.
@@ -44,6 +48,11 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	}
 
 	identityService := identity.NewService(dependencies.Database, dependencies.WeChat)
+	modelService := model.NewService(
+		dependencies.Database,
+		dependencies.Bailian,
+		model.NewAuthenticator(identityService),
+	)
 	pairingService := pairing.NewService(
 		dependencies.Database,
 		pairing.NewProvider(dependencies.WeChat, identityService),
@@ -77,6 +86,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 		Database: dependencies.Database,
 		Logger:   dependencies.Logger,
 		Identity: identityService,
+		Model:    modelService,
 		Pairing:  pairingService,
 		Presence: presence,
 	})

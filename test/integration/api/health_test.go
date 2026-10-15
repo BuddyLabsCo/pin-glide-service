@@ -19,7 +19,7 @@ func TestHealthReflectsPostgreSQLAvailability(t *testing.T) {
 	postgres := harness.StartPostgres(t)
 	// Health does not exercise the WeChat boundary, so this service is
 	// composed without a provider.
-	service := harness.StartService(t, postgres.DSN, nil)
+	service := harness.StartService(t, postgres.DSN, nil, nil)
 
 	assertHealth(t, service, http.StatusOK, "ok")
 

@@ -29,6 +29,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 )
 
@@ -214,16 +215,17 @@ type Service struct {
 // StartService composes the service against databaseURL, starts it on a real
 // listener and returns once health answers. Tests cannot select a shared or
 // production database or origin: the harness only starts disposable loopback
-// databases and binds one loopback port. provider is the faked external WeChat
-// boundary of that service.
-func StartService(t *testing.T, databaseURL string, provider identity.Provider) *Service {
+// databases and binds one loopback port. provider and mint are the faked
+// external WeChat and Bailian boundaries of that service; a test that does not
+// exercise one of them passes nil.
+func StartService(t *testing.T, databaseURL string, provider identity.Provider, mint model.Provider) *Service {
 	t.Helper()
-	return StartServiceLogging(t, databaseURL, provider, observability.NewLogger(os.Stderr, "integration"))
+	return StartServiceLogging(t, databaseURL, provider, mint, observability.NewLogger(os.Stderr, "integration"))
 }
 
 // StartServiceLogging composes the service like StartService with the supplied
 // logger, so a test can assert what reaches service diagnostics.
-func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Provider, logger *slog.Logger) *Service {
+func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Provider, mint model.Provider, logger *slog.Logger) *Service {
 	t.Helper()
 	requireDisposableDatabase(t, databaseURL)
 
@@ -247,6 +249,7 @@ func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Pro
 			Database: pool,
 			Logger:   logger,
 			WeChat:   provider,
+			Bailian:  mint,
 			Presence: presence,
 		})
 	}()

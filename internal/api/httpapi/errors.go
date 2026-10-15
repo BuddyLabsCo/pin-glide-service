@@ -7,6 +7,7 @@ import (
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -83,6 +84,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		status: http.StatusBadGateway,
 		title:  "Identity provider error",
 		detail: "The WeChat identity provider could not verify the authorization.",
+	},
+	protocol.ModelProviderError: {
+		status: http.StatusBadGateway,
+		title:  "Model provider error",
+		detail: "The model provider could not issue a temporary credential.",
 	},
 	protocol.DeviceRegistrationRevoked: {
 		status: http.StatusConflict,
@@ -168,6 +174,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		status: http.StatusServiceUnavailable,
 		title:  "Service unavailable",
 		detail: "The service is temporarily unavailable.",
+	},
+	protocol.ModelConfigurationUnavailable: {
+		status: http.StatusServiceUnavailable,
+		title:  "Model configuration unavailable",
+		detail: "The service has no enabled model configuration to issue credentials from.",
 	},
 	protocol.InternalError: {
 		status: http.StatusInternalServerError,
@@ -285,6 +296,9 @@ var businessOutcomes = []struct {
 	{identity.ErrOperationMismatch, protocol.OperationMismatch},
 	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
+	{model.ErrConfigurationUnavailable, protocol.ModelConfigurationUnavailable},
+	{model.ErrProvider, protocol.ModelProviderError},
+	{model.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{pairing.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
 	{pairing.ErrSenderNotOwned, protocol.ResourceNotFound},
 	{pairing.ErrCredentialRevoked, protocol.CredentialRevoked},
