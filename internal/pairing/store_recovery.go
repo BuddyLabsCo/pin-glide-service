@@ -13,6 +13,10 @@ import (
 // time and then the identifier order every session of one Receiver, so two
 // sessions created in the same instant still have one order and an older grant
 // cannot slip through.
+//
+// shortcut: the identifier of a same-instant pair is random, so that tie is
+// ordered arbitrarily rather than by creation; add a sequence when the tie has
+// to follow creation.
 const newerIssuanceSQL = `
 SELECT EXISTS (
     SELECT 1
