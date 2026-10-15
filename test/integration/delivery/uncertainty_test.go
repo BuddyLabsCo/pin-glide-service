@@ -273,15 +273,6 @@ func TestMissingStorageAtFinalizationReportsUncertaintyWithoutResending(t *testi
 	if status != http.StatusOK {
 		t.Fatalf("metadata status = %d: %s", status, payload)
 	}
-	unconfirmed, ok := views[receiverID]
-	if !ok {
-		t.Fatalf("metadata is missing the Delivery of %s: %s", receiverID, payload)
-	}
-	if unconfirmed.Status != "interrupted" {
-		t.Errorf("the unconfirmed Delivery status = %q, want interrupted", unconfirmed.Status)
-	}
-	if unconfirmed.CompletedAt == nil {
-		t.Error("the interrupted Delivery carries no completion time")
-	}
+	expectView(t, views, receiverID, "interrupted", "interrupted")
 	expectNoDelivery(t, socket)
 }

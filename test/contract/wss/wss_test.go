@@ -209,100 +209,119 @@ func TestPublishedWSSDescriptionAssemblesFromTheShippedDefinitions(t *testing.T)
 	}
 }
 
-// The delivery channel must publish every control the service sends on it: a
-// released client reads the direction, the message name and its exact payload
-// fields from the description instead of guessing them from the service.
-func TestPublishedWSSDescriptionDeclaresTheDeliveryControls(t *testing.T) {
+// v1Inventory is every application message of the adopted v1 contract: the
+// channel that carries it, the direction it travels in, the type a released
+// client matches on and the shared payload schema it resolves.
+var v1Inventory = []struct {
+	address string
+	action  string
+	schema  string
+	name    string
+}{
+	// The Receiver's single delivery channel: the service writes one delivery
+	// per admitted Delivery, reports what withdrew a Sender's authority, and
+	// accepts only the arrival Receipt of the authenticated Receiver.
+	{address: "/v1/receiver/events", action: "send", schema: "Delivery", name: "delivery"},
+	{address: "/v1/receiver/events", action: "send", schema: "PairingRemoved", name: "pairing_removed"},
+	{address: "/v1/receiver/events", action: "send", schema: "DeviceRevoked", name: "device_revoked"},
+	{address: "/v1/receiver/events", action: "receive", schema: "Receipt", name: "receipt"},
+	// One Pairing Session's restricted channel: opaque relay traffic in both
+	// directions, the session state, the credential notice and the recoverable
+	// application error.
+	{address: "/v1/pairing-sessions/{id}/events", action: "receive", schema: "PairingRelayIn", name: "pairing_relay"},
+	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "PairingRelayOut", name: "pairing_relay"},
+	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "PairingState", name: "pairing_state"},
+	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "CredentialReady", name: "credential_ready"},
+	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "WSSError", name: "error"},
+}
+
+// The shipped description must publish every message of the adopted v1
+// inventory, so a released client reads the direction, the message name, the
+// channel and the exact payload schema from the description instead of guessing
+// them from the service.
+func TestPublishedWSSDescriptionCarriesTheAdoptedV1Inventory(t *testing.T) {
 	definitions, err := os.ReadFile(definitionsPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", definitionsPath, err)
 	}
 	description := published(t, definitions)
 
-	for _, control := range []struct {
-		schema string
-		name   string
-	}{
-		// Reported when a Sender removes its own association.
-		{schema: "PairingRemoved", name: "pairing_removed"},
-		// Reported when owner security revocation closes a Receiver.
-		{schema: "DeviceRevoked", name: "device_revoked"},
-	} {
-		t.Run(control.name, func(t *testing.T) {
-			assertDeliveryControl(t, description, control.schema, control.name)
+	for _, message := range v1Inventory {
+		t.Run(message.action+"-"+message.schema, func(t *testing.T) {
+			assertChannelMessage(t, description, message.address, message.action, message.schema, message.name)
 		})
 	}
 }
 
-// assertDeliveryControl requires one control message of the delivery channel:
-// its shared payload schema, the direction that sends it and the type a client
-// matches on.
-func assertDeliveryControl(t *testing.T, description map[string]any, schema string, name string) {
+// assertChannelMessage requires one message of the adopted inventory to travel
+// in one direction of one channel: its shared payload schema, the type a client
+// matches on, the channel that carries it and the operation that names it.
+func assertChannelMessage(t *testing.T, description map[string]any, address, action, schema, name string) {
 	t.Helper()
 
 	channels, _ := description["channels"].(map[string]any)
-	channelName, declared := channelNamed(channels, "/v1/receiver/events")
+	channelName, declared := channelNamed(channels, address)
 	if !declared {
-		t.Fatalf("the shipped WSS description does not declare the delivery channel: %v", channels)
+		t.Fatalf("the shipped WSS description does not declare the channel %s: %v", address, channels)
 	}
 	channel, _ := channels[channelName].(map[string]any)
 	descriptions, _ := description["components"].(map[string]any)["messages"].(map[string]any)
-	controlKey := ""
-	for message, value := range descriptions {
-		control, _ := value.(map[string]any)
-		payload, _ := control["payload"].(map[string]any)
+	messageKey := ""
+	for key, value := range descriptions {
+		message, _ := value.(map[string]any)
+		payload, _ := message["payload"].(map[string]any)
 		if payload["$ref"] == protocol.SchemaPrefix+schema {
-			if control["name"] != name {
-				t.Errorf("message %s states the type %v, want %s", message, control["name"], name)
+			if message["name"] != name {
+				t.Errorf("message %s states the type %v, want %s", key, message["name"], name)
 			}
-			controlKey = message
+			messageKey = key
 		}
 	}
-	if controlKey == "" {
+	if messageKey == "" {
 		t.Fatalf("the description declares no message of the shared %s schema: %v", schema, descriptions)
 	}
-	controlRef := "#/components/messages/" + controlKey
+	messageRef := "#/components/messages/" + messageKey
 
-	// The delivery channel carries it, so a client subscribes knowing the
-	// control can arrive there.
+	// The channel carries it, so a client subscribing to that channel knows the
+	// message can arrive there.
 	messages, _ := channel["messages"].(map[string]any)
 	channelKey := ""
-	for message, value := range messages {
+	for key, value := range messages {
 		reference, _ := value.(map[string]any)["$ref"].(string)
-		if reference == controlRef {
-			channelKey = message
+		if reference == messageRef {
+			channelKey = key
 		}
 	}
 	if channelKey == "" {
-		t.Fatalf("the delivery channel does not carry %s: %v", controlRef, messages)
+		t.Fatalf("the channel %s does not carry %s: %v", address, messageRef, messages)
 	}
 
-	// The direction that sends it must name it, so a generator reading the send
-	// operation carries the control instead of inferring it from the channel.
-	controlChannelRef := "#/channels/" + channelName + "/messages/" + channelKey
-	sent := false
+	// The direction it travels in must name it, so a generator reading that
+	// operation carries the message instead of inferring it from the channel.
+	channelMessageRef := "#/channels/" + channelName + "/messages/" + channelKey
+	declaredDirection := false
 	operations, _ := description["operations"].(map[string]any)
 	for operationName, value := range operations {
 		published, _ := value.(map[string]any)
 		reference, _ := published["channel"].(map[string]any)["$ref"].(string)
-		if published["action"] != "send" || reference != "#/channels/"+channelName {
+		if published["action"] != action || reference != "#/channels/"+channelName {
 			continue
 		}
-		sent = true
+		declaredDirection = true
 		named := false
 		messageList, _ := published["messages"].([]any)
 		for _, message := range messageList {
 			referenced, _ := message.(map[string]any)["$ref"].(string)
-			if referenced == controlChannelRef {
+			if referenced == channelMessageRef {
 				named = true
 			}
 		}
 		if !named {
-			t.Errorf("operation %s sends on the delivery channel without naming %s", operationName, controlChannelRef)
+			t.Errorf("operation %s travels on %s without naming %s", operationName, address, channelMessageRef)
 		}
 	}
-	if !sent {
-		t.Errorf("no send operation on the delivery channel publishes %s", name)
+	if !declaredDirection {
+		t.Errorf("the description declares no %s operation on %s, so %s has no direction", action, address, name)
 	}
 }
 
