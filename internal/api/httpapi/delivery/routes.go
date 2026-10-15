@@ -113,7 +113,7 @@ func registerMessage(api huma.API, service *domain.Service) {
 		Method:      http.MethodGet,
 		Path:        "/v1/messages/{messageId}",
 		Summary:     "Read the retained metadata of one own Message",
-		Description: "Returns the retained metadata of the authenticated Sender's own admitted Deliveries of one Message: each Receiver and Pairing, the status, when the Delivery was admitted and, for a terminal failure, when it finished and why. " +
+		Description: "Returns the retained metadata of the authenticated Sender's own admitted Deliveries of one Message: each Receiver and Pairing, the status, when the Delivery was admitted and, once the Delivery is terminal, when it finished and, for a terminal failure, why. " +
 			"Upload authority is required, and only this Sender's own Deliveries appear: another Sender's or another Account's Message is invisible here. The query grants no forwarding authority and does not require the Pairing to stay active, so it never overrides upload validation. " +
 			"Processing appears only here, never in a synchronous 207 result; an upload that admitted no Delivery, including one whose entries were all rejected, is not queryable, and a Message whose rows scheduled cleanup already deleted is reported the same way. " +
 			"Registered work whose owner is gone is resolved as interrupted rather than left pending, and it is never resumed or re-sent. " +
