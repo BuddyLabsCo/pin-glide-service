@@ -131,18 +131,39 @@ type DeviceRevoked struct {
 	ReceiverID string `json:"receiverId" doc:"Receiver whose registration security revocation closed"`
 }
 
+// Delivery is one Message ciphertext the service sends to the Receiver that
+// one admitted Delivery selected. The correlation the Receiver reports back
+// is the authenticated connection, the Sender ID and the Message ID; the
+// ciphertext is the Sender's bytes, unchanged and never inspected.
+type Delivery struct {
+	Version       int    `json:"version" doc:"Application message version; always 1"`
+	Type          string `json:"type" doc:"Message type; delivery"`
+	SenderID      string `json:"senderId" doc:"Sender this Message came from"`
+	ReceiverID    string `json:"receiverId" doc:"Receiver this delivery is addressed to"`
+	PairingID     string `json:"pairingId" doc:"Pairing that authorized this delivery"`
+	MessageID     string `json:"messageId" doc:"Message ID of the Sender's SMS operation"`
+	CryptoVersion int    `json:"cryptoVersion" doc:"Encryption profile version of the ciphertext"`
+	Nonce         string `json:"nonce" doc:"Padded-Base64 96-bit nonce the Sender generated for this ciphertext"`
+	Ciphertext    string `json:"ciphertext" doc:"Padded-Base64 ciphertext followed by its authentication tag"`
+}
+
+// Receipt is a Receiver's report that a Message arrived. It asserts arrival
+// only: the Receiver identity comes from the authenticated connection, and
+// the Sender and Message IDs add the rest of the correlation. A Receipt that
+// arrives late or twice never changes a terminal Delivery result.
+type Receipt struct {
+	Version   int    `json:"version" doc:"Application message version; always 1"`
+	Type      string `json:"type" doc:"Message type; receipt"`
+	SenderID  string `json:"senderId" doc:"Sender the acknowledged Message came from"`
+	MessageID string `json:"messageId" doc:"Message ID the Receiver acknowledges arrival of"`
+}
+
 // WSSError is a recoverable application error. The connection stays open
 // after it, and the shared BusinessError carries the stable code.
 type WSSError struct {
-	Version   int          `json:"version" doc:"Application message version; always 1"`
-	Type      string       `json:"type" doc:"Message type; error"`
-	RequestID string       `json:"requestId" doc:"Correlation identifier of the operation; every recoverable failure states one"`
-	SessionID string       `json:"sessionId,omitempty" doc:"Pairing Session when it is readable"`
-	Error     WSSErrorItem `json:"error" doc:"Stable business error"`
-}
-
-// WSSErrorItem is the BusinessError object WSS failures carry.
-type WSSErrorItem struct {
-	Code   string `json:"code" doc:"Stable machine-readable error code"`
-	Detail string `json:"detail" doc:"Safe explanation; clients must not parse it"`
+	Version   int           `json:"version" doc:"Application message version; always 1"`
+	Type      string        `json:"type" doc:"Message type; error"`
+	RequestID string        `json:"requestId" doc:"Correlation identifier of the operation; every recoverable failure states one"`
+	SessionID string        `json:"sessionId,omitempty" doc:"Pairing Session when it is readable"`
+	Error     BusinessError `json:"error" doc:"Stable business error"`
 }

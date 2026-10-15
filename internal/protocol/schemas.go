@@ -17,14 +17,18 @@ const SchemaPrefix = "#/components/schemas/"
 // client-visible contract; changing it changes the published descriptions.
 var wireTypes = []reflect.Type{
 	reflect.TypeOf(ErrorItem{}),
+	reflect.TypeOf(BusinessError{}),
 	reflect.TypeOf(PairingSessionView{}),
 	reflect.TypeOf(ReceiverAssociation{}),
+	reflect.TypeOf(DeliveryView{}),
 	reflect.TypeOf(PairingState{}),
 	reflect.TypeOf(CredentialReady{}),
 	reflect.TypeOf(PairingRemoved{}),
 	reflect.TypeOf(DeviceRevoked{}),
 	reflect.TypeOf(PairingRelayIn{}),
 	reflect.TypeOf(PairingRelayOut{}),
+	reflect.TypeOf(Delivery{}),
+	reflect.TypeOf(Receipt{}),
 	reflect.TypeOf(WSSError{}),
 }
 

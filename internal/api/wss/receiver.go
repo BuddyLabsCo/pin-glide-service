@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
@@ -61,6 +60,10 @@ type ReceiverSocket struct {
 	receivers ReceiverAdmissions
 	presence  *Presence
 	logger    *slog.Logger
+	// receipts is the sink of the Receipt frames this channel accepts. The
+	// delivery domain owns what a Receipt means; a socket composed without a
+	// sink keeps serving and stops acknowledging arrival.
+	receipts ReceiptSink
 
 	// heartbeatInterval and pongTimeout are the adopted liveness bounds of one
 	// committed connection.
@@ -353,10 +356,10 @@ func (s *ReceiverSocket) EndReceiverAccess(receiverID string) {
 }
 
 // serve holds one committed connection open until its client closes it, the
-// heartbeat finds it gone, or the service ends it. The delivery and Receipt
-// messages this channel carries arrive with live delivery; until they are
-// published, an application frame is a protocol error rather than traffic the
-// service silently ignores.
+// heartbeat finds it gone, or the service ends it. The reader accepts the
+// Receipt frames of this channel and attributes each one to the Receiver this
+// connection authenticated; anything else this direction does not accept ends
+// the connection with its own meaning.
 func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot) {
 	ctx, stopKeepAlive := context.WithCancel(ctx)
 	kept := make(chan struct{})
@@ -365,16 +368,15 @@ func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot) {
 		s.keepAlive(ctx, slot)
 	}()
 
-	messageType, data, err := slot.socket.Read(ctx)
-	if err == nil {
-		// Only text frames are part of this channel: text the service cannot
-		// read is an invalid payload, and every other message is a protocol
-		// error rather than traffic the service silently ignores.
-		intent := closeProtocolError
-		if messageType == websocket.MessageText && !utf8.Valid(data) {
-			intent = closeInvalidPayload
+	for {
+		messageType, data, err := slot.socket.Read(ctx)
+		if err != nil {
+			break
 		}
-		_ = slot.socket.Close(closeMeaning(intent))
+		if intent, accepted := s.accept(slot.key.receiverID, messageType, data); !accepted {
+			_ = slot.socket.Close(closeMeaning(intent))
+			break
+		}
 	}
 
 	// The reader owns the end of the connection, so it also ends the connection's
