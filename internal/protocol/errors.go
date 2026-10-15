@@ -21,8 +21,8 @@ const (
 	// IdentityProviderError marks a WeChat provider that could not verify an
 	// authorization code.
 	IdentityProviderError ErrorCode = "identity_provider_error"
-	// DeviceRegistrationRevoked marks an owned Sender registration that
-	// security revocation closed permanently.
+	// DeviceRegistrationRevoked marks an owned Sender or Receiver registration
+	// that security revocation closed permanently.
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
 	// CredentialMissing marks a protected operation without a credential.
 	CredentialMissing ErrorCode = "credential_missing"

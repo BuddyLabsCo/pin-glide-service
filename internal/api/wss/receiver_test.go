@@ -2,6 +2,7 @@ package wss
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -363,6 +364,41 @@ func TestNewerGenerationOwnsPresenceAcrossOldClose(t *testing.T) {
 		t.Error("ending Receiver access left the committed connection serving")
 	} else if code := websocket.CloseStatus(err); code != websocket.StatusPolicyViolation {
 		t.Errorf("ending Receiver access closed with %v, want %v", code, websocket.StatusPolicyViolation)
+	}
+	awaitPresence(t, presence, "receiver-1", false)
+}
+
+// Owner security revocation tells the Receiver's committed connection why it
+// is ending before the policy Close, so a revoked installation reads the
+// adopted control instead of observing a transport that simply stopped.
+func TestDeviceRevokedReportsTheControlThenCloses(t *testing.T) {
+	presence := NewPresence(time.Now().UTC())
+	channel := newReceiverChannel(t, newReceiverStub("receiver-1"), presence)
+	socket := channel.connected(t, "receiver-1:1")
+	awaitPresence(t, presence, "receiver-1", true)
+
+	channel.socket.DeviceRevoked("receiver-1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	messageType, data, err := socket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read revocation control: %v", err)
+	}
+	if messageType != websocket.MessageText {
+		t.Fatalf("revocation control type = %v, want text", messageType)
+	}
+	var control protocol.DeviceRevoked
+	if err := json.Unmarshal(data, &control); err != nil {
+		t.Fatalf("decode revocation control: %v: %s", err, data)
+	}
+	if control.Version != protocol.WSSVersion || control.Type != "device_revoked" || control.ReceiverID != "receiver-1" {
+		t.Errorf("revocation control = %+v, want version 1 type device_revoked of receiver-1", control)
+	}
+
+	if _, _, err := socket.Read(ctx); websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+		t.Errorf("revocation closed the connection with %v, want %v",
+			websocket.CloseStatus(err), websocket.StatusPolicyViolation)
 	}
 	awaitPresence(t, presence, "receiver-1", false)
 }

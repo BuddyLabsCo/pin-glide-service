@@ -120,6 +120,17 @@ type PairingRemoved struct {
 	PairingID string `json:"pairingId" doc:"Pairing ID of the removed association"`
 }
 
+// DeviceRevoked tells one Receiver's delivery connection that Account-owner
+// security revocation permanently closed its registration, so its credential
+// no longer authorizes anything and the channel ends with the policy meaning
+// after this control. It carries no credential, and every Pairing that
+// forwarded to this Receiver is already gone when it is sent.
+type DeviceRevoked struct {
+	Version    int    `json:"version" doc:"Application message version; always 1"`
+	Type       string `json:"type" doc:"Message type; device_revoked"`
+	ReceiverID string `json:"receiverId" doc:"Receiver whose registration security revocation closed"`
+}
+
 // WSSError is a recoverable application error. The connection stays open
 // after it, and the shared BusinessError carries the stable code.
 type WSSError struct {

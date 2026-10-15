@@ -444,6 +444,7 @@ func isOutcome(err error) bool {
 		ErrReceiverNotOwned,
 		ErrSenderNotOwned,
 		ErrSenderRevoked,
+		ErrReceiverRevoked,
 		ErrAssociationNotFound,
 		ErrPairingNotReady,
 		ErrModeForbidsCredentialIssue,

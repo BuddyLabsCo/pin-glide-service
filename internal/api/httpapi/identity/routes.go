@@ -17,19 +17,20 @@ const TagIdentity = "identity"
 // Register installs the Sender authentication operations. A failed operation
 // returns the domain's typed outcome; the shared HTTP error model maps it to
 // the stable business code the published contract defines.
-func Register(api huma.API, service *domain.Service, senders SenderRevocation) {
+func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
 	registerLogin(api, service)
 	registerRefresh(api, service)
-	registerLogout(api, service, senders)
-	registerRevokeDevice(api, senders)
+	registerLogout(api, service, devices)
+	registerRevokeDevice(api, devices)
 }
 
-// SenderRevocation is the two identity operations that change a Sender's whole
+// DeviceRevocation is the two identity operations that change a device
 // registration rather than only its credentials: an Account switch, which the
-// logout operation requests, and owner security revocation.
-type SenderRevocation interface {
+// logout operation requests, and the Account owner's security revocation of one
+// Sender or Receiver registration.
+type DeviceRevocation interface {
 	SwitchAccount(ctx context.Context, managementCredential string, now time.Time) error
-	SenderRevocation(ctx context.Context, managementCredential, senderID, wechatCode string, now time.Time) error
+	DeviceRevocation(ctx context.Context, managementCredential, deviceID, wechatCode string, now time.Time) error
 }
 
 // registerLogin serves the fresh WeChat login that creates or restores one
@@ -127,7 +128,7 @@ func registerRefresh(api huma.API, service *domain.Service) {
 // the next Account cannot inherit them. Its description states what each mode
 // leaves behind and the client's obligation not to claim a sign-out the service
 // never confirmed.
-func registerLogout(api huma.API, service *domain.Service, senders SenderRevocation) {
+func registerLogout(api huma.API, service *domain.Service, devices DeviceRevocation) {
 	huma.Register(api, huma.Operation{
 		OperationID: "PostAuthLogout",
 		Tags:        []string{TagIdentity},
@@ -161,7 +162,7 @@ func registerLogout(api huma.API, service *domain.Service, senders SenderRevocat
 		// with its family, so it is not an ordinary logout that happens to
 		// touch more: the two are separate operations behind one route.
 		if mode == "switch_account" {
-			if err := senders.SwitchAccount(ctx, accessToken, time.Now().UTC()); err != nil {
+			if err := devices.SwitchAccount(ctx, accessToken, time.Now().UTC()); err != nil {
 				return nil, err
 			}
 			return nil, nil
@@ -180,18 +181,20 @@ func registerLogout(api huma.API, service *domain.Service, senders SenderRevocat
 
 // registerRevokeDevice installs POST /v1/devices/{id}/revoke: the Account
 // owner's permanent security revocation of one of its own registrations,
-// authorized by fresh WeChat proof of the same Account.
-func registerRevokeDevice(api huma.API, senders SenderRevocation) {
+// authorized by fresh WeChat proof of the same Account. The named registration
+// decides which role's lifecycle the revocation applies.
+func registerRevokeDevice(api huma.API, devices DeviceRevocation) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "PostDeviceRevoke",
 		Tags:          []string{TagIdentity},
 		Method:        http.MethodPost,
 		Path:          "/v1/devices/{id}/revoke",
-		Summary:       "Permanently revoke one owned Sender registration",
+		Summary:       "Permanently revoke one owned Sender or Receiver registration",
 		DefaultStatus: http.StatusNoContent,
-		Description: "Permanently closes one Sender registration that belongs to the Account the fresh WeChat proof verifies: every credential of that Sender is invalidated, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit. " +
-			"The Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. " +
-			"Revoking a registration never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. " +
+		Description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat proof verifies, and answers 204. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. " +
+			"For a Sender registration, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit: the Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. " +
+			"For a Receiver registration, its credential generation, the issuance and recovery grants it could still redeem, its delivery connection and every Pairing that forwards to it are invalidated in the same commit: a committed delivery connection receives device_revoked and then closes with 1008 policy_violation, a handshake still committing is refused before its upgrade, that Receiver's associations are removed for every Sender that owned one, and every other Receiver keeps its registration, its credential, its Pairings and its connection, including a Receiver the same Account owns. " +
+			"Revoking a registration never reaches back into work already admitted: a Delivery the service already accepted keeps the authorization it was admitted with, a revoked Sender's Receiver keeps the delivery connection it already held, and every new request validates the current credentials again. A revoked Receiver's own retained history, and the Delivery records of the Pairings it lost, are not deleted by the revocation. " +
 			"Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. " +
 			"The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. " +
 			"Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. " +
@@ -207,7 +210,7 @@ func registerRevokeDevice(api huma.API, senders SenderRevocation) {
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},
 	}, func(ctx context.Context, input *revokeDeviceInput) (*struct{}, error) {
-		if err := senders.SenderRevocation(ctx, observability.CredentialFrom(ctx), input.ID,
+		if err := devices.DeviceRevocation(ctx, observability.CredentialFrom(ctx), input.ID,
 			input.Body.WeChatCode, time.Now().UTC()); err != nil {
 			return nil, err
 		}

@@ -31,17 +31,18 @@ type senderCleanUp struct {
 	Sessions []string
 }
 
-// SenderRevocation permanently closes one Sender registration the caller's own
-// Account owns: the caller proves a fresh WeChat authorization for that
-// Account, every credential of the named Sender is invalidated, its unfinished
-// authorized Pairing work is canceled and its own associations are removed, all
-// in one commit. The management credential in the Authorization header
-// authorizes the request, and the proof must verify the Account that owns that
-// caller's own registration, so revocation stays an owner action. The Receiver's
-// credential, its delivery connection and every other Sender's association are
-// untouched, and a later login presenting the closed Sender ID is refused
-// forever.
-func (s *Service) SenderRevocation(ctx context.Context, managementCredential, senderID, wechatCode string, now time.Time) error {
+// DeviceRevocation permanently closes one device registration the caller's own
+// Account owns, whichever role that registration has: the caller proves a fresh
+// WeChat authorization for the Account its management credential belongs to, and
+// the device ID names one Sender or Receiver registration of that Account, so
+// revocation stays an owner action. A Sender revocation invalidates every
+// credential of the named Sender, cancels its unfinished authorized Pairing work
+// and removes its own associations; a Receiver revocation invalidates its
+// credential generation, cancels the grants it could still redeem, ends its
+// delivery connection and removes every Pairing that forwards to it. Each is one
+// commit, and each leaves every other registration, credential, association and
+// connection as it was.
+func (s *Service) DeviceRevocation(ctx context.Context, managementCredential, deviceID, wechatCode string, now time.Time) error {
 	if s.revocations == nil {
 		return ErrStorageUnavailable
 	}
@@ -67,10 +68,29 @@ func (s *Service) SenderRevocation(ctx context.Context, managementCredential, se
 		// caller's own registrations.
 		return ErrFreshIdentityRequired
 	}
-	err = s.senderTransaction(ctx, senderID, now, func(ctx context.Context, tx *sql.Tx) error {
-		return s.revocations.RevokeSender(ctx, tx, senderID, owner.AccountID, now)
+	// A device ID names at most one registration, and the branch that acts on
+	// that registration decides ownership and state again under its own locks,
+	// so this read only routes the request to the right one.
+	sender, err := senderRegistrationExists(ctx, s.pool, deviceID)
+	if err != nil {
+		return storageError(err)
+	}
+	if sender {
+		return s.senderDeviceRevocation(ctx, deviceID, owner.AccountID, now)
+	}
+	return s.receiverDeviceRevocation(ctx, deviceID, owner.AccountID, now)
+}
+
+// senderDeviceRevocation permanently closes one Sender registration: every
+// credential of that Sender is invalidated, its unfinished authorized Pairing
+// work is canceled and its own associations are removed, all in one commit. The
+// Receiver's credential, its delivery connection and every other Sender's
+// association are untouched, and a later login presenting the closed Sender ID
+// is refused forever.
+func (s *Service) senderDeviceRevocation(ctx context.Context, senderID, ownerAccount string, now time.Time) error {
+	return s.senderTransaction(ctx, senderID, now, func(ctx context.Context, tx *sql.Tx) error {
+		return s.revocations.RevokeSender(ctx, tx, senderID, ownerAccount, now)
 	})
-	return err
 }
 
 // SwitchAccount ends one Sender's service access and removes that Sender's own

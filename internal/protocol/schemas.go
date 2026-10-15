@@ -22,6 +22,7 @@ var wireTypes = []reflect.Type{
 	reflect.TypeOf(PairingState{}),
 	reflect.TypeOf(CredentialReady{}),
 	reflect.TypeOf(PairingRemoved{}),
+	reflect.TypeOf(DeviceRevoked{}),
 	reflect.TypeOf(PairingRelayIn{}),
 	reflect.TypeOf(PairingRelayOut{}),
 	reflect.TypeOf(WSSError{}),

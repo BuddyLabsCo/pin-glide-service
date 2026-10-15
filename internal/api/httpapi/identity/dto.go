@@ -88,7 +88,7 @@ type logoutInput struct {
 }
 
 type revokeDeviceInput struct {
-	ID   string `path:"id" maxLength:"128" doc:"Sender registration ID (deviceId) to revoke permanently"`
+	ID   string `path:"id" maxLength:"128" doc:"Sender or Receiver registration ID (deviceId) to revoke permanently"`
 	Body WeChatProofRequest
 }
 
