@@ -9,6 +9,7 @@ package pairing_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -437,6 +438,7 @@ func TestReceiverRevocationSerializesWithRedemptionAndUpgrade(t *testing.T) {
 	type upgrade struct {
 		socket *websocket.Conn
 		status int
+		body   []byte
 	}
 	upgraded := make(chan upgrade, 1)
 	go func() {
@@ -444,6 +446,10 @@ func TestReceiverRevocationSerializesWithRedemptionAndUpgrade(t *testing.T) {
 		result := upgrade{socket: socket}
 		if err != nil && response != nil {
 			result.status = response.StatusCode
+			if response.Body != nil {
+				result.body, _ = io.ReadAll(response.Body)
+				_ = response.Body.Close()
+			}
 		}
 		upgraded <- result
 	}()
@@ -453,8 +459,13 @@ func TestReceiverRevocationSerializesWithRedemptionAndUpgrade(t *testing.T) {
 		// The upgrade committed before the closure, so the service ends the
 		// connection the revoked registration was holding.
 		requireClose(t, committed.socket, websocket.StatusPolicyViolation)
-	} else if committed.status != http.StatusUnauthorized {
-		t.Errorf("an upgrade racing the closure = %d, want 401", committed.status)
+	} else {
+		if committed.status != http.StatusUnauthorized {
+			t.Errorf("an upgrade racing the closure = %d, want 401: %s", committed.status, committed.body)
+		}
+		if code := decodeProblem(t, committed.body).Code; code != "credential_invalid" {
+			t.Errorf("an upgrade racing the closure = %q, want credential_invalid", code)
+		}
 	}
 	receiverRejected(t, environment, issued.ReceiverToken, http.StatusUnauthorized, "credential_invalid")
 	if state := environment.associationOf(t, association.PairingID).state; state != "removed" {
