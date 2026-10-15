@@ -97,7 +97,7 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 		Summary:     "Claim a Pairing Session for one Sender",
 		Description: "Fixes the claiming Sender for a session and reserves binding capacity for a new distinct Receiver. " +
 			"A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. " +
-			"recover_receiver additionally requires fresh WeChat owner proof. " +
+			"recover_receiver additionally requires fresh WeChat proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. " +
 			"Failures report 401 for an unusable management credential, 403 fresh_identity_required, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
@@ -140,9 +140,10 @@ func registerComplete(api huma.API, handlers Handlers) {
 		Method:      http.MethodPost,
 		Path:        "/v1/pairing-sessions/{id}/complete",
 		Summary:     "Report key confirmation for one Pairing Session side",
-		Description: "Records one participant's authenticated report that it saved the derived Pairing key and verified its peer's key confirmation. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. Receiver credential recovery reports through its own retained-key reconciliation instead. " +
+		Description: "Records one participant's authenticated, mode-specific report. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. A report states what its own holder did with the derived key; the service never sees or verifies that client key material, so the report is the side's own statement rather than proof, and a reported credential effect follows only the server-side checks below. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. " +
 			"A re-pairing commits its own Pairing ID and retires only the confirming Sender's association that this session replaced, and only while that association is still current; any other outcome fails with 409 operation_superseded and preserves the association that is current. " +
-			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready or operation_superseded, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
+			"A recover_receiver session instead reconciles the Pairing keys that survived. The approving Sender confirms the key of its own association or reports not_available for the one it lost; the Receiver side reports the retainedPairingIds whose local keys it still holds. An association survives only if the Receiver reports its Pairing ID as retained and its Sender did not report not_available; a Sender reporting not_available also loses its unfinished work with that Receiver, and the Receiver's unfinished reservations for Pairing IDs it no longer holds a key for are canceled. A lost key therefore needs a separate pairing and a reinstalled Receiver needs a new registration. The session reaches credential_ready once both sides have reported, creates no Pairing and reserves no binding capacity. Only this mode accepts not_available and retainedPairingIds, and only its Receiver side reports the retained set. " +
+			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready or operation_superseded, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for a report that does not match the session's mode or the reporting side, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
@@ -158,10 +159,11 @@ func registerComplete(api huma.API, handlers Handlers) {
 			return nil, err
 		}
 		session, err := handlers.Sessions.Complete(ctx, domain.CompleteRequest{
-			SessionID:       input.ID,
-			SenderID:        senderID,
-			Token:           token,
-			KeyConfirmation: domain.KeyConfirmation(input.Body.KeyConfirmation),
+			SessionID:          input.ID,
+			SenderID:           senderID,
+			Token:              token,
+			KeyConfirmation:    domain.KeyConfirmation(input.Body.KeyConfirmation),
+			RetainedPairingIDs: input.Body.RetainedPairingIDs,
 		}, time.Now().UTC())
 		if err != nil {
 			return nil, err
@@ -184,6 +186,7 @@ func registerRedeem(api huma.API, handlers Handlers) {
 		Path:        "/v1/pairing-sessions/{id}/receiver-token",
 		Summary:     "Redeem the Pairing Session's Receiver credential",
 		Description: "Redeems one session's credential grant for the Receiver side and returns the long-lived Receiver credential to that holder only, as a no-store response. The session's one issuance operation orders the request by operationId and attempt: an equal or lower attempt and any competing operation are superseded, while the one higher attempt may replace a credential no one has proved possession of yet, so a lost response costs at most one retransmission. Once the credential proves possession, redemption can no longer rotate it. An add_sender session returns mode_forbids_credential_issue without touching credentials. The credential is stored as a digest only and never reaches the Sender, the QR or a session view. " +
+			"Redeeming a recover_receiver session replaces the credential of that shared Receiver for every Sender: it supersedes the grants of older sessions for the same Receiver, revokes the credential it replaces and ends that generation's reserved and active delivery connections before the replacement is handed out, so a delayed older issuance, an old redemption or a handshake already committing cannot revive the superseded access. " +
 			"Failures report 401 for an unusable restricted credential, 409 operation_superseded, pairing_not_ready or mode_forbids_credential_issue, 410 pairing_session_closed, 422 validation_failed, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,

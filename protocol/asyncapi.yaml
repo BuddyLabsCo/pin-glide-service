@@ -65,6 +65,19 @@ channels:
       credential itself is an HTTPS operation, so the restricted credential
       never travels over this channel twice.
 
+      A recover_receiver session replaces the credential of an existing
+      Receiver instead of forming a Pairing. Its two authenticated reports
+      state which existing Pairing keys survived: the approving Sender reports
+      whether it still holds the key of its own association, and the Receiver
+      side reports the Pairing IDs it still holds, which preserves exactly
+      those associations and removes the Receiver's other ones. An association
+      the approving Sender no longer holds a key for does not survive the
+      recovery either, and the unfinished work that Sender had with the
+      Receiver closes with it. Such a session reaches credential_ready once
+      both sides have reported, creates no Pairing ID and reserves no capacity,
+      and its Receiver side redeems the replacement over HTTPS exactly like a
+      first credential.
+
       The Pairing ID a session publishes on its first claim is the identity
       both participants store their provisional key under, and neither selects
       it for forwarding before the session reports the activation of both
@@ -125,6 +138,13 @@ channels:
       Sender's forwarding authority for the named Pairing while the Receiver's
       credential, its connection and every other Sender's association keep
       working.
+
+      A credential generation the service replaced loses this connection: the
+      replacement of an owner-approved recovery revokes the credential it
+      supersedes and ends its reserved and active connections with 1008
+      policy_violation before the replacement is handed out, so the Receiver
+      connects again with the credential it saved and never shares the
+      connection of the credential that stopped authorizing.
     messages:
       pairingRemoved:
         $ref: '#/components/messages/pairingRemoved'
@@ -223,9 +243,10 @@ components:
       name: credential_ready
       title: The session's Receiver credential can be redeemed
       description: |-
-        Sent only to the Receiver side of a new_receiver session once both
-        authenticated reports activated its Pairing. It carries no credential:
-        the Receiver redeems its first Receiver credential over HTTPS with the
+        Sent only to the Receiver side of a session that issues a credential,
+        once a new_receiver session activated its Pairing or a recover_receiver
+        session received both of its authenticated key reports. It carries no
+        credential: the Receiver redeems its credential over HTTPS with the
         restricted credential it already holds, and the Sender side never
         learns that the credential exists.
       payload:
