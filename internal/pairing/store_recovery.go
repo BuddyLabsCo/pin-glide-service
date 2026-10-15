@@ -11,12 +11,11 @@ import (
 // credential for the Receiver, which is what makes this session's own grant
 // stale: the generation a newer session issued is the one that works. Creation
 // time and then the identifier order every session of one Receiver, so two
-// sessions created in the same instant still have one order and an older grant
-// cannot slip through.
+// sessions created in the same instant still have one order.
 //
-// shortcut: the identifier of a same-instant pair is random, so that tie is
-// ordered arbitrarily rather than by creation; add a sequence when the tie has
-// to follow creation.
+// shortcut: that order is the random identifier rather than creation when two
+// sessions of one Receiver land in the same instant, so an older grant can
+// still win that tie; add a sequence when it must not.
 const newerIssuanceSQL = `
 SELECT EXISTS (
     SELECT 1
