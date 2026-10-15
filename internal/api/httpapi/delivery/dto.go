@@ -221,7 +221,7 @@ func businessErrorOf(err error) *protocol.BusinessError {
 // deliveryOutcomes lists every entry outcome the client can receive, with the
 // stable code and safe detail the published contract states for it. The
 // details never name another Account's registration, so an unknown, foreign,
-// unpaired and revoked target read the same.
+// unpaired and revoked Receiver read the same.
 var deliveryOutcomes = []struct {
 	cause  error
 	code   protocol.ErrorCode

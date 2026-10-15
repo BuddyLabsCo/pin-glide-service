@@ -14,6 +14,15 @@ import (
 	"github.com/go-jet/jet/v2/qrm"
 )
 
+// executor is the database surface a Delivery write needs: one row-returning
+// statement, one update and the queryable surface the reads use, which *sql.DB
+// and *sql.Tx both provide.
+type executor interface {
+	qrm.Queryable
+	qrm.Executable
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // key identifies one Delivery: the Sender that uploaded it, the Message ID the
 // Sender generated once for one SMS operation, and the Receiver this entry
 // selected. This identity is what the service deduplicates on while its row
@@ -29,7 +38,7 @@ type key struct {
 // dedup contract requires: a concurrent duplicate of the same identity loses
 // the unique index and learns that the identity already exists, and the stored
 // row is then read to decide whether it is retained work or live work.
-func claimDelivery(ctx context.Context, db *sql.DB, identity key, pairingID string, now time.Time) (bool, Delivery, error) {
+func claimDelivery(ctx context.Context, db executor, identity key, pairingID string, now time.Time) (bool, Delivery, error) {
 	var id string
 	err := db.QueryRowContext(ctx, `
 INSERT INTO pin_glide.delivery_deliveries
@@ -57,7 +66,7 @@ RETURNING id`,
 // completeDelivery stores the terminal outcome this process produced. The
 // update is guarded on the processing status, so no later report can rewrite
 // the Delivery history an earlier outcome already established.
-func completeDelivery(ctx context.Context, db *sql.DB, identity key, status protocol.DeliveryStatus, now time.Time) error {
+func completeDelivery(ctx context.Context, db executor, identity key, status protocol.DeliveryStatus, now time.Time) error {
 	result, err := db.ExecContext(ctx, `
 UPDATE pin_glide.delivery_deliveries
 SET status = $4::pin_glide.delivery_status, completed_at = $5
@@ -84,7 +93,7 @@ WHERE sender_id = $1 AND message_id = $2 AND receiver_id = $3
 // process can no longer finish, which is what a restart or a lost owner
 // leaves behind, and never resumes the delivery itself. Work another writer
 // already finished reports the terminal outcome it stored.
-func interruptDelivery(ctx context.Context, db *sql.DB, identity key, now time.Time) (Delivery, error) {
+func interruptDelivery(ctx context.Context, db qrm.Queryable, identity key, now time.Time) (Delivery, error) {
 	var row model.DeliveryDeliveries
 	err := table.DeliveryDeliveries.
 		UPDATE(table.DeliveryDeliveries.Status, table.DeliveryDeliveries.CompletedAt).
@@ -160,32 +169,42 @@ func deliveryOf(row model.DeliveryDeliveries) Delivery {
 }
 
 // eligible decides whether one entry may forward to the Receiver it selected.
-// The three ways a target can be ineligible stay distinct here and share the
-// one external outcome: a registration this Sender cannot reach, a closed
-// registration, and a target that is not this Sender's own active association
-// under the Pairing the entry named. The read takes the current authority of
-// the target, which is the decision this request freezes.
-func eligible(ctx context.Context, db *sql.DB, senderID string, item Item) error {
+// The four ways a Receiver can be ineligible stay distinct here and share the
+// one external outcome: an identifier no registration holds, a closed
+// registration, a registration that belongs to another Account, and a Receiver
+// that is not this Sender's own active association under the Pairing the entry
+// named. The read takes the current authority of the Receiver, which is the
+// decision this request freezes.
+func eligible(ctx context.Context, db executor, senderID string, item Item) error {
 	var receiverState string
+	var receiverAccount, senderAccount *string
 	var pairingState *string
 	err := db.QueryRowContext(ctx, `
-SELECT registrar.state, pairing.state
+SELECT registrar.state, registrar.account_id, sender.account_id, pairing.state
 FROM pin_glide.identity_receiver_registrations AS registrar
+JOIN pin_glide.identity_sender_registrations AS sender
+    ON sender.id = $2
 LEFT JOIN pin_glide.pairing_pairings AS pairing
     ON pairing.receiver_id = registrar.id
     AND pairing.sender_id = $2
     AND pairing.id = $1
 WHERE registrar.id = $3`,
-		item.PairingID, senderID, item.ReceiverID).Scan(&receiverState, &pairingState)
+		item.PairingID, senderID, item.ReceiverID).Scan(
+		&receiverState, &receiverAccount, &senderAccount, &pairingState)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errTargetUnknown)
+		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errReceiverUnknown)
 	case err != nil:
 		return unavailable(err)
 	case receiverState == string(model.IdentityReceiverRegistrationState_Revoked):
-		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errTargetRevoked)
+		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errReceiverRevoked)
+	// Pin Glide pairs Senders and Receivers of one Account, so a registration
+	// owned by a different Account is another Account's Receiver rather than
+	// one of this Sender's own unpaired ones.
+	case receiverAccount != nil && senderAccount != nil && *receiverAccount != *senderAccount:
+		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errReceiverForeign)
 	case pairingState == nil || *pairingState != string(model.PairingState_Active):
-		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errTargetUnpaired)
+		return fmt.Errorf("%w: %w", ErrReceiverNotAuthorized, errReceiverUnpaired)
 	default:
 		return nil
 	}

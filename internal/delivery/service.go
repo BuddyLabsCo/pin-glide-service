@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
+	"github.com/go-jet/jet/v2/qrm"
 )
 
 // Service implements Delivery admission, deduplication, Receipt handling and
@@ -165,9 +166,9 @@ func (s *Service) Receipt(senderID, messageID, receiverID string) {
 
 // admit returns the terminal outcome of one entry. The order is the accepted
 // one: a duplicated Receiver first, then the entry's own shape and encoding,
-// then the current eligibility of its target, and only then the retained dedup
-// identity, so an entry that lost its authority can never reuse an earlier
-// Delivery's result.
+// then the current eligibility of its Receiver, and only then the retained
+// dedup identity, so an entry that lost its authority can never reuse an
+// earlier Delivery's result.
 func (s *Service) admit(ctx context.Context, senderID, messageID string, index int, item Item, duplicated bool) (Result, error) {
 	if duplicated {
 		return reject(index, item.ReceiverID, ErrDuplicateReceiver), nil
@@ -358,7 +359,7 @@ func outcome(index int, receiverID string, status protocol.DeliveryStatus) Resul
 // retainedStatus reports the outcome of an identity this process did not
 // claim. Retained terminal work keeps the outcome it stored, and processing
 // work without a live owner in this process is interrupted, never resumed.
-func retainedStatus(ctx context.Context, db *sql.DB, identity key, retained Delivery) (protocol.DeliveryStatus, error) {
+func retainedStatus(ctx context.Context, db qrm.Queryable, identity key, retained Delivery) (protocol.DeliveryStatus, error) {
 	if retained.Status != protocol.DeliveryProcessing {
 		return retained.Status, nil
 	}

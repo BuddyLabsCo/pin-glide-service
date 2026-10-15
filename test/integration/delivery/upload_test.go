@@ -72,6 +72,11 @@ func TestUploadAnswersOneIndexedTerminalResultPerEntry(t *testing.T) {
 	revoked, revokedPairing, _ := environment.paired(t, sender, "Revoked")
 	environment.revoke(t, sender, revoked, "openid-mixed")
 
+	// A Receiver of another Account, which this Sender's credential never
+	// authorizes even when it names the Pairing that Account activated.
+	otherAccount := environment.sender(t, "code-foreign", "openid-foreign")
+	foreign, foreignPairing, _ := environment.paired(t, otherAccount, "Foreign")
+
 	socket := receiverConnected(t, environment, liveToken)
 
 	const messageID = "message-mixed"
@@ -81,6 +86,7 @@ func TestUploadAnswersOneIndexedTerminalResultPerEntry(t *testing.T) {
 			`"cryptoVersion":1,"nonce":"not-padded-base64","ciphertext":"`+syntheticCiphertext+`"`),
 		entryWith("receiver-unknown", livePairing, profileFields),
 		entryWith(stray, livePairing, profileFields),
+		entryWith(foreign, foreignPairing, profileFields),
 		entryWith(revoked, revokedPairing, profileFields),
 		entryOf(offline, offlinePairing),
 		notAnObject,
@@ -99,7 +105,7 @@ func TestUploadAnswersOneIndexedTerminalResultPerEntry(t *testing.T) {
 	if status != http.StatusMultiStatus {
 		t.Fatalf("upload status = %d: %s", status, payload)
 	}
-	if len(response.Results) != 8 {
+	if len(response.Results) != 9 {
 		t.Fatalf("upload answered %d results, want one per input entry: %s", len(response.Results), payload)
 	}
 
@@ -107,10 +113,11 @@ func TestUploadAnswersOneIndexedTerminalResultPerEntry(t *testing.T) {
 	expectResult(t, response, 1, malformed, "rejected", "invalid_delivery_item")
 	expectResult(t, response, 2, "receiver-unknown", "rejected", "receiver_not_authorized")
 	expectResult(t, response, 3, stray, "rejected", "receiver_not_authorized")
-	expectResult(t, response, 4, revoked, "rejected", "receiver_not_authorized")
-	expectResult(t, response, 5, offline, "offline", "offline")
-	expectResult(t, response, 6, "", "rejected", "invalid_delivery_item")
-	expectResult(t, response, 7, "receiver-unversioned", "rejected", "unsupported_crypto_version")
+	expectResult(t, response, 4, foreign, "rejected", "receiver_not_authorized")
+	expectResult(t, response, 5, revoked, "rejected", "receiver_not_authorized")
+	expectResult(t, response, 6, offline, "offline", "offline")
+	expectResult(t, response, 7, "", "rejected", "invalid_delivery_item")
+	expectResult(t, response, 8, "receiver-unversioned", "rejected", "unsupported_crypto_version")
 
 	if stored := environment.statusOf(t, sender.SenderID, messageID, live); stored != "received" {
 		t.Errorf("the stored live Delivery status = %q, want received", stored)

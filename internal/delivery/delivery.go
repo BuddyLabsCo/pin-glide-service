@@ -84,18 +84,24 @@ type Authenticator interface {
 // these typed causes; the HTTP surface maps them to the stable business codes
 // the published contract defines.
 var (
-	// ErrReceiverNotAuthorized marks an entry whose target is unknown to this
-	// Sender, is not its own active association, or is revoked. The three
-	// reasons stay distinct internally and share this one external outcome, so
-	// no caller can confirm another Account's registrations.
+	// ErrReceiverNotAuthorized marks an entry naming a Receiver that is unknown
+	// to this Sender, is not its own active association, or is revoked. The
+	// four reasons stay distinct internally and share this one external
+	// outcome, so no caller can confirm another Account's registrations.
 	ErrReceiverNotAuthorized = errors.New("receiver not authorized")
-	// errTargetUnknown marks a Receiver identifier no registration holds.
-	errTargetUnknown = errors.New("target receiver is unknown")
-	// errTargetRevoked marks a target whose registration is permanently closed.
-	errTargetRevoked = errors.New("target receiver is revoked")
-	// errTargetUnpaired marks a target that is not the Sender's own active
+	// errReceiverUnknown marks a Receiver identifier no registration holds.
+	errReceiverUnknown = errors.New("receiver is unknown")
+	// errReceiverRevoked marks a Receiver whose registration is permanently
+	// closed.
+	errReceiverRevoked = errors.New("receiver is revoked")
+	// errReceiverUnpaired marks a Receiver that is not the Sender's own active
 	// association under the Pairing the entry named.
-	errTargetUnpaired = errors.New("target is not the sender's active association")
+	errReceiverUnpaired = errors.New("receiver is not the sender's active association")
+	// errReceiverForeign marks a Receiver whose registration belongs to another
+	// Account. It stays distinct from an unknown Receiver for diagnosis while
+	// sharing the same external outcome, so no caller learns whether the
+	// registration exists.
+	errReceiverForeign = errors.New("receiver belongs to another account")
 	// ErrDuplicateReceiver marks an entry whose Receiver another entry of the
 	// same request also named.
 	ErrDuplicateReceiver = errors.New("duplicate receiver entry")
