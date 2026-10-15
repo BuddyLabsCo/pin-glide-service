@@ -6,39 +6,6 @@ import (
 	"time"
 )
 
-// newerIssuanceSQL reports whether a session of this Receiver that is not older
-// than this one already issued a credential, which is what makes this session's
-// own grant stale: the generation that already works is the one to keep, and a
-// delayed first issuance never revokes it. Creation time orders the sessions of
-// one Receiver, and two sessions created in the same instant resolve to the one
-// that issued first, so the ordering never lets a later redemption replace a
-// credential an issuance already handed out.
-const newerIssuanceSQL = `
-SELECT EXISTS (
-    SELECT 1
-    FROM pin_glide.pairing_sessions
-    WHERE receiver_id = $1
-      AND id <> $2
-      AND issued_generation IS NOT NULL
-      AND created_at >= $3
-)`
-
-// replacedGrantSQL closes the Receiver's issuance grants that one issuance
-// replaced: the sessions that are not newer than the issuing one and still hold
-// a grant of their own. It is the other half of the ordering newerIssuanceSQL
-// decides, so a grant that can no longer be redeemed reports its own outcome
-// instead of leaving its holder to discover it by redemption. Only sessions
-// that hold a grant are closed, and their Pairing is already active, so no
-// unfinished pairing work and no association ends here.
-const replacedGrantSQL = `
-UPDATE pin_glide.pairing_sessions
-SET state = 'superseded', closed_at = $4
-WHERE receiver_id = $1
-  AND id <> $2
-  AND created_at <= $3
-  AND state IN ('credential_ready', 'credential_issued')
-RETURNING id`
-
 // receiverPairingsSQL reads every Pairing of one Receiver, whatever its state.
 // A Receiver may still hold the key of a Pairing it no longer forwards under,
 // so its own key inventory is checked against these identities rather than
@@ -73,37 +40,6 @@ WHERE receiver_id = $1
   AND expires_at > $2
 ORDER BY id
 FOR UPDATE`
-
-// newerIssuance reports whether a session of this Receiver that is not older
-// than this one already issued the credential that works.
-func newerIssuance(ctx context.Context, tx *sql.Tx, session Session) (bool, error) {
-	var newer bool
-	err := tx.QueryRowContext(ctx, newerIssuanceSQL,
-		session.ReceiverID, session.ID, session.CreatedAt).Scan(&newer)
-	return newer, err
-}
-
-// closeReplacedGrants closes and reports the Receiver's issuance grants that
-// the issuing session replaced, so their participants read the outcome of the
-// grant that can no longer be redeemed.
-func closeReplacedGrants(ctx context.Context, tx *sql.Tx, session Session, now time.Time) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, replacedGrantSQL,
-		session.ReceiverID, session.ID, session.CreatedAt, now)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var replaced []string
-	for rows.Next() {
-		var sessionID string
-		if err := rows.Scan(&sessionID); err != nil {
-			return nil, err
-		}
-		replaced = append(replaced, sessionID)
-	}
-	return replaced, rows.Err()
-}
 
 // requireReceiverPairings checks that every reported Pairing ID belongs to the
 // Receiver that reported its key inventory. A set that names anything else is

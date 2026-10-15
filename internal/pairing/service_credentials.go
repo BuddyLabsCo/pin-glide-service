@@ -195,11 +195,11 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 			// delivery access before the replacement is handed out.
 			supersededAccess = session.ReceiverID
 		}
-		newer, err := newerIssuance(ctx, tx, session)
+		notOlder, err := notOlderIssuance(ctx, tx, session)
 		if err != nil {
 			return err
 		}
-		if newer {
+		if notOlder {
 			// A session of this Receiver that is not older than this one
 			// already issued the credential that works, so this grant cannot
 			// replace it. The supersession commits with the transaction, and

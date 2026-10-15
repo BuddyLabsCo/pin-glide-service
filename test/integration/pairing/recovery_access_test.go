@@ -214,39 +214,63 @@ func TestRecoveryIssuanceKeepsTheNewerGeneration(t *testing.T) {
 	}
 }
 
-// Two recoveries of one Receiver created in the same instant are ordered by the
-// issuance that committed first, whatever identifier they happen to carry: a
-// delayed redemption cannot revoke the credential that already works.
+// Two recoveries of one Receiver whose sessions were created in the same
+// instant are ordered by the issuance that committed first: the one that only
+// finishes afterwards cannot replace the credential that already works,
+// whichever identifier its session happens to carry.
 func TestRecoveryOfTheSameInstantKeepsTheIssuanceThatCommitted(t *testing.T) {
 	environment := start(t)
 	owner := environment.sender(t, "code-instant", "openid-instant")
 
 	association, _ := environment.paired(t, owner, "Phone")
-	first, firstToken := environment.approvedRecovery(t, owner, association.ReceiverID,
-		"code-instant-first", "openid-instant", association.PairingID)
-	second, secondToken := environment.approvedRecovery(t, owner, association.ReceiverID,
-		"code-instant-second", "openid-instant", association.PairingID)
-	// Both sessions were created in the same instant, which leaves their order
-	// to whichever identifier is higher. The lower one redeems first, so the
-	// later redemption is the one that could revoke a working credential.
-	lower, lowerToken, higher, higherToken := first, firstToken, second, secondToken
-	if higher.SessionID < lower.SessionID {
-		lower, lowerToken, higher, higherToken = higher, higherToken, lower, lowerToken
+	first, firstToken := environment.createRecovery(t, association.ReceiverID)
+	second, secondToken := environment.createRecovery(t, association.ReceiverID)
+	// The service stamps each session when it creates it, so an equal instant
+	// has to be forced before the identifier decides the order an issuance may
+	// read. The lower identifier reports first and redeems first.
+	issuing, issuingToken, delayed, delayedToken := first, firstToken, second, secondToken
+	if delayed.SessionID < issuing.SessionID {
+		issuing, issuingToken, delayed, delayedToken = delayed, delayedToken, issuing, issuingToken
 	}
 	environment.exec(t, `UPDATE pin_glide.pairing_sessions
 SET created_at = (SELECT created_at FROM pin_glide.pairing_sessions WHERE id = $1)
-WHERE id = $2`, lower.SessionID, higher.SessionID)
+WHERE id = $2`, issuing.SessionID, delayed.SessionID)
 
-	status, working, payload := environment.redeem(t, lower.SessionID, lowerToken, "op-instant-lower", 0)
+	// The delayed session has not even been claimed when the other one issues,
+	// so nothing but the ordering of that issuance can refuse it afterwards.
+	environment.claimRecovery(t, issuing.SessionID, "code-instant-issuing", "openid-instant", owner)
+	if status, _, payload := environment.reportRecovery(t, issuing.SessionID, owner.UserSession.Token,
+		`{"keyConfirmation":"confirmed"}`); status != http.StatusOK {
+		t.Fatalf("Sender recovery report = %d, want 200: %s", status, payload)
+	}
+	if status, _, payload := environment.reportRecovery(t, issuing.SessionID, issuingToken,
+		retainedReport(association.PairingID)); status != http.StatusOK {
+		t.Fatalf("Receiver recovery report = %d, want 200: %s", status, payload)
+	}
+	status, working, payload := environment.redeem(t, issuing.SessionID, issuingToken, "op-instant-issuing", 0)
 	if status != http.StatusOK {
 		t.Fatalf("redemption of the same-instant grant = %d, want 200: %s", status, payload)
 	}
-	status, _, payload = environment.redeem(t, higher.SessionID, higherToken, "op-instant-higher", 0)
+
+	environment.claimRecovery(t, delayed.SessionID, "code-instant-delayed", "openid-instant", owner)
+	if status, _, payload := environment.reportRecovery(t, delayed.SessionID, owner.UserSession.Token,
+		`{"keyConfirmation":"confirmed"}`); status != http.StatusOK {
+		t.Fatalf("delayed Sender recovery report = %d, want 200: %s", status, payload)
+	}
+	status, view, payload := environment.reportRecovery(t, delayed.SessionID, delayedToken,
+		retainedReport(association.PairingID))
+	if status != http.StatusOK {
+		t.Fatalf("delayed Receiver recovery report = %d, want 200: %s", status, payload)
+	}
+	if view.State != "credential_ready" {
+		t.Fatalf("delayed recovery = %+v, want credential_ready", view)
+	}
+	status, _, payload = environment.redeem(t, delayed.SessionID, delayedToken, "op-instant-delayed", 0)
 	if status != http.StatusGone {
 		t.Fatalf("delayed same-instant redemption = %d, want 410: %s", status, payload)
 	}
-	if state := environment.sessionState(t, higher.SessionID); state != "superseded" {
-		t.Errorf("the same-instant grant the issuance replaced = %q, want superseded", state)
+	if state := environment.sessionState(t, delayed.SessionID); state != "superseded" {
+		t.Errorf("the delayed same-instant session = %q, want superseded", state)
 	}
 
 	// The credential the first issuance handed out still authorizes the shared
