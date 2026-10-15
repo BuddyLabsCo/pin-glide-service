@@ -99,7 +99,7 @@ func startLoginWith(t *testing.T, logger *slog.Logger) *loginEnvironment {
 
 	provider := wechatfake.New()
 	return &loginEnvironment{
-		service:  harness.StartServiceLogging(t, postgres.DSN, provider, logger),
+		service:  harness.StartServiceLogging(t, postgres.DSN, provider, nil, logger),
 		provider: provider,
 		pool:     pool,
 	}

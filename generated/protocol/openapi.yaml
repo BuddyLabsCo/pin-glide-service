@@ -158,6 +158,159 @@ components:
           minLength: 1
           type: string
       type: object
+    ModelConfiguration:
+      additionalProperties: false
+      properties:
+        baseUrl:
+          description: Workspace-specific OpenAI-compatible base URL the Sender appends /chat/completions to
+          type: string
+        inference:
+          $ref: "#/components/schemas/ModelInference"
+          description: Inference settings the Sender sends to the provider unchanged
+        provider:
+          description: The only model provider the adopted profile permits
+          enum:
+            - bailian
+          type: string
+        region:
+          description: The adopted provider region; the service never switches it implicitly
+          enum:
+            - cn-beijing
+          type: string
+      required:
+        - provider
+        - region
+        - baseUrl
+        - inference
+      type: object
+    ModelCredential:
+      additionalProperties: false
+      properties:
+        configuration:
+          $ref: "#/components/schemas/ModelConfiguration"
+          description: The one configuration snapshot this credential belongs to
+        credential:
+          $ref: "#/components/schemas/ModelProviderKey"
+          description: Temporary provider credential the Sender calls Bailian with directly
+      required:
+        - credential
+        - configuration
+      type: object
+    ModelInference:
+      additionalProperties: false
+      properties:
+        enable_thinking:
+          description: "Always false: thinking is disabled explicitly rather than by a prompt instruction"
+          type: boolean
+        model:
+          description: Model ID to request; the parent key is restricted to it
+          type: string
+        response_format:
+          $ref: "#/components/schemas/ModelResponseFormat"
+          description: Strict JSON Schema the provider must satisfy
+      required:
+        - model
+        - enable_thinking
+        - response_format
+      type: object
+    ModelOTPField:
+      additionalProperties: false
+      properties:
+        type:
+          description: Nullable string; null means no OTP was found
+          items:
+            enum:
+              - string
+              - "null"
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - type
+      type: object
+    ModelOTPProperties:
+      additionalProperties: false
+      properties:
+        otp:
+          $ref: "#/components/schemas/ModelOTPField"
+          description: The extracted OTP, or null when the message holds none
+      required:
+        - otp
+      type: object
+    ModelOTPSchema:
+      additionalProperties: false
+      properties:
+        additionalProperties:
+          description: Whether properties outside this schema are allowed
+          type: boolean
+        properties:
+          $ref: "#/components/schemas/ModelOTPProperties"
+          description: The only property the result may carry
+        required:
+          description: Properties the result must carry
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        type:
+          description: The result is one JSON object
+          enum:
+            - object
+          type: string
+      required:
+        - type
+        - properties
+        - required
+        - additionalProperties
+      type: object
+    ModelProviderKey:
+      additionalProperties: false
+      properties:
+        apiKey:
+          description: Raw temporary Bailian API key; send it only to the provider, never to this service
+          type: string
+        expiresAt:
+          description: When the provider itself expires this key, in RFC 3339 UTC
+          format: date-time
+          type: string
+      required:
+        - apiKey
+        - expiresAt
+      type: object
+    ModelResponseFormat:
+      additionalProperties: false
+      properties:
+        json_schema:
+          $ref: "#/components/schemas/ModelResponseSchema"
+          description: The named schema and its enforcement
+        type:
+          description: Structured-output mode
+          enum:
+            - json_schema
+          type: string
+      required:
+        - type
+        - json_schema
+      type: object
+    ModelResponseSchema:
+      additionalProperties: false
+      properties:
+        name:
+          description: Schema name reported by the provider
+          type: string
+        schema:
+          $ref: "#/components/schemas/ModelOTPSchema"
+          description: The extraction schema itself
+        strict:
+          description: Whether the provider must satisfy the schema exactly
+          type: boolean
+      required:
+        - name
+        - strict
+        - schema
+      type: object
     PairingAlias:
       additionalProperties: false
       properties:
@@ -702,6 +855,46 @@ paths:
       summary: Permanently revoke one owned Sender or Receiver registration
       tags:
         - identity
+  /v1/model/credentials:
+    post:
+      description: "Issues one short-lived Bailian temporary API key together with the enabled model configuration snapshot it belongs to, so the Sender can call the configured model directly. Upload authority is required: an absent credential reports 401 credential_missing, and invalidated upload authority mints nothing: an unknown or wrongly scoped credential, and one an earlier logout, fresh login or family-reuse revocation invalidated, report 401 credential_invalid; an expired one reports 401 credential_expired; and one whose Sender registration an owner permanently closed reports 401 credential_revoked. The service cannot revoke a key it already issued, so invalidation stops new issuance and leaves issued keys to their provider lifetime. The configuration is read as one snapshot and the provider is called outside any database transaction, so the returned configuration is the one the credential was issued for. The service requests a 600-second lifetime and reports the provider's actual expiry converted to RFC 3339 UTC; the Sender caches the credential until that expiry and requests another afterwards. The configuration states the workspace-specific Beijing base URL, the enabled row's model (the adopted default is `qwen3.7-flash`), text-only OpenAI-compatible chat completions with `enable_thinking` explicitly false, and a strict JSON Schema result with one required nullable-string `otp` and no additional properties. The Sender's SMS prompt, the inference call, credential caching, output-field validation, OTP membership in the original SMS and the decision not to upload an absent or invalid OTP all stay on the Sender: the service never sees SMS text, an OTP or inferred output, and it does not fall back to unconstrained JSON Object output or another provider. Failures report 401 credential_missing, credential_invalid, credential_expired or credential_revoked, 502 model_provider_error when the provider cannot be reached or answers unusably, 503 model_configuration_unavailable when no enabled configuration exists, or 503 service_unavailable. This response carries the raw temporary credential and is never cacheable."
+      operationId: PostModelCredentials
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelCredential"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Gateway
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Issue a temporary Bailian credential with its configuration
+      tags:
+        - model
   /v1/pairing-sessions:
     post:
       description: Creates one mode-fixed session that lives five minutes and hands its restricted credential only to the Receiver-side peer. new_receiver allocates a Receiver. add_sender attaches one more Sender to the Receiver named by receiverId and authenticates with that Receiver's own current credential in the Authorization header; presenting it proves possession and consumes any issuance grant still outstanding, and it authorizes no other Receiver. recover_receiver acts on an existing Receiver and takes no credential at creation. The Sender that approves the session supplies its own authority when it claims the session. Failures report 401 credential_missing or credential_invalid for add_sender, 404 resource_not_found for a Receiver the credential does not authenticate, 422 validation_failed for a mode and target that do not match, or 503 service_unavailable.

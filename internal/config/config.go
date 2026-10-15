@@ -27,13 +27,14 @@ type Config struct {
 	DatabaseURL     string
 	WeChatAppID     string
 	WeChatAppSecret string
+	BailianAPIKey   string
 }
 
 // Load reads process configuration from getenv. Development carries defaults so
 // a fresh checkout needs no credentials; production requires an explicit
 // database URL so the service cannot silently attach to another database. The
-// WeChat credentials are only read here: the migrate process shares this loader
-// and needs no provider, so the api process enforces them instead.
+// provider credentials are only read here: the migrate process shares this
+// loader and needs none of them, so the api process enforces them instead.
 func Load(getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
@@ -66,5 +67,6 @@ func Load(getenv func(string) string) (Config, error) {
 		DatabaseURL:     databaseURL,
 		WeChatAppID:     strings.TrimSpace(getenv("PIN_GLIDE_WECHAT_APP_ID")),
 		WeChatAppSecret: strings.TrimSpace(getenv("PIN_GLIDE_WECHAT_APP_SECRET")),
+		BailianAPIKey:   strings.TrimSpace(getenv("PIN_GLIDE_BAILIAN_API_KEY")),
 	}, nil
 }

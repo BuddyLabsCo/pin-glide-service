@@ -80,6 +80,29 @@ Edit `.env` before running the installer:
   mobile application whose verified OpenIDs identify Accounts. Both are
   required for the `api` service to start in production and stay outside
   images, source files and logs.
+- `BAILIAN_API_KEY`: the parent API key of the approved Bailian Beijing
+  Workspace, which only authorizes temporary Sender keys for the enabled model
+  row below. It is required for the `api` service to start in production and
+  stays outside images, source files and logs.
+
+Temporary model credentials additionally need the enabled, non-secret model
+configuration row in PostgreSQL: the service never invents a Workspace ID, and
+reports `503 model_configuration_unavailable` until an operator supplies one.
+The stored ID is one lowercase Workspace label such as `llm-abc123`, never the
+endpoint host or a URL, so the parent key can only reach that Workspace.
+After a successful migration, set or replace it in place:
+
+```sh
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d pin_glide -c \
+  "INSERT INTO pin_glide.model_configurations (id, workspace_id, model)
+    VALUES ('default', '<workspace-id>', 'qwen3.7-flash')
+    ON CONFLICT (id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id,
+      model = EXCLUDED.model, enabled = true, updated_at = now()"
+```
+
+Setting `enabled = false` on that row stops new issuance while the row stays
+for the record; keys the provider already issued cannot be revoked through the
+service.
 
 The script must be run **from this prepared directory**. It does not download
 itself, install dependencies, generate templates, or upgrade Compose files, and

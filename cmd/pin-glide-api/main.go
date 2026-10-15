@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/adapters/bailian"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/adapters/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi"
@@ -56,6 +57,9 @@ func run(exportOpenAPI, exportAsyncAPI bool) error {
 		(configuration.WeChatAppID == "" || configuration.WeChatAppSecret == "") {
 		return errors.New("PIN_GLIDE_WECHAT_APP_ID and PIN_GLIDE_WECHAT_APP_SECRET are required to serve login in production")
 	}
+	if configuration.Environment == config.Production && configuration.BailianAPIKey == "" {
+		return errors.New("PIN_GLIDE_BAILIAN_API_KEY is required to serve model credentials in production")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -78,5 +82,6 @@ func run(exportOpenAPI, exportAsyncAPI bool) error {
 		Database: pool,
 		Logger:   logger,
 		WeChat:   wechat.New(configuration.WeChatAppID, configuration.WeChatAppSecret),
+		Bailian:  bailian.New(configuration.BailianAPIKey),
 	})
 }

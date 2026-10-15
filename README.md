@@ -105,6 +105,15 @@ configuration from the environment:
 | `PIN_GLIDE_DATABASE_URL` | local development DSN | PostgreSQL connection string; required in production |
 | `PIN_GLIDE_WECHAT_APP_ID` | none | AppID of the approved WeChat mobile application; required in production |
 | `PIN_GLIDE_WECHAT_APP_SECRET` | none | AppSecret of that application; required in production, never logged |
+| `PIN_GLIDE_BAILIAN_API_KEY` | none | Parent API key of the approved Bailian Beijing Workspace; required in production, never logged |
+
+Temporary model credentials come from that parent key plus the enabled
+non-secret `pin_glide.model_configurations` row an operator maintains; see
+`deploy/compose/README.md` for the deployment steps.
+The repository verifies that boundary with the fake in `test/fakes/bailian` and
+the adapter's own HTTP tests; confirming the real temporary-key endpoint, its
+lifetime parameter, its answer and the parent key's permissions is a separate
+request-driven acceptance step.
 
 ## Running the release CLI
 

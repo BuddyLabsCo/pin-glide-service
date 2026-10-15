@@ -9,8 +9,10 @@ import (
 	"net/http"
 
 	identityapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/identity"
+	modelapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/model"
 	pairingapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
@@ -26,6 +28,7 @@ const (
 type Dependencies struct {
 	Database *sql.DB
 	Identity *identity.Service
+	Model    *model.Service
 	Pairing  *pairing.Service
 	// Presence reports each Receiver's published liveness, which a Sender's
 	// own Receiver list states; it is the transport's own process-local state.
@@ -75,6 +78,7 @@ func newAPI(mux *http.ServeMux, dependencies Dependencies) huma.API {
 	registerSecuritySchemes(api)
 	registerHealth(api, dependencies.Database, dependencies.Logger)
 	identityapi.Register(api, dependencies.Identity, dependencies.Pairing)
+	modelapi.Register(api, dependencies.Model)
 	pairingapi.Register(api, pairingapi.Handlers{
 		Sessions: dependencies.Pairing,
 		Senders:  dependencies.Pairing,

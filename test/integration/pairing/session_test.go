@@ -53,7 +53,7 @@ func start(t *testing.T) *environment {
 
 	provider := wechatfake.New()
 	return &environment{
-		service:     harness.StartService(t, postgres.DSN, provider),
+		service:     harness.StartService(t, postgres.DSN, provider, nil),
 		databaseURL: postgres.DSN,
 		provider:    provider,
 		pool:        pool,

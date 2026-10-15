@@ -169,7 +169,7 @@ func TestRestartReportsReceiverOfflineAndAdmitsAgain(t *testing.T) {
 	// The next process has observed no connection, so the Receiver is offline
 	// for as long as that process has been reporting.
 	restartedAt := time.Now().UTC()
-	restarted := harness.StartService(t, environment.databaseURL, environment.provider)
+	restarted := harness.StartService(t, environment.databaseURL, environment.provider, nil)
 	offline := receiverPresence(t, restarted, issued.ReceiverID, false, 5*time.Second)
 	if offline.StateChangedAt.Before(restartedAt) || offline.StateChangedAt.After(time.Now().UTC()) {
 		t.Errorf("restarted process reports offline since %v, want between %v and now", offline.StateChangedAt, restartedAt)
