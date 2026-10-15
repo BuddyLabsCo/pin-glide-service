@@ -157,9 +157,23 @@ channels:
       policy_violation before the replacement is handed out, so the Receiver
       connects again with the credential it saved and never shares the
       connection of the credential that stopped authorizing.
+
+      An Account owner's security revocation of this Receiver closes its
+      registration, invalidates its credential, cancels its unfinished
+      issuance and recovery grants and removes every Pairing that forwards to
+      it, all in one commit. Its committed connection receives device_revoked
+      and then closes with 1008 policy_violation, a handshake that is still
+      committing is refused before its 101, and a later handshake with the
+      revoked credential is refused with HTTP 401 credential_invalid because a
+      closed registration authorizes nothing. The control is best effort: a
+      connection that can no longer carry it does not delay the closure. Other
+      Receivers keep their registration, their credential, their Pairings and
+      their connection, including a Receiver the same Account owns.
     messages:
       pairingRemoved:
         $ref: '#/components/messages/pairingRemoved'
+      deviceRevoked:
+        $ref: '#/components/messages/deviceRevoked'
 
 operations:
   acceptPairingHandshake:
@@ -200,7 +214,7 @@ operations:
     action: send
     channel:
       $ref: '#/channels/receiverEvents'
-    summary: Keep the delivery connection alive and report removed associations
+    summary: Keep the delivery connection alive and report what ended its access
     description: |-
       The service sends native Ping control frames and answers Pong. Close
       carries the meanings the channel describes; delivery and Receipt messages
@@ -212,10 +226,18 @@ operations:
       the removed Pairing only: the Receiver's credential, this connection and
       every other Sender's association are unaffected, and the service keeps no
       backlog for a Receiver that is not connected.
+
+      An Account owner's security revocation of the connected Receiver is
+      reported here as device_revoked, which states the Receiver whose
+      registration closed, and the connection ends with 1008
+      policy_violation after it. The message is the only notice the connection
+      gets, so a Receiver that misses it learns the same outcome from the
+      refusal of its next handshake.
     security:
       - $ref: '#/components/securitySchemes/receiverCredential'
     messages:
       - $ref: '#/channels/receiverEvents/messages/pairingRemoved'
+      - $ref: '#/channels/receiverEvents/messages/deviceRevoked'
 
 components:
   securitySchemes:
@@ -273,6 +295,20 @@ components:
         other Sender's association keeps forwarding.
       payload:
         $ref: '#/components/schemas/PairingRemoved'
+    deviceRevoked:
+      name: device_revoked
+      title: Owner security revocation closed this Receiver
+      description: |-
+        Sent to the delivery connection of the Receiver whose registration the
+        Account owner security revocation permanently closed. The Receiver
+        stops using its credential: it no longer authorizes delivery or pairing
+        and every Pairing that forwarded to it is removed for every Sender.
+        The connection ends with 1008 policy_violation after this message, so a
+        Receiver that reconnects is refused instead. Sending it is best effort:
+        a connection that can no longer carry it does not delay or prevent the
+        closure the revocation already committed.
+      payload:
+        $ref: '#/components/schemas/DeviceRevoked'
     error:
       name: error
       title: Recoverable application error

@@ -776,15 +776,15 @@ paths:
         - identity
   /v1/devices/{id}/revoke:
     post:
-      description: "Permanently closes one Sender registration that belongs to the Account the fresh WeChat proof verifies: every credential of that Sender is invalidated, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit. The Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. Revoking a registration never reaches back into work already admitted: a live delivery connection and a Delivery the service already accepted keep the authorization they were admitted with until they end, while every new request validates the current credentials again. Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. This response carries no credential and is never cacheable."
+      description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat proof verifies, and answers 204. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. For a Sender registration, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit: the Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. For a Receiver registration, its credential generation, the issuance and recovery grants it could still redeem, its delivery connection and every Pairing that forwards to it are invalidated in the same commit: a committed delivery connection receives device_revoked and then closes with 1008 policy_violation, a handshake still committing is refused before its upgrade, that Receiver's associations are removed for every Sender that owned one, and every other Receiver keeps its registration, its credential, its Pairings and its connection, including a Receiver the same Account owns. Revoking a registration never reaches back into work already admitted: a Delivery the service already accepted keeps the authorization it was admitted with, a revoked Sender's Receiver keeps the delivery connection it already held, and every new request validates the current credentials again. A revoked Receiver's own retained history, and the Delivery records of the Pairings it lost, are not deleted by the revocation. Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. This response carries no credential and is never cacheable."
       operationId: PostDeviceRevoke
       parameters:
-        - description: Sender registration ID (deviceId) to revoke permanently
+        - description: Sender or Receiver registration ID (deviceId) to revoke permanently
           in: path
           name: id
           required: true
           schema:
-            description: Sender registration ID (deviceId) to revoke permanently
+            description: Sender or Receiver registration ID (deviceId) to revoke permanently
             maxLength: 128
             type: string
       requestBody:
@@ -852,7 +852,7 @@ paths:
           description: Service Unavailable
       security:
         - bearerAuth: []
-      summary: Permanently revoke one owned Sender registration
+      summary: Permanently revoke one owned Sender or Receiver registration
       tags:
         - identity
   /v1/model/credentials:

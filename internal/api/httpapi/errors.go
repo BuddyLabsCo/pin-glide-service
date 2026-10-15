@@ -93,7 +93,7 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 	protocol.DeviceRegistrationRevoked: {
 		status: http.StatusConflict,
 		title:  "Device registration revoked",
-		detail: "This Sender registration was permanently security-revoked and cannot be restored.",
+		detail: "This device registration was permanently security-revoked and cannot be restored.",
 	},
 	protocol.CredentialMissing: {
 		status: http.StatusUnauthorized,
@@ -300,6 +300,7 @@ var businessOutcomes = []struct {
 	{model.ErrProvider, protocol.ModelProviderError},
 	{model.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{pairing.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
+	{pairing.ErrReceiverRevoked, protocol.DeviceRegistrationRevoked},
 	{pairing.ErrSenderNotOwned, protocol.ResourceNotFound},
 	{pairing.ErrCredentialRevoked, protocol.CredentialRevoked},
 	{pairing.ErrSessionNotFound, protocol.ResourceNotFound},

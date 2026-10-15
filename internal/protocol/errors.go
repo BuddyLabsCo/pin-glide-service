@@ -24,8 +24,8 @@ const (
 	// ModelProviderError marks a model provider that could not issue a
 	// temporary credential or answered unusably.
 	ModelProviderError ErrorCode = "model_provider_error"
-	// DeviceRegistrationRevoked marks an owned Sender registration that
-	// security revocation closed permanently.
+	// DeviceRegistrationRevoked marks an owned Sender or Receiver registration
+	// that security revocation closed permanently.
 	DeviceRegistrationRevoked ErrorCode = "device_registration_revoked"
 	// CredentialMissing marks a protected operation without a credential.
 	CredentialMissing ErrorCode = "credential_missing"
