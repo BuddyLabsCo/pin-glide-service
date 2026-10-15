@@ -336,16 +336,16 @@ func (s *Service) send(ctx context.Context, identity key, item Item, live *work)
 	case <-time.After(s.receiptTimeout):
 		return protocol.DeliveryAckTimeout, nil
 	case <-ctx.Done():
-		// The batch budget ended this wait, so the registered work has no
-		// confirmable outcome of its own.
+		// The batch budget ended this wait before any Receipt confirmed
+		// arrival, so the registered work has no confirmable outcome.
+		return protocol.DeliveryInterrupted, nil
 	case <-s.stopping:
-		// Bounded shutdown ended this wait, so the registered work has no
-		// confirmable outcome of its own.
+		// Bounded shutdown ended this wait without an outcome of its own.
 	}
 
-	// A bound that ended the wait at the same moment as the Receipt the
-	// Receiver sent still leaves arrival confirmed, so an outcome this process
-	// cannot confirm never replaces the one it did.
+	// A Receipt this process recorded as shutdown ended the wait still confirms
+	// arrival, so it decides the outcome shutdown could not, and that outcome is
+	// still stored while storage is reachable.
 	select {
 	case <-live.receipt:
 		return protocol.DeliveryReceived, nil
