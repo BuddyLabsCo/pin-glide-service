@@ -233,8 +233,8 @@ func (c *Connection) reportFrameError(ctx context.Context, err error) bool {
 			Type:      "error",
 			RequestID: observability.RequestIDFrom(ctx),
 			SessionID: c.sessionID,
-			Error: protocol.WSSErrorItem{
-				Code:   string(frameErr.code),
+			Error: protocol.BusinessError{
+				Code:   frameErr.code,
 				Detail: frameErr.detail,
 			},
 		})

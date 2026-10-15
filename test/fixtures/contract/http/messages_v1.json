@@ -1,0 +1,71 @@
+{
+  "operationId": "PostMessages",
+  "path": "/v1/messages",
+  "method": "post",
+  "request": {
+    "schema": "UploadRequest",
+    "required": ["items", "messageId"],
+    "properties": ["items", "messageId"]
+  },
+  "item": {
+    "schema": "UploadItem",
+    "required": ["ciphertext", "cryptoVersion", "nonce", "pairingId", "receiverId"],
+    "properties": ["ciphertext", "cryptoVersion", "nonce", "pairingId", "receiverId"]
+  },
+  "success": {
+    "schema": "UploadResponse",
+    "status": "207",
+    "required": ["messageId", "requestId", "results"]
+  },
+  "result": {
+    "schema": "UploadResult",
+    "required": ["index", "status"],
+    "properties": ["error", "index", "receiverId", "status"],
+    "statuses": ["ack_timeout", "interrupted", "offline", "received", "rejected", "send_failed"]
+  },
+  "businessError": {
+    "schema": "BusinessError",
+    "required": ["code", "detail"],
+    "properties": ["code", "detail", "errors"]
+  },
+  "errors": {
+    "400": ["invalid_request"],
+    "401": [
+      "credential_expired",
+      "credential_invalid",
+      "credential_missing",
+      "credential_revoked"
+    ],
+    "422": ["validation_failed"],
+    "500": ["internal_error"],
+    "503": ["delivery_status_unavailable", "service_unavailable"]
+  },
+  "metadata": {
+    "operationId": "GetMessage",
+    "path": "/v1/messages/{messageId}",
+    "method": "get",
+    "success": {
+      "schema": "MessageDeliveries",
+      "status": "200",
+      "required": ["deliveries", "messageId"]
+    },
+    "view": {
+      "schema": "DeliveryView",
+      "required": ["createdAt", "pairingId", "receiverId", "status"],
+      "properties": ["completedAt", "createdAt", "error", "pairingId", "receiverId", "status"],
+      "statuses": ["ack_timeout", "interrupted", "offline", "processing", "received", "send_failed"]
+    },
+    "errors": {
+      "401": [
+        "credential_expired",
+        "credential_invalid",
+        "credential_missing",
+        "credential_revoked"
+      ],
+      "404": ["resource_not_found"],
+      "422": ["validation_failed"],
+      "500": ["internal_error"],
+      "503": ["delivery_status_unavailable", "service_unavailable"]
+    }
+  }
+}

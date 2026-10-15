@@ -14,6 +14,7 @@ import (
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
@@ -67,6 +68,10 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	}
 	receiverSocket := wss.NewReceiverSocket(pairingService, presence, dependencies.Logger)
 	service.receivers = receiverSocket
+	deliveryService := delivery.NewService(dependencies.Database, receiverSocket, delivery.NewAuthenticator(identityService))
+	// A Receipt arrives on that same connection, so the transport hands each
+	// one to the work that is waiting for it.
+	receiverSocket.SetReceiptSink(deliveryService)
 	// The Receiver's own delivery connection is where the transport tells it
 	// that a Sender withdrew forwarding authority.
 	pairingService.SetDeliveryNotifier(receiverSocket)
@@ -88,6 +93,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 		Identity: identityService,
 		Model:    modelService,
 		Pairing:  pairingService,
+		Delivery: deliveryService,
 		Presence: presence,
 	})
 	httpServer := &http.Server{

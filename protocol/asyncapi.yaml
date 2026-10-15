@@ -134,13 +134,28 @@ channels:
       reconnect is a new live connection and receives nothing kept for the
       previous one.
 
+      This is also the delivery channel. The service writes one delivery
+      message per admitted Delivery of one Sender's Message, carrying that
+      Sender's ciphertext for this Receiver unchanged; the Sender supplies one
+      independent ciphertext per Receiver it selected, so the service never
+      selects a target or re-encrypts content. The Receiver answers with a
+      receipt once it can read the Sender and Message correlation, before it
+      validates, decrypts or displays anything: a Receipt means arrival only.
+      The service correlates a Receipt by the authenticated connection, the
+      Sender and the Message, accepts it only for that Receiver's registered
+      in-flight work, and ignores a duplicate or late Receipt without changing
+      a terminal result. A frame that is not a receipt of this version, and
+      therefore carries no usable correlation, is a protocol error and closes
+      with 1002 rather than being answered with a fabricated Receipt. Delivery
+      is live-only: the service keeps no backlog for a Receiver that is not
+      connected, never replays ciphertext on reconnect, and never retries an
+      uncertain delivery.
+
       A successful upgrade commits credential possession: the session whose
       grant the credential came from completes and its restricted pairing
-      channel closes. Delivery and Receipt messages arrive on this channel with
-      live delivery; until they are published, an application frame is a
-      protocol error and closes with 1002. Invalid text encoding closes with
-      1007, a normal close uses 1000, server shutdown uses 1001 and an
-      unexpected server failure uses 1011.
+      channel closes. Invalid text encoding closes with 1007, a normal close
+      uses 1000, server shutdown uses 1001 and an unexpected server failure uses
+      1011.
 
       The service also reports association changes here: a Sender that removes
       its own association is announced as pairing_removed, which withdraws that
@@ -170,6 +185,10 @@ channels:
       Receivers keep their registration, their credential, their Pairings and
       their connection, including a Receiver the same Account owns.
     messages:
+      delivery:
+        $ref: '#/components/messages/delivery'
+      receipt:
+        $ref: '#/components/messages/receipt'
       pairingRemoved:
         $ref: '#/components/messages/pairingRemoved'
       deviceRevoked:
@@ -204,12 +223,16 @@ operations:
       $ref: '#/channels/receiverEvents'
     summary: Accept a Receiver's application frame
     description: |-
-      The delivery and Receipt messages this channel carries arrive with live
-      delivery. Until they are published, a text application frame is a
-      protocol error and closes with 1002.
+      The only application frame this direction accepts is this version's
+      receipt, and its Receiver comes from the authenticated connection rather
+      than from the payload. A text frame that is not one, including one whose
+      Sender or Message correlation is unreadable, is a protocol error and
+      closes with 1002; the service never acknowledges arrival it cannot
+      correlate.
     security:
       - $ref: '#/components/securitySchemes/receiverCredential'
-    messages: []
+    messages:
+      - $ref: '#/channels/receiverEvents/messages/receipt'
   publishReceiverControl:
     action: send
     channel:
@@ -217,8 +240,18 @@ operations:
     summary: Keep the delivery connection alive and report what ended its access
     description: |-
       The service sends native Ping control frames and answers Pong. Close
-      carries the meanings the channel describes; delivery and Receipt messages
-      join this direction with live delivery.
+      carries the meanings the channel describes.
+
+      A delivery message is one admitted Delivery of one Sender's Message for
+      this Receiver, carrying the Sender's ciphertext unchanged with the
+      Pairing that authorized it and the crypto profile that describes it. The
+      service sends it only while this connection is the Receiver's current
+      committed delivery connection, within the adopted two-second write bound,
+      and expects the matching receipt within the five-second bound after a
+      successful write: a Receiver that does not answer within that bound is
+      reported to the Sender as ack_timeout, which does not prove that nothing
+      arrived. A write that failed is reported as send_failed, and a Receiver
+      whose connection is gone is reported as offline for that invocation.
 
       A Sender that removes its own association is reported here as
       pairing_removed, so a connected Receiver stops treating that Pairing as
@@ -236,6 +269,7 @@ operations:
     security:
       - $ref: '#/components/securitySchemes/receiverCredential'
     messages:
+      - $ref: '#/channels/receiverEvents/messages/delivery'
       - $ref: '#/channels/receiverEvents/messages/pairingRemoved'
       - $ref: '#/channels/receiverEvents/messages/deviceRevoked'
 
@@ -256,6 +290,31 @@ components:
         delivery connection. The Receiver identity comes from the authenticated
         connection rather than from a frame.
   messages:
+    delivery:
+      name: delivery
+      title: One Message ciphertext for this Receiver
+      description: |-
+        Sent to the current committed delivery connection of the Receiver one
+        admitted Delivery selected. The payload is the Sender's ciphertext,
+        nonce and crypto profile unchanged, together with the correlation the
+        Receiver reports back in its Receipt. The service keeps no copy: the
+        ciphertext exists only for this attempt, and a duplicate upload of the
+        same Sender, Message and Receiver never sends it twice.
+      payload:
+        $ref: '#/components/schemas/Delivery'
+    receipt:
+      name: receipt
+      title: The Receiver reports arrival of one Message
+      description: |-
+        The Receiver's acknowledgement that a Message arrived, sent once it can
+        read the Sender and Message correlation and before it validates,
+        decrypts or displays anything. The Receiver identity comes from the
+        authenticated connection, so a Receipt never names another Receiver's
+        Delivery. The service accepts it only for that Receiver's registered
+        in-flight work and ignores a duplicate or late Receipt, so no Receipt
+        changes a terminal result.
+      payload:
+        $ref: '#/components/schemas/Receipt'
     pairingState:
       name: pairing_state
       title: Pairing Session state

@@ -69,6 +69,39 @@ const (
 	ModeForbidsCredentialIssue ErrorCode = "mode_forbids_credential_issue"
 	// ServiceUnavailable marks temporary service or storage unavailability.
 	ServiceUnavailable ErrorCode = "service_unavailable"
+	// ReceiverNotAuthorized marks an upload entry whose target is unknown to
+	// this Sender, is not its own active association or is revoked. The
+	// service keeps those internal reasons distinct and reports them as one
+	// code, so no caller learns whether another Account holds a registration.
+	ReceiverNotAuthorized ErrorCode = "receiver_not_authorized"
+	// DuplicateReceiver marks an upload entry whose Receiver another entry of
+	// the same request also named, so the service refuses to choose between
+	// two different ciphertexts for one Delivery.
+	DuplicateReceiver ErrorCode = "duplicate_receiver"
+	// InvalidDeliveryItem marks an upload entry that is not a readable,
+	// well-formed ciphertext envelope of this profile.
+	InvalidDeliveryItem ErrorCode = "invalid_delivery_item"
+	// UnsupportedCryptoVersion marks an upload entry whose readable
+	// cryptoVersion names a profile this service version does not implement.
+	UnsupportedCryptoVersion ErrorCode = "unsupported_crypto_version"
+	// Offline marks an entry whose Receiver holds no usable current delivery
+	// connection. It describes this invocation and does not disprove an
+	// earlier Delivery of the same Message.
+	Offline ErrorCode = "offline"
+	// SendFailed marks a delivery write that failed or exceeded its bound.
+	// Arrival is not guaranteed absent, so the Receiver may have received it.
+	SendFailed ErrorCode = "send_failed"
+	// AckTimeout marks the absence of a Receipt within the adopted bound. The
+	// Receiver may have received the ciphertext without reporting arrival.
+	AckTimeout ErrorCode = "ack_timeout"
+	// Interrupted marks registered work whose terminal outcome could not be
+	// confirmed, for example across a service restart. The ciphertext is never
+	// recovered or sent again.
+	Interrupted ErrorCode = "interrupted"
+	// DeliveryStatusUnavailable marks a Delivery whose reliable terminal
+	// outcome or retained metadata could not be obtained; delivery may already
+	// have occurred, so it is an uncertain result rather than pending success.
+	DeliveryStatusUnavailable ErrorCode = "delivery_status_unavailable"
 	// ModelConfigurationUnavailable marks an absent or disabled model
 	// configuration the service cannot issue credentials from.
 	ModelConfigurationUnavailable ErrorCode = "model_configuration_unavailable"
@@ -80,4 +113,14 @@ const (
 type ErrorItem struct {
 	Location string `json:"location,omitempty" doc:"Where the error occurred, e.g. 'body.items[0]'"`
 	Message  string `json:"message" doc:"Why the input was rejected"`
+}
+
+// BusinessError is the shared failed-outcome object of failed HTTP entry
+// results and of WSS error messages: a stable code clients match on, a safe
+// explanation they must not parse for control flow, and optional validation
+// locations. It never carries a credential, ciphertext or provider response.
+type BusinessError struct {
+	Code   ErrorCode   `json:"code" doc:"Stable machine-readable error code"`
+	Detail string      `json:"detail" doc:"Safe explanation; clients must not parse it"`
+	Errors []ErrorItem `json:"errors,omitempty" doc:"Validation locations when the failure was a shape or field failure"`
 }

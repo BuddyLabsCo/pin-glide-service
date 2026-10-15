@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	deliveryapi "github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -180,6 +182,11 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "Model configuration unavailable",
 		detail: "The service has no enabled model configuration to issue credentials from.",
 	},
+	protocol.DeliveryStatusUnavailable: {
+		status: http.StatusServiceUnavailable,
+		title:  "Delivery status unavailable",
+		detail: "A reliable Delivery result could not be obtained; delivery may already have occurred.",
+	},
 	protocol.InternalError: {
 		status: http.StatusInternalServerError,
 		title:  "Internal error",
@@ -299,6 +306,13 @@ var businessOutcomes = []struct {
 	{model.ErrConfigurationUnavailable, protocol.ModelConfigurationUnavailable},
 	{model.ErrProvider, protocol.ModelProviderError},
 	{model.ErrStorageUnavailable, protocol.ServiceUnavailable},
+	// The upload body of the delivery surface reads its envelope itself, so its
+	// whole-request failures name their problem code the same way a domain
+	// outcome does.
+	{deliveryapi.ErrMalformedRequest, protocol.InvalidRequest},
+	{deliveryapi.ErrInvalidEnvelope, protocol.ValidationFailed},
+	{delivery.ErrStatusUnavailable, protocol.DeliveryStatusUnavailable},
+	{delivery.ErrMessageNotFound, protocol.ResourceNotFound},
 	{pairing.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
 	{pairing.ErrReceiverRevoked, protocol.DeviceRegistrationRevoked},
 	{pairing.ErrSenderNotOwned, protocol.ResourceNotFound},

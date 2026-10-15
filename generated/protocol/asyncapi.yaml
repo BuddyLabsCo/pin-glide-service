@@ -40,12 +40,16 @@ channels:
       reason: internal_error
   receiverEvents:
     address: /v1/receiver/events
-    description: "The single long-lived delivery channel of one Receiver, authenticated by\nits Receiver credential on the upgrade request. An upgrade must offer the\npin-glide.v1 subprotocol, and one that does not is rejected before the\nupgrade with HTTP 400 invalid_request. One Receiver generation has one\nreserved or active slot: a second handshake with the same credential is\nrejected before the upgrade with HTTP 409 receiver_already_connected and\nnever evicts the connection that already holds the slot. A rejected\nhandshake leaves that connection's presence unchanged.\n\nThis connection is the Receiver's liveness. Online begins with the\ncommitted upgrade, and the owning Sender's Receiver list reports the\nReceiver offline on the end of that connection, on a heartbeat failure or\non a service restart. The service sends a Ping every 15 seconds and\nrequires the Pong within 5 seconds, then closes and releases a connection\nthat stopped answering, so a half-open transport cannot hold the slot. A\nreconnect is a new live connection and receives nothing kept for the\nprevious one.\n\nA successful upgrade commits credential possession: the session whose\ngrant the credential came from completes and its restricted pairing\nchannel closes. Delivery and Receipt messages arrive on this channel with\nlive delivery; until they are published, an application frame is a\nprotocol error and closes with 1002. Invalid text encoding closes with\n1007, a normal close uses 1000, server shutdown uses 1001 and an\nunexpected server failure uses 1011.\n\nThe service also reports association changes here: a Sender that removes\nits own association is announced as pairing_removed, which withdraws that\nSender's forwarding authority for the named Pairing while the Receiver's\ncredential, its connection and every other Sender's association keep\nworking. A Sender's Account switch and its owner security revocation\nannounce pairing_removed for every association that Sender still held and\nleave the Receiver's credential, its connection and every other Sender's\nassociation untouched.\n\nA credential generation the service replaced loses this connection: the\nreplacement of an owner-approved recovery revokes the credential it\nsupersedes and ends its reserved and active connections with 1008\npolicy_violation before the replacement is handed out, so the Receiver\nconnects again with the credential it saved and never shares the\nconnection of the credential that stopped authorizing.\n\nAn Account owner's security revocation of this Receiver closes its\nregistration, invalidates its credential, cancels its unfinished\nissuance and recovery grants and removes every Pairing that forwards to\nit, all in one commit. Its committed connection receives device_revoked\nand then closes with 1008 policy_violation, a handshake that is still\ncommitting is refused before its 101, and a later handshake with the\nrevoked credential is refused with HTTP 401 credential_invalid because a\nclosed registration authorizes nothing. The control is best effort: a\nconnection that can no longer carry it does not delay the closure. Other\nReceivers keep their registration, their credential, their Pairings and\ntheir connection, including a Receiver the same Account owns."
+    description: "The single long-lived delivery channel of one Receiver, authenticated by\nits Receiver credential on the upgrade request. An upgrade must offer the\npin-glide.v1 subprotocol, and one that does not is rejected before the\nupgrade with HTTP 400 invalid_request. One Receiver generation has one\nreserved or active slot: a second handshake with the same credential is\nrejected before the upgrade with HTTP 409 receiver_already_connected and\nnever evicts the connection that already holds the slot. A rejected\nhandshake leaves that connection's presence unchanged.\n\nThis connection is the Receiver's liveness. Online begins with the\ncommitted upgrade, and the owning Sender's Receiver list reports the\nReceiver offline on the end of that connection, on a heartbeat failure or\non a service restart. The service sends a Ping every 15 seconds and\nrequires the Pong within 5 seconds, then closes and releases a connection\nthat stopped answering, so a half-open transport cannot hold the slot. A\nreconnect is a new live connection and receives nothing kept for the\nprevious one.\n\nThis is also the delivery channel. The service writes one delivery\nmessage per admitted Delivery of one Sender's Message, carrying that\nSender's ciphertext for this Receiver unchanged; the Sender supplies one\nindependent ciphertext per Receiver it selected, so the service never\nselects a target or re-encrypts content. The Receiver answers with a\nreceipt once it can read the Sender and Message correlation, before it\nvalidates, decrypts or displays anything: a Receipt means arrival only.\nThe service correlates a Receipt by the authenticated connection, the\nSender and the Message, accepts it only for that Receiver's registered\nin-flight work, and ignores a duplicate or late Receipt without changing\na terminal result. A frame that is not a receipt of this version, and\ntherefore carries no usable correlation, is a protocol error and closes\nwith 1002 rather than being answered with a fabricated Receipt. Delivery\nis live-only: the service keeps no backlog for a Receiver that is not\nconnected, never replays ciphertext on reconnect, and never retries an\nuncertain delivery.\n\nA successful upgrade commits credential possession: the session whose\ngrant the credential came from completes and its restricted pairing\nchannel closes. Invalid text encoding closes with 1007, a normal close\nuses 1000, server shutdown uses 1001 and an unexpected server failure uses\n1011.\n\nThe service also reports association changes here: a Sender that removes\nits own association is announced as pairing_removed, which withdraws that\nSender's forwarding authority for the named Pairing while the Receiver's\ncredential, its connection and every other Sender's association keep\nworking. A Sender's Account switch and its owner security revocation\nannounce pairing_removed for every association that Sender still held and\nleave the Receiver's credential, its connection and every other Sender's\nassociation untouched.\n\nA credential generation the service replaced loses this connection: the\nreplacement of an owner-approved recovery revokes the credential it\nsupersedes and ends its reserved and active connections with 1008\npolicy_violation before the replacement is handed out, so the Receiver\nconnects again with the credential it saved and never shares the\nconnection of the credential that stopped authorizing.\n\nAn Account owner's security revocation of this Receiver closes its\nregistration, invalidates its credential, cancels its unfinished\nissuance and recovery grants and removes every Pairing that forwards to\nit, all in one commit. Its committed connection receives device_revoked\nand then closes with 1008 policy_violation, a handshake that is still\ncommitting is refused before its 101, and a later handshake with the\nrevoked credential is refused with HTTP 401 credential_invalid because a\nclosed registration authorizes nothing. The control is best effort: a\nconnection that can no longer carry it does not delay the closure. Other\nReceivers keep their registration, their credential, their Pairings and\ntheir connection, including a Receiver the same Account owns."
     messages:
+      delivery:
+        $ref: "#/components/messages/delivery"
       deviceRevoked:
         $ref: "#/components/messages/deviceRevoked"
       pairingRemoved:
         $ref: "#/components/messages/pairingRemoved"
+      receipt:
+        $ref: "#/components/messages/receipt"
     title: Receiver delivery channel
     x-close-codes:
     - code: 1000
@@ -74,6 +78,12 @@ components:
       payload:
         $ref: "#/components/schemas/CredentialReady"
       title: The session's Receiver credential can be redeemed
+    delivery:
+      description: "Sent to the current committed delivery connection of the Receiver one\nadmitted Delivery selected. The payload is the Sender's ciphertext,\nnonce and crypto profile unchanged, together with the correlation the\nReceiver reports back in its Receipt. The service keeps no copy: the\nciphertext exists only for this attempt, and a duplicate upload of the\nsame Sender, Message and Receiver never sends it twice."
+      name: delivery
+      payload:
+        $ref: "#/components/schemas/Delivery"
+      title: One Message ciphertext for this Receiver
     deviceRevoked:
       description: "Sent to the delivery connection of the Receiver whose registration the\nAccount owner security revocation permanently closed. The Receiver\nstops using its credential: it no longer authorizes delivery or pairing\nand every Pairing that forwarded to it is removed for every Sender.\nThe connection ends with 1008 policy_violation after this message, so a\nReceiver that reconnects is refused instead. Sending it is best effort:\na connection that can no longer carry it does not delay or prevent the\nclosure the revocation already committed."
       name: device_revoked
@@ -117,7 +127,40 @@ components:
       payload:
         $ref: "#/components/schemas/PairingState"
       title: Pairing Session state
+    receipt:
+      description: |-
+        The Receiver's acknowledgement that a Message arrived, sent once it can
+        read the Sender and Message correlation and before it validates,
+        decrypts or displays anything. The Receiver identity comes from the
+        authenticated connection, so a Receipt never names another Receiver's
+        Delivery. The service accepts it only for that Receiver's registered
+        in-flight work and ignores a duplicate or late Receipt, so no Receipt
+        changes a terminal result.
+      name: receipt
+      payload:
+        $ref: "#/components/schemas/Receipt"
+      title: The Receiver reports arrival of one Message
   schemas:
+    BusinessError:
+      additionalProperties: false
+      properties:
+        code:
+          description: Stable machine-readable error code
+          type: string
+        detail:
+          description: Safe explanation; clients must not parse it
+          type: string
+        errors:
+          description: Validation locations when the failure was a shape or field failure
+          items:
+            $ref: "#/components/schemas/ErrorItem"
+          type:
+          - array
+          - "null"
+      required:
+      - code
+      - detail
+      type: object
     CredentialReady:
       additionalProperties: false
       properties:
@@ -145,6 +188,49 @@ components:
       - receiverId
       - expiresAt
       type: object
+    Delivery:
+      additionalProperties: false
+      properties:
+        ciphertext:
+          description: Padded-Base64 ciphertext followed by its authentication tag
+          type: string
+        cryptoVersion:
+          description: Encryption profile version of the ciphertext
+          format: int64
+          type: integer
+        messageId:
+          description: Message ID of the Sender's SMS operation
+          type: string
+        nonce:
+          description: Padded-Base64 96-bit nonce the Sender generated for this ciphertext
+          type: string
+        pairingId:
+          description: Pairing that authorized this delivery
+          type: string
+        receiverId:
+          description: Receiver this delivery is addressed to
+          type: string
+        senderId:
+          description: Sender this Message came from
+          type: string
+        type:
+          description: Message type; delivery
+          type: string
+        version:
+          description: Application message version; always 1
+          format: int64
+          type: integer
+      required:
+      - version
+      - type
+      - senderId
+      - receiverId
+      - pairingId
+      - messageId
+      - cryptoVersion
+      - nonce
+      - ciphertext
+      type: object
     DeviceRevoked:
       additionalProperties: false
       properties:
@@ -162,6 +248,18 @@ components:
       - version
       - type
       - receiverId
+      type: object
+    ErrorItem:
+      additionalProperties: false
+      properties:
+        location:
+          description: Where the error occurred, e.g. 'body.items[0]'
+          type: string
+        message:
+          description: Why the input was rejected
+          type: string
+      required:
+      - message
       type: object
     PairingRelayIn:
       additionalProperties: false
@@ -304,11 +402,33 @@ components:
       - type
       - session
       type: object
+    Receipt:
+      additionalProperties: false
+      properties:
+        messageId:
+          description: Message ID the Receiver acknowledges arrival of
+          type: string
+        senderId:
+          description: Sender the acknowledged Message came from
+          type: string
+        type:
+          description: Message type; receipt
+          type: string
+        version:
+          description: Application message version; always 1
+          format: int64
+          type: integer
+      required:
+      - version
+      - type
+      - senderId
+      - messageId
+      type: object
     WSSError:
       additionalProperties: false
       properties:
         error:
-          $ref: "#/components/schemas/WSSErrorItem"
+          $ref: "#/components/schemas/BusinessError"
           description: Stable business error
         requestId:
           description: Correlation identifier of the operation; every recoverable failure states one
@@ -348,19 +468,6 @@ components:
         description: The service or its storage is temporarily unavailable.
       - code: internal_error
         description: An unexpected server failure occurred.
-    WSSErrorItem:
-      additionalProperties: false
-      properties:
-        code:
-          description: Stable machine-readable error code
-          type: string
-        detail:
-          description: Safe explanation; clients must not parse it
-          type: string
-      required:
-      - code
-      - detail
-      type: object
   securitySchemes:
     receiverCredential:
       description: |-
@@ -402,10 +509,14 @@ operations:
     channel:
       $ref: "#/channels/receiverEvents"
     description: |-
-      The delivery and Receipt messages this channel carries arrive with live
-      delivery. Until they are published, a text application frame is a
-      protocol error and closes with 1002.
-    messages: []
+      The only application frame this direction accepts is this version's
+      receipt, and its Receiver comes from the authenticated connection rather
+      than from the payload. A text frame that is not one, including one whose
+      Sender or Message correlation is unreadable, is a protocol error and
+      closes with 1002; the service never acknowledges arrival it cannot
+      correlate.
+    messages:
+    - $ref: "#/channels/receiverEvents/messages/receipt"
     security:
     - $ref: "#/components/securitySchemes/receiverCredential"
     summary: Accept a Receiver's application frame
@@ -425,8 +536,9 @@ operations:
     action: send
     channel:
       $ref: "#/channels/receiverEvents"
-    description: "The service sends native Ping control frames and answers Pong. Close\ncarries the meanings the channel describes; delivery and Receipt messages\njoin this direction with live delivery.\n\nA Sender that removes its own association is reported here as\npairing_removed, so a connected Receiver stops treating that Pairing as\none that may deliver without polling. The message states the Sender and\nthe removed Pairing only: the Receiver's credential, this connection and\nevery other Sender's association are unaffected, and the service keeps no\nbacklog for a Receiver that is not connected.\n\nAn Account owner's security revocation of the connected Receiver is\nreported here as device_revoked, which states the Receiver whose\nregistration closed, and the connection ends with 1008\npolicy_violation after it. The message is the only notice the connection\ngets, so a Receiver that misses it learns the same outcome from the\nrefusal of its next handshake."
+    description: "The service sends native Ping control frames and answers Pong. Close\ncarries the meanings the channel describes.\n\nA delivery message is one admitted Delivery of one Sender's Message for\nthis Receiver, carrying the Sender's ciphertext unchanged with the\nPairing that authorized it and the crypto profile that describes it. The\nservice sends it only while this connection is the Receiver's current\ncommitted delivery connection, within the adopted two-second write bound,\nand expects the matching receipt within the five-second bound after a\nsuccessful write: a Receiver that does not answer within that bound is\nreported to the Sender as ack_timeout, which does not prove that nothing\narrived. A write that failed is reported as send_failed, and a Receiver\nwhose connection is gone is reported as offline for that invocation.\n\nA Sender that removes its own association is reported here as\npairing_removed, so a connected Receiver stops treating that Pairing as\none that may deliver without polling. The message states the Sender and\nthe removed Pairing only: the Receiver's credential, this connection and\nevery other Sender's association are unaffected, and the service keeps no\nbacklog for a Receiver that is not connected.\n\nAn Account owner's security revocation of the connected Receiver is\nreported here as device_revoked, which states the Receiver whose\nregistration closed, and the connection ends with 1008\npolicy_violation after it. The message is the only notice the connection\ngets, so a Receiver that misses it learns the same outcome from the\nrefusal of its next handshake."
     messages:
+    - $ref: "#/channels/receiverEvents/messages/delivery"
     - $ref: "#/channels/receiverEvents/messages/pairingRemoved"
     - $ref: "#/channels/receiverEvents/messages/deviceRevoked"
     security:
