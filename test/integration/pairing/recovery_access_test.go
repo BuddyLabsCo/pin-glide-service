@@ -226,8 +226,8 @@ func TestRecoveryOfTheSameInstantKeepsTheIssuanceThatCommitted(t *testing.T) {
 	first, firstToken := environment.createRecovery(t, association.ReceiverID)
 	second, secondToken := environment.createRecovery(t, association.ReceiverID)
 	// The service stamps each session when it creates it, so the equal instant
-	// this ordering cares about is forced below. The lower identifier reports
-	// and redeems first, which leaves the other one as the delayed session.
+	// this test needs is forced below, with the losing session held back until
+	// after the other one redeems.
 	issuing, issuingToken, delayed, delayedToken := first, firstToken, second, secondToken
 	if delayed.SessionID < issuing.SessionID {
 		issuing, issuingToken, delayed, delayedToken = delayed, delayedToken, issuing, issuingToken
