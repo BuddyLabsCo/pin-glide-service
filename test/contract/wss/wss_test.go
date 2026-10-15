@@ -5,6 +5,8 @@ package wss_test
 import (
 	"fmt"
 	"os"
+	"path"
+	"slices"
 	"strings"
 	"testing"
 
@@ -227,7 +229,8 @@ var v1Inventory = []struct {
 	{address: "/v1/receiver/events", action: "receive", schema: "Receipt", name: "receipt"},
 	// One Pairing Session's restricted channel: opaque relay traffic in both
 	// directions, the session state, the credential notice and the recoverable
-	// application error.
+	// application error. Only this channel carries error: a delivery-channel
+	// frame the service cannot read is a protocol error that closes instead.
 	{address: "/v1/pairing-sessions/{id}/events", action: "receive", schema: "PairingRelayIn", name: "pairing_relay"},
 	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "PairingRelayOut", name: "pairing_relay"},
 	{address: "/v1/pairing-sessions/{id}/events", action: "send", schema: "PairingState", name: "pairing_state"},
@@ -250,6 +253,55 @@ func TestPublishedWSSDescriptionCarriesTheAdoptedV1Inventory(t *testing.T) {
 		t.Run(message.action+"-"+message.schema, func(t *testing.T) {
 			assertChannelMessage(t, description, message.address, message.action, message.schema, message.name)
 		})
+	}
+}
+
+// The shipped description must carry nothing beyond the adopted v1 inventory: a
+// message type a released client does not know is a protocol error, so a new
+// service-initiated message needs a new negotiated version rather than
+// appearing on this one.
+func TestPublishedWSSDescriptionCarriesNothingBeyondTheAdoptedV1Inventory(t *testing.T) {
+	definitions, err := os.ReadFile(definitionsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", definitionsPath, err)
+	}
+	description := published(t, definitions)
+	channels, _ := description["channels"].(map[string]any)
+	descriptions, _ := description["components"].(map[string]any)["messages"].(map[string]any)
+
+	// One operation names the direction, the channel address and the shared
+	// payload schema of every message it carries, which is the triple a
+	// generated client resolves.
+	carried := []string{}
+	operations, _ := description["operations"].(map[string]any)
+	for name, value := range operations {
+		operation, _ := value.(map[string]any)
+		action, _ := operation["action"].(string)
+		channelRef, _ := operation["channel"].(map[string]any)["$ref"].(string)
+		channel, _ := channels[path.Base(channelRef)].(map[string]any)
+		address, _ := channel["address"].(string)
+		messages, _ := operation["messages"].([]any)
+		for _, value := range messages {
+			messageRef, _ := value.(map[string]any)["$ref"].(string)
+			named, _ := channel["messages"].(map[string]any)[path.Base(messageRef)].(map[string]any)
+			shared, _ := named["$ref"].(string)
+			definition, _ := descriptions[path.Base(shared)].(map[string]any)
+			schema, declared := definition["payload"].(map[string]any)["$ref"].(string)
+			if !declared {
+				t.Fatalf("operation %s carries message %s, which has no shared payload schema", name, messageRef)
+			}
+			carried = append(carried, action+" "+address+" "+strings.TrimPrefix(schema, protocol.SchemaPrefix))
+		}
+	}
+
+	adopted := make([]string, 0, len(v1Inventory))
+	for _, message := range v1Inventory {
+		adopted = append(adopted, message.action+" "+message.address+" "+message.schema)
+	}
+	slices.Sort(carried)
+	slices.Sort(adopted)
+	if !slices.Equal(carried, adopted) {
+		t.Errorf("the shipped description carries %v, want the adopted v1 inventory %v", carried, adopted)
 	}
 }
 
