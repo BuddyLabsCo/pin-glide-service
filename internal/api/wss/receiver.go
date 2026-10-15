@@ -267,16 +267,7 @@ func (s *ReceiverSocket) PairingRemoved(senderID, receiverID, pairingID string) 
 		return
 	}
 
-	s.mutex.Lock()
-	sockets := make([]*websocket.Conn, 0, 1)
-	for key, slot := range s.slots {
-		if key.receiverID == receiverID && slot.socket != nil {
-			sockets = append(sockets, slot.socket)
-		}
-	}
-	s.mutex.Unlock()
-
-	for _, socket := range sockets {
+	for _, socket := range s.committedSockets(receiverID) {
 		ctx, cancel := context.WithTimeout(context.Background(), controlWriteTimeout)
 		err := socket.Write(ctx, websocket.MessageText, encoded)
 		cancel()
@@ -288,6 +279,59 @@ func (s *ReceiverSocket) PairingRemoved(senderID, receiverID, pairingID string) 
 			)
 		}
 	}
+}
+
+// DeviceRevoked reports one Receiver's owner security revocation to its live
+// delivery connections: each committed connection receives the adopted
+// device_revoked control and then closes with the policy meaning, and a
+// reservation still committing is closed when it tries to attach. The domain
+// committed the closure before calling here, so the control is best effort and
+// never delays or prevents it, and the write is bounded like every other
+// service-initiated control.
+func (s *ReceiverSocket) DeviceRevoked(receiverID string) {
+	message := protocol.DeviceRevoked{
+		Version:    protocol.WSSVersion,
+		Type:       "device_revoked",
+		ReceiverID: receiverID,
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		// The shape is fixed by the wire type, so this cannot happen for a
+		// value the service builds itself; the closure below still happens.
+		s.logger.Error("device revocation could not be encoded",
+			slog.String("receiver_id", receiverID),
+			slog.String("cause", err.Error()),
+		)
+	} else {
+		for _, socket := range s.committedSockets(receiverID) {
+			ctx, cancel := context.WithTimeout(context.Background(), controlWriteTimeout)
+			err := socket.Write(ctx, websocket.MessageText, encoded)
+			cancel()
+			if err != nil {
+				s.logger.Warn("device revocation not delivered",
+					slog.String("receiver_id", receiverID),
+					slog.String("cause", err.Error()),
+				)
+			}
+		}
+	}
+
+	s.EndReceiverAccess(receiverID)
+}
+
+// committedSockets reports the accepted sockets of one Receiver's slots, so a
+// control write reaches every connection the Receiver currently holds.
+func (s *ReceiverSocket) committedSockets(receiverID string) []*websocket.Conn {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	sockets := make([]*websocket.Conn, 0, 1)
+	for key, slot := range s.slots {
+		if key.receiverID == receiverID && slot.socket != nil {
+			sockets = append(sockets, slot.socket)
+		}
+	}
+	return sockets
 }
 
 // EndReceiverAccess ends the reserved and active delivery connections of one

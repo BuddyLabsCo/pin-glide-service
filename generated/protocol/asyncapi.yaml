@@ -40,8 +40,10 @@ channels:
       reason: internal_error
   receiverEvents:
     address: /v1/receiver/events
-    description: "The single long-lived delivery channel of one Receiver, authenticated by\nits Receiver credential on the upgrade request. An upgrade must offer the\npin-glide.v1 subprotocol, and one that does not is rejected before the\nupgrade with HTTP 400 invalid_request. One Receiver generation has one\nreserved or active slot: a second handshake with the same credential is\nrejected before the upgrade with HTTP 409 receiver_already_connected and\nnever evicts the connection that already holds the slot. A rejected\nhandshake leaves that connection's presence unchanged.\n\nThis connection is the Receiver's liveness. Online begins with the\ncommitted upgrade, and the owning Sender's Receiver list reports the\nReceiver offline on the end of that connection, on a heartbeat failure or\non a service restart. The service sends a Ping every 15 seconds and\nrequires the Pong within 5 seconds, then closes and releases a connection\nthat stopped answering, so a half-open transport cannot hold the slot. A\nreconnect is a new live connection and receives nothing kept for the\nprevious one.\n\nA successful upgrade commits credential possession: the session whose\ngrant the credential came from completes and its restricted pairing\nchannel closes. Delivery and Receipt messages arrive on this channel with\nlive delivery; until they are published, an application frame is a\nprotocol error and closes with 1002. Invalid text encoding closes with\n1007, a normal close uses 1000, server shutdown uses 1001 and an\nunexpected server failure uses 1011.\n\nThe service also reports association changes here: a Sender that removes\nits own association is announced as pairing_removed, which withdraws that\nSender's forwarding authority for the named Pairing while the Receiver's\ncredential, its connection and every other Sender's association keep\nworking. A Sender's Account switch and its owner security revocation\nannounce pairing_removed for every association that Sender still held and\nleave the Receiver's credential, its connection and every other Sender's\nassociation untouched.\n\nA credential generation the service replaced loses this connection: the\nreplacement of an owner-approved recovery revokes the credential it\nsupersedes and ends its reserved and active connections with 1008\npolicy_violation before the replacement is handed out, so the Receiver\nconnects again with the credential it saved and never shares the\nconnection of the credential that stopped authorizing."
+    description: "The single long-lived delivery channel of one Receiver, authenticated by\nits Receiver credential on the upgrade request. An upgrade must offer the\npin-glide.v1 subprotocol, and one that does not is rejected before the\nupgrade with HTTP 400 invalid_request. One Receiver generation has one\nreserved or active slot: a second handshake with the same credential is\nrejected before the upgrade with HTTP 409 receiver_already_connected and\nnever evicts the connection that already holds the slot. A rejected\nhandshake leaves that connection's presence unchanged.\n\nThis connection is the Receiver's liveness. Online begins with the\ncommitted upgrade, and the owning Sender's Receiver list reports the\nReceiver offline on the end of that connection, on a heartbeat failure or\non a service restart. The service sends a Ping every 15 seconds and\nrequires the Pong within 5 seconds, then closes and releases a connection\nthat stopped answering, so a half-open transport cannot hold the slot. A\nreconnect is a new live connection and receives nothing kept for the\nprevious one.\n\nA successful upgrade commits credential possession: the session whose\ngrant the credential came from completes and its restricted pairing\nchannel closes. Delivery and Receipt messages arrive on this channel with\nlive delivery; until they are published, an application frame is a\nprotocol error and closes with 1002. Invalid text encoding closes with\n1007, a normal close uses 1000, server shutdown uses 1001 and an\nunexpected server failure uses 1011.\n\nThe service also reports association changes here: a Sender that removes\nits own association is announced as pairing_removed, which withdraws that\nSender's forwarding authority for the named Pairing while the Receiver's\ncredential, its connection and every other Sender's association keep\nworking. A Sender's Account switch and its owner security revocation\nannounce pairing_removed for every association that Sender still held and\nleave the Receiver's credential, its connection and every other Sender's\nassociation untouched.\n\nA credential generation the service replaced loses this connection: the\nreplacement of an owner-approved recovery revokes the credential it\nsupersedes and ends its reserved and active connections with 1008\npolicy_violation before the replacement is handed out, so the Receiver\nconnects again with the credential it saved and never shares the\nconnection of the credential that stopped authorizing.\n\nAn Account owner's security revocation of this Receiver closes its\nregistration, invalidates its credential, cancels its unfinished\nissuance and recovery grants and removes every Pairing that forwards to\nit, all in one commit. Its committed connection receives device_revoked\nand then closes with 1008 policy_violation, a handshake that is still\ncommitting is refused before its 101, and a later handshake with the\nrevoked credential is refused with HTTP 401 credential_invalid because a\nclosed registration authorizes nothing. The control is best effort: a\nconnection that can no longer carry it does not delay the closure. Other\nReceivers keep their registration, their credential, their Pairings and\ntheir connection, including a Receiver the same Account owns."
     messages:
+      deviceRevoked:
+        $ref: "#/components/messages/deviceRevoked"
       pairingRemoved:
         $ref: "#/components/messages/pairingRemoved"
     title: Receiver delivery channel
@@ -72,6 +74,12 @@ components:
       payload:
         $ref: "#/components/schemas/CredentialReady"
       title: The session's Receiver credential can be redeemed
+    deviceRevoked:
+      description: "Sent to the delivery connection of the Receiver whose registration the\nAccount owner security revocation permanently closed. The Receiver\nstops using its credential: it no longer authorizes delivery or pairing\nand every Pairing that forwarded to it is removed for every Sender.\nThe connection ends with 1008 policy_violation after this message, so a\nReceiver that reconnects is refused instead. Sending it is best effort:\na connection that can no longer carry it does not delay or prevent the\nclosure the revocation already committed."
+      name: device_revoked
+      payload:
+        $ref: "#/components/schemas/DeviceRevoked"
+      title: Owner security revocation closed this Receiver
     error:
       description: |-
         A failure that leaves the session usable, so the connection stays open.
@@ -136,6 +144,24 @@ components:
       - sessionId
       - receiverId
       - expiresAt
+      type: object
+    DeviceRevoked:
+      additionalProperties: false
+      properties:
+        receiverId:
+          description: Receiver whose registration security revocation closed
+          type: string
+        type:
+          description: Message type; device_revoked
+          type: string
+        version:
+          description: Application message version; always 1
+          format: int64
+          type: integer
+      required:
+      - version
+      - type
+      - receiverId
       type: object
     PairingRelayIn:
       additionalProperties: false
@@ -399,12 +425,13 @@ operations:
     action: send
     channel:
       $ref: "#/channels/receiverEvents"
-    description: "The service sends native Ping control frames and answers Pong. Close\ncarries the meanings the channel describes; delivery and Receipt messages\njoin this direction with live delivery.\n\nA Sender that removes its own association is reported here as\npairing_removed, so a connected Receiver stops treating that Pairing as\none that may deliver without polling. The message states the Sender and\nthe removed Pairing only: the Receiver's credential, this connection and\nevery other Sender's association are unaffected, and the service keeps no\nbacklog for a Receiver that is not connected."
+    description: "The service sends native Ping control frames and answers Pong. Close\ncarries the meanings the channel describes; delivery and Receipt messages\njoin this direction with live delivery.\n\nA Sender that removes its own association is reported here as\npairing_removed, so a connected Receiver stops treating that Pairing as\none that may deliver without polling. The message states the Sender and\nthe removed Pairing only: the Receiver's credential, this connection and\nevery other Sender's association are unaffected, and the service keeps no\nbacklog for a Receiver that is not connected.\n\nAn Account owner's security revocation of the connected Receiver is\nreported here as device_revoked, which states the Receiver whose\nregistration closed, and the connection ends with 1008\npolicy_violation after it. The message is the only notice the connection\ngets, so a Receiver that misses it learns the same outcome from the\nrefusal of its next handshake."
     messages:
     - $ref: "#/channels/receiverEvents/messages/pairingRemoved"
+    - $ref: "#/channels/receiverEvents/messages/deviceRevoked"
     security:
     - $ref: "#/components/securitySchemes/receiverCredential"
-    summary: Keep the delivery connection alive and report removed associations
+    summary: Keep the delivery connection alive and report what ended its access
 servers:
   service:
     description: The deployed service origin, supplied by the installation.

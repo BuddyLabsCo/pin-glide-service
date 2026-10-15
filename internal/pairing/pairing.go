@@ -262,6 +262,9 @@ var (
 	// ErrSenderRevoked marks an owned registration that security revocation
 	// permanently closed and that must never be restored.
 	ErrSenderRevoked = errors.New("sender registration revoked")
+	// ErrReceiverRevoked marks an owned Receiver registration that security
+	// revocation permanently closed, for every Sender that shared it.
+	ErrReceiverRevoked = errors.New("receiver registration revoked")
 	// ErrAssociationNotFound marks a Pairing that is not this Sender's own
 	// active association. An unknown, foreign, pending or already removed
 	// Pairing is deliberately indistinguishable, so a caller cannot confirm
@@ -335,6 +338,13 @@ type DeliveryNotifier interface {
 	// they belonged to, which is what keeps a superseded credential from
 	// sharing the connection its replacement now owns.
 	EndReceiverAccess(receiverID string)
+	// DeviceRevoked ends the reserved and active delivery connections of one
+	// Receiver whose registration owner security revocation closed after the
+	// domain committed it, telling each committed connection with the
+	// device_revoked control before it closes with the policy meaning. The
+	// control is best effort: a connection that can no longer carry it must
+	// neither delay nor prevent the closure.
+	DeviceRevoked(receiverID string)
 }
 
 // WeChatProof is one verified WeChat identity and the Account it belongs to.
