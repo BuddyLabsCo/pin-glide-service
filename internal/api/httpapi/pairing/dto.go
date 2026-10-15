@@ -32,9 +32,11 @@ type AuthorizeRequest struct {
 // CompleteRequest is the accepted POST /v1/pairing-sessions/{id}/complete
 // body. One report confirms that the authenticated side saved the derived
 // Pairing key and checked its peer's key confirmation; the service never sees
-// or verifies that client key material.
+// or verifies that client key material. A recovery report instead states which
+// existing keys that side still holds, and only its Receiver side lists them.
 type CompleteRequest struct {
-	KeyConfirmation string `json:"keyConfirmation" required:"true" enum:"confirmed" doc:"Authenticated confirmation that this side saved the Pairing key and verified its peer's key confirmation"`
+	KeyConfirmation    string   `json:"keyConfirmation" required:"true" enum:"confirmed,not_available" doc:"Confirmed reports that this side saved the Pairing key and verified its peer's key confirmation; recover_receiver may instead report not_available for a key it no longer holds, and every other mode reports confirmed"`
+	RetainedPairingIDs []string `json:"retainedPairingIds,omitempty" doc:"recover_receiver only, from its Receiver side: the Pairing IDs of this Receiver whose local keys survived. It must agree with keyConfirmation and name only Pairings of this Receiver"`
 }
 
 // RedeemRequest is the accepted POST

@@ -194,6 +194,17 @@ func (s *Service) sessionChanged(session Session, now time.Time) {
 	s.notifier.SessionChanged(session.ID, session.View(now))
 }
 
+// sessionsChanged reports the state every session a committed change closed
+// now has, so the live participants of that work learn its outcome without
+// polling.
+func (s *Service) sessionsChanged(ctx context.Context, sessionIDs []string, now time.Time) {
+	for _, sessionID := range sessionIDs {
+		if session, err := sessionByID(ctx, s.pool, sessionID); err == nil {
+			s.sessionChanged(session, now)
+		}
+	}
+}
+
 // Resolve presents one restricted credential and reports the session it
 // belongs to and the side it authenticates. A credential past its lifetime is
 // reported as an expired credential, not as an expired session: validity is
@@ -439,6 +450,7 @@ func isOutcome(err error) bool {
 		ErrOperationSuperseded,
 		ErrAttemptUnsupported,
 		ErrIssuanceInvalid,
+		ErrRetainedPairingsInvalid,
 		ErrFreshIdentityRequired,
 		ErrWeChatAuthorizationInvalid,
 		ErrIdentityProvider,

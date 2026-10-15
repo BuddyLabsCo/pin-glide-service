@@ -154,23 +154,30 @@ type AuthorizeRequest struct {
 }
 
 // KeyConfirmation is one client's authenticated report that it saved the
-// derived Pairing key and checked its peer's key confirmation. The missing-key
-// report of a recovery client arrives with Receiver credential recovery.
+// derived Pairing key and checked its peer's key confirmation. Receiver
+// credential recovery instead reports which existing Pairing keys survived.
 type KeyConfirmation string
 
 const (
 	// KeyConfirmed reports that the client saved the key and verified its peer.
 	KeyConfirmed KeyConfirmation = "confirmed"
+	// KeyNotAvailable reports that a client of a recovery no longer holds an
+	// existing Pairing key. Only a recovery report may state it.
+	KeyNotAvailable KeyConfirmation = "not_available"
 )
 
 // CompleteRequest is one participant's key-confirmation report. Exactly one
 // credential source identifies the side: SenderID for the claiming Sender's
 // management credential, Token for the Receiver side's restricted credential.
+// A recovery report states which existing Pairing keys the reporting side still
+// holds, and the Receiver side alone lists the Pairing IDs whose local keys
+// survived; every other mode reports KeyConfirmed.
 type CompleteRequest struct {
-	SessionID       string
-	SenderID        string
-	Token           string
-	KeyConfirmation KeyConfirmation
+	SessionID          string
+	SenderID           string
+	Token              string
+	KeyConfirmation    KeyConfirmation
+	RetainedPairingIDs []string
 }
 
 // RedeemRequest is one Receiver-side redemption of the session's credential
@@ -276,6 +283,11 @@ var (
 	// ErrIssuanceInvalid marks an issuance request without the operation
 	// identifier the ordering guard needs.
 	ErrIssuanceInvalid = errors.New("credential issuance request invalid")
+	// ErrRetainedPairingsInvalid marks a retained-key report that is not the
+	// Receiver side's own key inventory of the session's Receiver: reported by
+	// the wrong side, outside recovery, in disagreement with its own key
+	// report, or naming a Pairing that is not that Receiver's.
+	ErrRetainedPairingsInvalid = errors.New("retained pairing keys invalid")
 	// ErrFreshIdentityRequired marks a recovery request without fresh owner
 	// verification.
 	ErrFreshIdentityRequired = errors.New("fresh wechat verification required")
@@ -311,12 +323,18 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, rawCredential string, scope string) (string, error)
 }
 
-// DeliveryNotifier reports a removed association to the Receiver's live
-// delivery connection, so an online Receiver learns that a Sender withdrew
-// forwarding authority without polling. The transport owns the message shape,
-// and a Receiver that is not connected simply receives nothing.
+// DeliveryNotifier reports the committed effects the Receiver's live delivery
+// connection has to follow: a removed association, so an online Receiver learns
+// that a Sender withdrew forwarding authority without polling, and the end of
+// the access a superseded credential generation held. The transport owns the
+// message shape, and a Receiver that is not connected simply receives nothing.
 type DeliveryNotifier interface {
 	PairingRemoved(senderID, receiverID, pairingID string)
+	// EndReceiverAccess ends the reserved and active delivery connections of
+	// one Receiver after the domain committed the generation change or closure
+	// they belonged to, which is what keeps a superseded credential from
+	// sharing the connection its replacement now owns.
+	EndReceiverAccess(receiverID string)
 }
 
 // WeChatProof is one verified WeChat identity and the Account it belongs to.

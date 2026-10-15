@@ -86,12 +86,10 @@ internal/api/
 └── wss/
     ├── router.go     # Upgrade and handshake
     ├── connection.go # Frame I/O, heartbeat and connection-ID-owned cleanup
+    ├── delivery.go   # Delivery service calls and frame mapping
     ├── pairing.go    # Restricted pairing-session channel (M and receiver-side B)
     └── receiver.go   # Receiver delivery channel: admission, slot and presence
 ```
-
-WSS channel files are named by the channel each carries, one file per channel;
-remaining helpers are named by responsibility.
 
 ### 3.3 Adapter package
 
