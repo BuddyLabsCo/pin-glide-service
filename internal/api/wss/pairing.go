@@ -32,6 +32,9 @@ type PairingSocket struct {
 	sessions PairingSessions
 	hub      *Hub
 	logger   *slog.Logger
+	// recorder stores the safe outcome of every pairing connection this socket
+	// serves; a socket composed without one records nothing.
+	recorder observability.Recorder
 }
 
 // NewPairingSocket composes the pairing channel on its domain and registry.
@@ -40,6 +43,12 @@ func NewPairingSocket(sessions PairingSessions, hub *Hub, logger *slog.Logger) *
 		logger = slog.New(slog.NewTextHandler(discardOutput{}, nil))
 	}
 	return &PairingSocket{sessions: sessions, hub: hub, logger: logger}
+}
+
+// SetDiagnostics supplies the recorder this socket reports its connections to,
+// which the composed service installs when the channel is registered.
+func (s *PairingSocket) SetDiagnostics(recorder observability.Recorder) {
+	s.recorder = recorder
 }
 
 // Serve upgrades one authenticated subscription and serves it until the
@@ -75,6 +84,7 @@ func (s *PairingSocket) Serve(writer http.ResponseWriter, request *http.Request,
 	socket.SetReadLimit(maxFrameBytes)
 
 	connection := NewConnection(socket, participant.Session.ID, participant.Side, s.logger)
+	connection.recorder = s.recorder
 	connection.Send(snapshot(participant.Session, now))
 	s.hub.Subscribe(connection)
 	defer s.hub.Unsubscribe(connection)

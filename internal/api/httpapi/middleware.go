@@ -36,21 +36,30 @@ func withCredential(next http.Handler) http.Handler {
 	})
 }
 
-// withAccessLog records one completion line per request. It logs the method,
-// path, status, duration and request ID only, so payloads, Authorization and
-// provider secrets cannot reach the logs from here.
-func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
+// withAccessLog records one completion line and one diagnostic record per
+// request. Both carry the method, path, status, duration and request ID only,
+// so payloads, Authorization and provider secrets cannot reach either from
+// here.
+func withAccessLog(next http.Handler, logger *slog.Logger, diagnostics observability.Recorder) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		status := &statusRecorder{ResponseWriter: writer}
 		started := time.Now()
 		next.ServeHTTP(status, request)
+		requestID := observability.RequestIDFrom(request.Context())
 		logger.InfoContext(request.Context(), "http request",
-			slog.String("request_id", observability.RequestIDFrom(request.Context())),
+			slog.String("request_id", requestID),
 			slog.String("method", request.Method),
 			slog.String("path", request.URL.Path),
 			slog.Int("status", status.Code()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 		)
+		code, duration := status.Code(), time.Since(started)
+		diagnostics.RecordHTTP(observability.DiagnosticEvent{
+			RequestID: requestID,
+			Method:    request.Method,
+			Code:      &code,
+			Duration:  &duration,
+		})
 	})
 }
 

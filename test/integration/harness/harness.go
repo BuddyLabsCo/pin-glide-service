@@ -205,11 +205,12 @@ type Service struct {
 	// run publishes, which is what a Sender's Receiver list reports.
 	Presence *wss.Presence
 
-	cancel  context.CancelFunc
-	served  <-chan error
-	pool    *sql.DB
-	stopErr error
-	stopped bool
+	cancel      context.CancelFunc
+	served      <-chan error
+	pool        *sql.DB
+	diagnostics *observability.Diagnostics
+	stopErr     error
+	stopped     bool
 }
 
 // StartService composes the service against databaseURL, starts it on a real
@@ -244,23 +245,28 @@ func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Pro
 
 	served := make(chan error, 1)
 	presence := wss.NewPresence(time.Now().UTC())
+	// Every composed service records the safe outcome of its own requests, so
+	// a test reads what operators would.
+	diagnostics := observability.NewDiagnostics(pool, logger)
 	go func() {
 		served <- api.Serve(ctx, listener, api.Dependencies{
-			Database: pool,
-			Logger:   logger,
-			WeChat:   provider,
-			Bailian:  mint,
-			Presence: presence,
+			Database:    pool,
+			Logger:      logger,
+			WeChat:      provider,
+			Bailian:     mint,
+			Presence:    presence,
+			Diagnostics: diagnostics,
 		})
 	}()
 
 	service := &Service{
-		BaseURL:  "http://" + listener.Addr().String(),
-		Client:   &http.Client{Timeout: 10 * time.Second},
-		Presence: presence,
-		cancel:   cancel,
-		served:   served,
-		pool:     pool,
+		BaseURL:     "http://" + listener.Addr().String(),
+		Client:      &http.Client{Timeout: 10 * time.Second},
+		Presence:    presence,
+		cancel:      cancel,
+		served:      served,
+		pool:        pool,
+		diagnostics: diagnostics,
 	}
 	t.Cleanup(func() {
 		if err := service.Stop(); err != nil {
@@ -285,6 +291,9 @@ func (s *Service) Stop() error {
 	case <-time.After(10 * time.Second):
 		s.stopErr = errors.New("composed service did not stop within its shutdown window")
 	}
+	// The service has stopped, so the records still queued are stored before
+	// this returns; a test reads them without racing the writer.
+	s.diagnostics.Close()
 	s.stopErr = errors.Join(s.stopErr, s.pool.Close())
 	return s.stopErr
 }

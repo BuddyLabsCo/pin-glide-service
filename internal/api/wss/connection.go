@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -85,10 +86,16 @@ type Connection struct {
 	sessionID string
 	side      pairing.Side
 	logger    *slog.Logger
+	// recorder stores the safe outcome of this connection when the transport
+	// composes one that reports it.
+	recorder observability.Recorder
 
 	frames chan any
 	done   chan struct{}
 	once   sync.Once
+	// closeCode is the status this connection ended with, or 0 while it is
+	// still open. Only Conn.Close writes it, and it writes at most once.
+	closeCode atomic.Int32
 }
 
 // NewConnection wraps one accepted socket. The caller serves it and closes it
@@ -127,6 +134,19 @@ func (c *Connection) Send(message any) {
 func (c *Connection) Serve(ctx context.Context, relay func(frame []byte) error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The connection reports its own end once, with the standard meaning it
+	// closed under, after the writer has joined.
+	defer func() {
+		if c.recorder == nil {
+			return
+		}
+		code := int(c.closeCode.Load())
+		c.recorder.RecordWSS(observability.DiagnosticEvent{
+			RequestID: observability.RequestIDFrom(ctx),
+			Subject:   c.sessionID,
+			Code:      &code,
+		})
+	}()
 
 	writerDone := make(chan struct{})
 	go func() {
@@ -195,6 +215,7 @@ func (c *Connection) Close(intent closeIntent) {
 	c.once.Do(func() {
 		close(c.done)
 		code, reason := closeMeaning(intent)
+		c.closeCode.Store(int32(code))
 		_ = c.socket.Close(code, reason)
 	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
 	"github.com/danielgtaylor/huma/v2"
@@ -37,6 +38,9 @@ type Dependencies struct {
 	// own Receiver list states; it is the transport's own process-local state.
 	Presence pairingapi.ReceiverPresence
 	Logger   *slog.Logger
+	// Diagnostics stores the safe outcome of every HTTP request this surface
+	// answers. A surface composed without one records nothing.
+	Diagnostics observability.Recorder
 }
 
 // New builds the composed HTTP handler and its admission gate around mux. The
@@ -54,11 +58,27 @@ func New(mux *http.ServeMux, dependencies Dependencies) (http.Handler, *Admissio
 	handler = withNoStore(handler)
 	handler = withCredential(handler)
 	handler = withAdmission(handler, admission)
-	handler = withAccessLog(handler, dependencies.Logger)
+	handler = withAccessLog(handler, dependencies.Logger, diagnosticsOf(dependencies.Diagnostics))
 	handler = withRecovery(handler, dependencies.Logger)
 	handler = withRequestID(handler)
 	return handler, admission
 }
+
+// diagnosticsOf keeps the composed surface working without a recorder of its
+// own, so a caller that only wants the HTTP surface supplies none.
+func diagnosticsOf(recorder observability.Recorder) observability.Recorder {
+	if recorder == nil {
+		return discardDiagnostics{}
+	}
+	return recorder
+}
+
+// discardDiagnostics records nothing.
+type discardDiagnostics struct{}
+
+func (discardDiagnostics) RecordHTTP(observability.DiagnosticEvent) {}
+
+func (discardDiagnostics) RecordWSS(observability.DiagnosticEvent) {}
 
 // loggerOf keeps the composed surface working without diagnostics of its own.
 func loggerOf(logger *slog.Logger) *slog.Logger {

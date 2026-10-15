@@ -77,11 +77,16 @@ func run(exportOpenAPI, exportAsyncAPI bool) error {
 
 	logger := observability.NewLogger(os.Stderr, string(configuration.Environment))
 	logger.Info("api listening", slog.String("address", listener.Addr().String()))
+	// The diagnostic recorder owns its own writes, so bounded shutdown drains
+	// them after the work that produced them has finished.
+	diagnostics := observability.NewDiagnostics(pool, logger)
+	defer diagnostics.Close()
 
 	return api.Serve(ctx, listener, api.Dependencies{
-		Database: pool,
-		Logger:   logger,
-		WeChat:   wechat.New(configuration.WeChatAppID, configuration.WeChatAppSecret),
-		Bailian:  bailian.New(configuration.BailianAPIKey),
+		Database:    pool,
+		Logger:      logger,
+		WeChat:      wechat.New(configuration.WeChatAppID, configuration.WeChatAppSecret),
+		Bailian:     bailian.New(configuration.BailianAPIKey),
+		Diagnostics: diagnostics,
 	})
 }

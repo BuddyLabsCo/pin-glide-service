@@ -17,6 +17,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 )
 
@@ -38,6 +39,9 @@ type Dependencies struct {
 	// composes the private registry of this run; a caller that also reads
 	// presence supplies the registry the delivery channel writes.
 	Presence *wss.Presence
+	// Diagnostics stores the safe outcome of every HTTP request and WSS
+	// connection this run answers. A run composed without one records nothing.
+	Diagnostics observability.Recorder
 }
 
 // Serve runs the composed API on listener until ctx is canceled or serving
@@ -82,20 +86,22 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	// problem mapping answer both surfaces.
 	mux := http.NewServeMux()
 	wss.Register(mux, wss.Router{
-		Pairing:  socket,
-		Receiver: receiverSocket,
-		Release:  httpapi.SessionAdmissionFrom,
-		Reject:   httpapi.WriteUpgradeProblem,
-		Logger:   dependencies.Logger,
+		Pairing:     socket,
+		Receiver:    receiverSocket,
+		Release:     httpapi.SessionAdmissionFrom,
+		Reject:      httpapi.WriteUpgradeProblem,
+		Logger:      dependencies.Logger,
+		Diagnostics: dependencies.Diagnostics,
 	})
 	handler, admission := httpapi.New(mux, httpapi.Dependencies{
-		Database: dependencies.Database,
-		Logger:   dependencies.Logger,
-		Identity: identityService,
-		Model:    modelService,
-		Pairing:  pairingService,
-		Delivery: deliveryService,
-		Presence: presence,
+		Database:    dependencies.Database,
+		Logger:      dependencies.Logger,
+		Identity:    identityService,
+		Model:       modelService,
+		Pairing:     pairingService,
+		Delivery:    deliveryService,
+		Presence:    presence,
+		Diagnostics: dependencies.Diagnostics,
 	})
 	httpServer := &http.Server{
 		Handler:           handler,

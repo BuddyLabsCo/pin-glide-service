@@ -60,6 +60,9 @@ type ReceiverSocket struct {
 	receivers ReceiverAdmissions
 	presence  *Presence
 	logger    *slog.Logger
+	// recorder stores the safe outcome of every delivery connection this
+	// channel commits and ends; a socket composed without one records nothing.
+	recorder observability.Recorder
 	// receipts is the sink of the Receipt frames this channel accepts. The
 	// delivery domain owns what a Receipt means; a socket composed without a
 	// sink keeps serving and stops acknowledging arrival.
@@ -93,6 +96,9 @@ type receiverSlot struct {
 	connectionID uint64
 	key          receiverKey
 	socket       *websocket.Conn
+	// closeCode is the Close status this slot's own goroutine ended it with, or
+	// 0 while the connection is open or its peer ended it.
+	closeCode int
 	// ending carries the Close meaning when the service ends this committed
 	// connection, so the goroutine that owns the socket also owns that close.
 	ending chan closeIntent
@@ -113,6 +119,12 @@ func NewReceiverSocket(receivers ReceiverAdmissions, presence *Presence, logger 
 		pongTimeout:       pongTimeout,
 		slots:             map[receiverKey]*receiverSlot{},
 	}
+}
+
+// SetDiagnostics supplies the recorder this socket reports its connections to,
+// which the composed service installs when the channel is registered.
+func (s *ReceiverSocket) SetDiagnostics(recorder observability.Recorder) {
+	s.recorder = recorder
 }
 
 // Serve authenticates and reserves one delivery connection, upgrades it and
@@ -164,7 +176,8 @@ func (s *ReceiverSocket) Serve(writer http.ResponseWriter, request *http.Request
 		return nil
 	}
 	socket.SetReadLimit(maxFrameBytes)
-	if !s.attach(slot, socket) {
+	requestID := observability.RequestIDFrom(request.Context())
+	if !s.attach(slot, socket, requestID) {
 		// Shutdown, or a generation change the domain committed while this
 		// upgrade was committing, ended the reservation; the connection never
 		// becomes Receiver presence.
@@ -172,7 +185,7 @@ func (s *ReceiverSocket) Serve(writer http.ResponseWriter, request *http.Request
 		return nil
 	}
 
-	s.serve(request.Context(), slot)
+	s.serve(request.Context(), slot, requestID)
 	return nil
 }
 
@@ -202,7 +215,7 @@ func (s *ReceiverSocket) reserve(credential pairing.ReceiverCredential) (*receiv
 // that reservation. Presence is published under the same lock that owns the
 // slot, so ending a Receiver's access cannot interleave here and leave a closed
 // connection reported online.
-func (s *ReceiverSocket) attach(slot *receiverSlot, socket *websocket.Conn) bool {
+func (s *ReceiverSocket) attach(slot *receiverSlot, socket *websocket.Conn, requestID string) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -213,7 +226,22 @@ func (s *ReceiverSocket) attach(slot *receiverSlot, socket *websocket.Conn) bool
 	// Online begins with the committed 101, which answered the client before
 	// this reservation became a connection. An acknowledgement is not presence.
 	s.presence.online(slot.key.receiverID, slot.connectionID, time.Now().UTC())
+	s.report(slot, requestID, http.StatusSwitchingProtocols)
 	return true
+}
+
+// report records one safe outcome of a delivery connection: the status that
+// committed it, or the Close status it ended with. A channel composed without a
+// recorder reports nothing.
+func (s *ReceiverSocket) report(slot *receiverSlot, requestID string, code int) {
+	if s.recorder == nil {
+		return
+	}
+	s.recorder.RecordWSS(observability.DiagnosticEvent{
+		RequestID: requestID,
+		Subject:   slot.key.receiverID,
+		Code:      &code,
+	})
 }
 
 // release frees one reservation, and only if this connection still owns it. The
@@ -360,7 +388,7 @@ func (s *ReceiverSocket) EndReceiverAccess(receiverID string) {
 // Receipt frames of this channel and attributes each one to the Receiver this
 // connection authenticated; anything else this direction does not accept ends
 // the connection with its own meaning.
-func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot) {
+func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot, requestID string) {
 	ctx, stopKeepAlive := context.WithCancel(ctx)
 	kept := make(chan struct{})
 	go func() {
@@ -383,6 +411,13 @@ func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot) {
 	// liveness goroutine and joins it before the slot is released.
 	stopKeepAlive()
 	<-kept
+	// The service's own close owns its status; a peer that left first ends this
+	// connection normally.
+	code := slot.closeCode
+	if code == 0 {
+		code = int(websocket.StatusNormalClosure)
+	}
+	s.report(slot, requestID, code)
 }
 
 // keepAlive owns the liveness of one committed connection. It asks the peer
@@ -399,6 +434,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 			return
 		case intent := <-slot.ending:
 			code, reason := closeMeaning(intent)
+			slot.closeCode = int(code)
 			_ = slot.socket.Close(code, reason)
 			return
 		case <-ticker.C:
@@ -417,6 +453,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 				slog.Int64("generation", slot.key.generation),
 				slog.String("cause", err.Error()),
 			)
+			slot.closeCode = int(websocket.StatusAbnormalClosure)
 			_ = slot.socket.CloseNow()
 			return
 		}
@@ -431,6 +468,9 @@ func (s *ReceiverSocket) Close() {
 	s.closed = true
 	sockets := make([]*websocket.Conn, 0, len(s.slots))
 	for _, slot := range s.slots {
+		// Shutdown ends these connections itself, so the record of each one
+		// carries the meaning the service closed it with.
+		slot.closeCode = int(closeCodes[closeGoingAway])
 		if slot.socket != nil {
 			sockets = append(sockets, slot.socket)
 		}
