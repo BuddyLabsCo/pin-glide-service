@@ -141,6 +141,11 @@ func TestRecoverySupersedesAnOlderGrantAndRetransmitsOnce(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("recovery redemption status = %d: %s", status, payload)
 	}
+	// The issuance replaced the older grant, so the session that holds it
+	// reports that its grant is gone before anyone tries to redeem it.
+	if state := environment.sessionState(t, stale.SessionID); state != "superseded" {
+		t.Errorf("the grant the recovery replaced = %q, want superseded", state)
+	}
 
 	// The delayed first issuance of the older session cannot replace the
 	// credential the newer recovery issued; its own session is superseded.
@@ -204,6 +209,49 @@ func TestRecoveryIssuanceKeepsTheNewerGeneration(t *testing.T) {
 	}
 
 	// The Pairing both clients kept is still the association that forwards.
+	if state := environment.pairingState(t, association.PairingID); state != "active" {
+		t.Errorf("preserved association state = %q, want active", state)
+	}
+}
+
+// Two recoveries of one Receiver created in the same instant are ordered by the
+// issuance that committed first, whatever identifier they happen to carry: a
+// delayed redemption cannot revoke the credential that already works.
+func TestRecoveryOfTheSameInstantKeepsTheIssuanceThatCommitted(t *testing.T) {
+	environment := start(t)
+	owner := environment.sender(t, "code-instant", "openid-instant")
+
+	association, _ := environment.paired(t, owner, "Phone")
+	first, firstToken := environment.approvedRecovery(t, owner, association.ReceiverID,
+		"code-instant-first", "openid-instant", association.PairingID)
+	second, secondToken := environment.approvedRecovery(t, owner, association.ReceiverID,
+		"code-instant-second", "openid-instant", association.PairingID)
+	// Both sessions were created in the same instant, which leaves their order
+	// to whichever identifier is higher. The lower one redeems first, so the
+	// later redemption is the one that could revoke a working credential.
+	lower, lowerToken, higher, higherToken := first, firstToken, second, secondToken
+	if higher.SessionID < lower.SessionID {
+		lower, lowerToken, higher, higherToken = higher, higherToken, lower, lowerToken
+	}
+	environment.exec(t, `UPDATE pin_glide.pairing_sessions
+SET created_at = (SELECT created_at FROM pin_glide.pairing_sessions WHERE id = $1)
+WHERE id = $2`, lower.SessionID, higher.SessionID)
+
+	status, working, payload := environment.redeem(t, lower.SessionID, lowerToken, "op-instant-lower", 0)
+	if status != http.StatusOK {
+		t.Fatalf("redemption of the same-instant grant = %d, want 200: %s", status, payload)
+	}
+	status, _, payload = environment.redeem(t, higher.SessionID, higherToken, "op-instant-higher", 0)
+	if status != http.StatusGone {
+		t.Fatalf("delayed same-instant redemption = %d, want 410: %s", status, payload)
+	}
+	if state := environment.sessionState(t, higher.SessionID); state != "superseded" {
+		t.Errorf("the same-instant grant the issuance replaced = %q, want superseded", state)
+	}
+
+	// The credential the first issuance handed out still authorizes the shared
+	// delivery channel, and the preserved association still forwards.
+	receiverConnected(t, environment, working.ReceiverToken)
 	if state := environment.pairingState(t, association.PairingID); state != "active" {
 		t.Errorf("preserved association state = %q, want active", state)
 	}
@@ -309,7 +357,7 @@ func TestRecoveryRedemptionAndOldUpgradeCommitOneGeneration(t *testing.T) {
 	if race := <-upgraded; race.socket != nil {
 		// The upgrade committed before the generation moved on, so the service
 		// ends it instead of leaving it authoritative.
-		awaitClosed(t, race.socket, websocket.StatusPolicyViolation)
+		requireClose(t, race.socket, websocket.StatusPolicyViolation)
 	} else if race.status != http.StatusUnauthorized {
 		t.Errorf("an upgrade with the superseded credential = %d, want 401", race.status)
 	}

@@ -3,6 +3,7 @@ package pairing
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -71,15 +72,25 @@ func (s *Service) completeRecovery(ctx context.Context, tx *sql.Tx, session Sess
 // association key it no longer holds: its own current association goes, and
 // its unfinished work for the same Receiver goes with it, so a later
 // key-confirmation report cannot recreate an association the Sender cannot
-// encrypt for.
+// encrypt for. The Sender's own lock is held from here, so the association this
+// reads is the one the removal acts on, and the Receiver side of the same
+// recovery having removed it first leaves this report nothing to withdraw.
 func dropSenderReceiverAccess(ctx context.Context, tx *sql.Tx, senderID, receiverID string, now time.Time) (string, []string, error) {
 	reservations, err := lockSenderRemoval(ctx, tx, senderID, receiverID, now)
 	if err != nil {
 		return "", nil, err
 	}
-	lost, err := removeCurrentAssociation(ctx, tx, senderID, receiverID, now)
+	current, err := currentPairing(ctx, tx, senderID, receiverID)
 	if err != nil {
 		return "", nil, err
+	}
+	lost := ""
+	if current.ID != "" {
+		removed, err := removeAssociation(ctx, tx, senderID, current.ID, now)
+		if err != nil && !errors.Is(err, ErrAssociationNotFound) {
+			return "", nil, err
+		}
+		lost = removed.PairingID
 	}
 	canceled, err := cancelReservations(ctx, tx, reservations, now)
 	if err != nil {

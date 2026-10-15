@@ -3,19 +3,16 @@ package pairing
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 )
 
-// newerIssuanceSQL reports whether a session after this one already issued a
-// credential for the Receiver, which is what makes this session's own grant
-// stale: the generation a newer session issued is the one that works. Creation
-// time and then the identifier order every session of one Receiver, so two
-// sessions created in the same instant still have one order.
-//
-// shortcut: that order is the random identifier rather than creation when two
-// sessions of one Receiver land in the same instant, so an older grant can
-// still win that tie; add a sequence when it must not.
+// newerIssuanceSQL reports whether a session of this Receiver that is not older
+// than this one already issued a credential, which is what makes this session's
+// own grant stale: the generation that already works is the one to keep, and a
+// delayed first issuance never revokes it. Creation time orders the sessions of
+// one Receiver, and two sessions created in the same instant resolve to the one
+// that issued first, so the ordering never lets a later redemption replace a
+// credential an issuance already handed out.
 const newerIssuanceSQL = `
 SELECT EXISTS (
     SELECT 1
@@ -23,17 +20,23 @@ SELECT EXISTS (
     WHERE receiver_id = $1
       AND id <> $2
       AND issued_generation IS NOT NULL
-      AND (created_at > $3 OR (created_at = $3 AND id > $2))
+      AND created_at >= $3
 )`
 
-// removeCurrentAssociationSQL withdraws one Sender's current association with
-// one Receiver, whatever Pairing ID it has. Matching the Sender, the Receiver
-// and the active state together is what makes a concurrent replacement or
-// removal visible, so a stale report cannot remove whatever is current.
-const removeCurrentAssociationSQL = `
-UPDATE pin_glide.pairing_pairings
-SET state = 'removed', removed_at = $3
-WHERE sender_id = $1 AND receiver_id = $2 AND state = 'active'
+// replacedGrantSQL closes the Receiver's issuance grants that one issuance
+// replaced: the sessions that are not newer than the issuing one and still hold
+// a grant of their own. It is the other half of the ordering newerIssuanceSQL
+// decides, so a grant that can no longer be redeemed reports its own outcome
+// instead of leaving its holder to discover it by redemption. Only sessions
+// that hold a grant are closed, and their Pairing is already active, so no
+// unfinished pairing work and no association ends here.
+const replacedGrantSQL = `
+UPDATE pin_glide.pairing_sessions
+SET state = 'superseded', closed_at = $4
+WHERE receiver_id = $1
+  AND id <> $2
+  AND created_at <= $3
+  AND state IN ('credential_ready', 'credential_issued')
 RETURNING id`
 
 // receiverPairingsSQL reads every Pairing of one Receiver, whatever its state.
@@ -71,33 +74,35 @@ WHERE receiver_id = $1
 ORDER BY id
 FOR UPDATE`
 
-// supersedeIfStale closes this session as superseded, and reports that it did,
-// when a newer session of the same Receiver already issued the credential that
-// works. A delayed first issuance therefore never replaces a working newer
-// generation.
-func supersedeIfStale(ctx context.Context, tx *sql.Tx, session Session, now time.Time) (bool, error) {
+// newerIssuance reports whether a session of this Receiver that is not older
+// than this one already issued the credential that works.
+func newerIssuance(ctx context.Context, tx *sql.Tx, session Session) (bool, error) {
 	var newer bool
-	if err := tx.QueryRowContext(ctx, newerIssuanceSQL,
-		session.ReceiverID, session.ID, session.CreatedAt).Scan(&newer); err != nil {
-		return false, err
-	}
-	if !newer {
-		return false, nil
-	}
-	return true, closeSession(ctx, tx, session, StateSuperseded, now)
+	err := tx.QueryRowContext(ctx, newerIssuanceSQL,
+		session.ReceiverID, session.ID, session.CreatedAt).Scan(&newer)
+	return newer, err
 }
 
-// removeCurrentAssociation withdraws one Sender's current association with one
-// Receiver and reports the Pairing ID it withdrew. A Sender that holds no
-// association with that Receiver has nothing to withdraw, which its own
-// missing-key report states.
-func removeCurrentAssociation(ctx context.Context, tx *sql.Tx, senderID, receiverID string, now time.Time) (string, error) {
-	var pairingID string
-	err := tx.QueryRowContext(ctx, removeCurrentAssociationSQL, senderID, receiverID, now).Scan(&pairingID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+// closeReplacedGrants closes and reports the Receiver's issuance grants that
+// the issuing session replaced, so their participants read the outcome of the
+// grant that can no longer be redeemed.
+func closeReplacedGrants(ctx context.Context, tx *sql.Tx, session Session, now time.Time) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, replacedGrantSQL,
+		session.ReceiverID, session.ID, session.CreatedAt, now)
+	if err != nil {
+		return nil, err
 	}
-	return pairingID, err
+	defer func() { _ = rows.Close() }()
+
+	var replaced []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			return nil, err
+		}
+		replaced = append(replaced, sessionID)
+	}
+	return replaced, rows.Err()
 }
 
 // requireReceiverPairings checks that every reported Pairing ID belongs to the

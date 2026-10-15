@@ -104,26 +104,6 @@ func (e *environment) attach(t *testing.T, sender bundle, receiverID, credential
 	return claimed
 }
 
-// awaitClosed requires one delivery connection to end with the given WebSocket
-// close code, so a test observes that the service, not the client, ended it.
-func awaitClosed(t *testing.T, socket *websocket.Conn, want websocket.StatusCode) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	for {
-		if _, _, err := socket.Read(ctx); err != nil {
-			if ctx.Err() != nil {
-				t.Fatalf("delivery connection did not end within the bound: %v", err)
-			}
-			if status := websocket.CloseStatus(err); status != want {
-				t.Fatalf("delivery connection closed with %v, want %v", status, want)
-			}
-			return
-		}
-	}
-}
-
 // An owner who lost R replaces it after fresh Account-owner approval while the
 // Pairings whose local keys survived keep forwarding. The replacement is only
 // reachable through the restricted session, the superseded credential loses
@@ -156,7 +136,7 @@ func TestRecoveryReplacesTheCredentialAndPreservesRetainedAssociations(t *testin
 	// every Sender, so the superseded credential neither opens a new
 	// connection nor keeps the shared one it already held.
 	receiverRejected(t, environment, issued.ReceiverToken, http.StatusUnauthorized, "credential_invalid")
-	awaitClosed(t, superseded, websocket.StatusPolicyViolation)
+	requireClose(t, superseded, websocket.StatusPolicyViolation)
 	if state := environment.service.Presence.State(association.ReceiverID); state.Online {
 		t.Errorf("the Receiver after its superseded connection ended = %+v, want offline", state)
 	}

@@ -124,11 +124,11 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 // session's one issuance operation orders the attempts: an equal or lower
 // attempt and a competing operation are superseded, while the one permitted
 // higher attempt may replace a credential no one has proved possession of yet.
-// An older grant whose Receiver already has a credential from a newer session
-// is superseded instead, so a delayed first issuance cannot replace a working
-// newer generation. A recovery reports the Receiver whose superseded
-// credential lost its shared delivery access, so the replacement never shares
-// the connection it replaced.
+// An older grant whose Receiver already has a credential issued is superseded
+// instead, so a delayed first issuance cannot replace a credential that works,
+// and the grants one issuance replaced are closed with it. A recovery reports
+// the Receiver whose superseded credential lost its shared delivery access, so
+// the replacement never shares the connection it replaced.
 func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Time) (IssuedCredential, error) {
 	if request.Attempt != 0 && request.Attempt != 1 {
 		return IssuedCredential{}, ErrAttemptUnsupported
@@ -140,6 +140,7 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 	issued := IssuedCredential{}
 	supersededAccess := ""
 	stale := false
+	replaced := []string{}
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
 		// The restricted credential decides its own validity before the
 		// session's protected state: an expired B is an expired credential.
@@ -194,17 +195,17 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 			// delivery access before the replacement is handed out.
 			supersededAccess = session.ReceiverID
 		}
-		supersededGrant, err := supersedeIfStale(ctx, tx, session, now)
+		newer, err := newerIssuance(ctx, tx, session)
 		if err != nil {
 			return err
 		}
-		stale = supersededGrant
-		if stale {
-			// A newer session of this Receiver already issued the credential
-			// that works, so this older grant cannot replace it. The
-			// supersession commits with the transaction, and the caller learns
-			// the outcome below.
-			return nil
+		if newer {
+			// A session of this Receiver that is not older than this one
+			// already issued the credential that works, so this grant cannot
+			// replace it. The supersession commits with the transaction, and
+			// the caller learns the outcome below.
+			stale = true
+			return closeSession(ctx, tx, session, StateSuperseded, now)
 		}
 
 		token, generation, err := issueReceiverCredential(ctx, tx, session.ReceiverID, now)
@@ -214,18 +215,24 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 		if err := recordIssuance(ctx, tx, session.ID, request.OperationID, request.Attempt, generation); err != nil {
 			return err
 		}
+		replaced, err = closeReplacedGrants(ctx, tx, session, now)
+		if err != nil {
+			return err
+		}
 		issued = IssuedCredential{ReceiverID: session.ReceiverID, Token: token}
 		return nil
 	})
 	if err != nil {
 		return IssuedCredential{}, err
 	}
-	if session, err := sessionByID(ctx, s.pool, request.SessionID); err == nil {
-		s.sessionChanged(session, now)
-	}
+	s.sessionsChanged(ctx, []string{request.SessionID}, now)
 	if stale {
 		return IssuedCredential{}, ErrSessionClosed
 	}
+	// The grants this issuance replaced report the state their holders read
+	// next, and the superseded generation closes its shared delivery access
+	// before the replacement is handed out.
+	s.sessionsChanged(ctx, replaced, now)
 	if supersededAccess != "" && s.deliveryNotifier != nil {
 		s.deliveryNotifier.EndReceiverAccess(supersededAccess)
 	}
