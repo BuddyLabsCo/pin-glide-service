@@ -70,9 +70,10 @@ channels:
       state which existing Pairing keys survived: the approving Sender reports
       whether it still holds the key of its own association, and the Receiver
       side reports the Pairing IDs it still holds, which preserves exactly
-      those associations and removes the Receiver's other ones. Such a session
-      reaches credential_ready once both sides have reported, creates no
-      Pairing ID and reserves no capacity, and its Receiver side redeems the
+      those associations and removes the Receiver's other ones. An association
+      whose key is gone on either side does not survive the recovery. Such a
+      session reaches credential_ready once both sides have reported, creates
+      no Pairing ID and reserves no capacity, and its Receiver side redeems the
       replacement over HTTPS exactly like a first credential.
 
       The Pairing ID a session publishes on its first claim is the identity

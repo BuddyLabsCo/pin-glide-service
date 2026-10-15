@@ -67,13 +67,8 @@ func (s *Service) RemoveAssociation(ctx context.Context, senderID, pairingID str
 		if err != nil {
 			return err
 		}
-		// The Sender's reservations are locked before the Sender's own lock,
-		// which is the order a claim and a completion take them in.
-		reservations, err := lockLiveReservations(ctx, tx, senderID, association.ReceiverID, now)
+		reservations, err := lockSenderRemoval(ctx, tx, senderID, association.ReceiverID, now)
 		if err != nil {
-			return err
-		}
-		if err := lockSender(ctx, tx, senderID); err != nil {
 			return err
 		}
 		removed, err = removeAssociation(ctx, tx, senderID, pairingID, now)
@@ -93,12 +88,24 @@ func (s *Service) RemoveAssociation(ctx context.Context, senderID, pairingID str
 	if s.deliveryNotifier != nil {
 		s.deliveryNotifier.PairingRemoved(senderID, removed.ReceiverID, removed.PairingID)
 	}
-	for _, sessionID := range canceled {
-		if session, err := sessionByID(ctx, s.pool, sessionID); err == nil {
-			s.sessionChanged(session, now)
-		}
-	}
+	s.sessionsChanged(ctx, canceled, now)
 	return nil
+}
+
+// lockSenderRemoval locks one Sender's unfinished work for one Receiver and
+// then the Sender itself, which is the order a claim and a completion take
+// them in. Every path that ends one Sender's access to a Receiver locks them
+// this way and releases the returned reservations once its own removal
+// committed, so an explicit removal and a recovery cannot drift apart.
+func lockSenderRemoval(ctx context.Context, tx *sql.Tx, senderID, receiverID string, now time.Time) ([]lockedReservation, error) {
+	reservations, err := lockLiveReservations(ctx, tx, senderID, receiverID, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockSender(ctx, tx, senderID); err != nil {
+		return nil, err
+	}
+	return reservations, nil
 }
 
 // cancelReservations releases the reservations of the given sessions and

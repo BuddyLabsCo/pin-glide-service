@@ -116,11 +116,7 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 	if outcome.lostPairingID != "" && s.deliveryNotifier != nil && completed.AuthorizedSenderID != "" {
 		s.deliveryNotifier.PairingRemoved(completed.AuthorizedSenderID, completed.ReceiverID, outcome.lostPairingID)
 	}
-	for _, sessionID := range outcome.canceledSessions {
-		if canceled, err := sessionByID(ctx, s.pool, sessionID); err == nil {
-			s.sessionChanged(canceled, now)
-		}
-	}
+	s.sessionsChanged(ctx, outcome.canceledSessions, now)
 	return completed, nil
 }
 
@@ -198,7 +194,7 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 			// delivery access before the replacement is handed out.
 			supersededAccess = session.ReceiverID
 		}
-		supersededGrant, err := supersedeStaleGrant(ctx, tx, session, now)
+		supersededGrant, err := supersedeIfStale(ctx, tx, session, now)
 		if err != nil {
 			return err
 		}

@@ -7,17 +7,20 @@ import (
 	"time"
 )
 
-// newerIssuanceSQL reports whether a session created after this one already
-// issued a credential for the Receiver, which is what makes this session's own
-// grant stale: the generation a newer session issued is the one that works.
+// newerIssuanceSQL reports whether a session after this one already issued a
+// credential for the Receiver, which is what makes this session's own grant
+// stale: the generation a newer session issued is the one that works. Creation
+// time and then the identifier order every session of one Receiver, so two
+// sessions created in the same instant still have one order and an older grant
+// cannot slip through.
 const newerIssuanceSQL = `
 SELECT EXISTS (
     SELECT 1
     FROM pin_glide.pairing_sessions
     WHERE receiver_id = $1
       AND id <> $2
-      AND created_at > $3
       AND issued_generation IS NOT NULL
+      AND (created_at > $3 OR (created_at = $3 AND id > $2))
 )`
 
 // removeCurrentAssociationSQL withdraws one Sender's current association with
@@ -65,11 +68,11 @@ WHERE receiver_id = $1
 ORDER BY id
 FOR UPDATE`
 
-// supersedeStaleGrant reports whether a newer session of the same Receiver
-// already issued a credential, in which case this session's grant is
-// superseded instead of replacing it. A delayed first issuance therefore never
-// replaces a working newer generation.
-func supersedeStaleGrant(ctx context.Context, tx *sql.Tx, session Session, now time.Time) (bool, error) {
+// supersedeIfStale closes this session as superseded, and reports that it did,
+// when a newer session of the same Receiver already issued the credential that
+// works. A delayed first issuance therefore never replaces a working newer
+// generation.
+func supersedeIfStale(ctx context.Context, tx *sql.Tx, session Session, now time.Time) (bool, error) {
 	var newer bool
 	if err := tx.QueryRowContext(ctx, newerIssuanceSQL,
 		session.ReceiverID, session.ID, session.CreatedAt).Scan(&newer); err != nil {

@@ -7,8 +7,11 @@ import (
 	"testing"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	"github.com/coder/websocket"
 )
 
+// A public Receiver ID authorizes nothing: recovery requires the management
+// credential of a Sender that owns the Receiver together with fresh proof of
 // that Sender's Account, and every other caller stays unable to confirm which
 // Receivers exist.
 func TestRecoveryRequiresTheOwningSendersFreshProof(t *testing.T) {
@@ -265,6 +268,50 @@ func TestRecoveryAtTheReceiverLimitNeedsNoSixthSlot(t *testing.T) {
 	}
 	if state := environment.pairingState(t, association.PairingID); state != "active" {
 		t.Errorf("preserved association state = %q, want active", state)
+	}
+	receiverRejected(t, environment, issued.ReceiverToken, http.StatusUnauthorized, "credential_invalid")
+	receiverConnected(t, environment, replacement.ReceiverToken)
+}
+
+// A replacement is handed out only after the superseded generation lost its
+// shared delivery access, so a delivery upgrade that is still committing with
+// the credential that generation held either never commits or ends with the
+// policy close. Either way it holds no connection once the recovery answered,
+// and only the replacement reaches the channel.
+func TestRecoveryRedemptionAndOldUpgradeCommitOneGeneration(t *testing.T) {
+	environment := start(t)
+	owner := environment.sender(t, "code-upgrade-race", "openid-upgrade-race")
+
+	association, issued := environment.paired(t, owner, "Phone")
+	recovery, restricted := environment.approvedRecovery(t, owner, association.ReceiverID,
+		"code-upgrade-race-approval", "openid-upgrade-race", association.PairingID)
+
+	// The superseded credential's handshake races the redemption replacing it.
+	type upgrade struct {
+		socket *websocket.Conn
+		status int
+	}
+	upgraded := make(chan upgrade, 1)
+	go func() {
+		socket, response, err := dialReceiver(t, environment, issued.ReceiverToken)
+		result := upgrade{socket: socket}
+		if err != nil && response != nil {
+			result.status = response.StatusCode
+		}
+		upgraded <- result
+	}()
+
+	status, replacement, payload := environment.redeem(t, recovery.SessionID, restricted, "op-upgrade-race", 0)
+	if status != http.StatusOK {
+		t.Fatalf("recovery redemption status = %d: %s", status, payload)
+	}
+
+	if race := <-upgraded; race.socket != nil {
+		// The upgrade committed before the generation moved on, so the service
+		// ends it instead of leaving it authoritative.
+		awaitClosed(t, race.socket, websocket.StatusPolicyViolation)
+	} else if race.status != http.StatusUnauthorized {
+		t.Errorf("an upgrade with the superseded credential = %d, want 401", race.status)
 	}
 	receiverRejected(t, environment, issued.ReceiverToken, http.StatusUnauthorized, "credential_invalid")
 	receiverConnected(t, environment, replacement.ReceiverToken)

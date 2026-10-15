@@ -73,13 +73,8 @@ func (s *Service) completeRecovery(ctx context.Context, tx *sql.Tx, session Sess
 // key-confirmation report cannot recreate an association the Sender cannot
 // encrypt for.
 func dropSenderReceiverAccess(ctx context.Context, tx *sql.Tx, senderID, receiverID string, now time.Time) (string, []string, error) {
-	// The Sender's reservations are locked before the Sender's own lock, which
-	// is the order a claim, a completion and a removal take them in.
-	reservations, err := lockLiveReservations(ctx, tx, senderID, receiverID, now)
+	reservations, err := lockSenderRemoval(ctx, tx, senderID, receiverID, now)
 	if err != nil {
-		return "", nil, err
-	}
-	if err := lockSender(ctx, tx, senderID); err != nil {
 		return "", nil, err
 	}
 	lost, err := removeCurrentAssociation(ctx, tx, senderID, receiverID, now)
