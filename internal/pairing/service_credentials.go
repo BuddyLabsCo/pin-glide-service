@@ -15,14 +15,19 @@ import (
 // Sender's current association commits that replacement here, and a
 // replacement whose expected association is no longer current is reported as
 // superseded, which preserves the association that won.
+//
+// A recover_receiver report instead states which existing Pairing keys the
+// reporting side still holds, so the session reaches credential_ready once
+// both sides have reported and every association whose key was lost is gone.
 func (s *Service) Complete(ctx context.Context, request CompleteRequest, now time.Time) (Session, error) {
-	if request.KeyConfirmation != KeyConfirmed {
-		// Only a recovery session may report a missing key, and that report
-		// arrives with Receiver credential recovery.
+	if request.KeyConfirmation != KeyConfirmed && request.KeyConfirmation != KeyNotAvailable {
 		return Session{}, ErrInvalidMode
 	}
 
 	superseded := false
+	// A recovery report still announces the association its Sender no longer
+	// holds and the sessions whose reservation closed, once the commit is done.
+	outcome := recoveryOutcome{}
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
 		session, err := lockedSessionByID(ctx, tx, request.SessionID)
 		if err != nil {
@@ -38,6 +43,11 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 				return ErrCredentialExpired
 			}
 			return ErrSessionExpired
+		}
+		if session.Mode != ModeRecoverReceiver && (request.KeyConfirmation != KeyConfirmed || len(request.RetainedPairingIDs) > 0) {
+			// Only a recovery reports a missing key or the key inventory of a
+			// Receiver.
+			return ErrInvalidMode
 		}
 		switch session.State {
 		case StateAwaitingAuthorization:
@@ -55,7 +65,8 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 		if session.Mode == ModeRecoverReceiver {
 			// Recovery completes with the retained-key reconciliation of
 			// Receiver credential recovery rather than with a Pairing.
-			return ErrPairingNotReady
+			outcome, err = s.completeRecovery(ctx, tx, session, request, now)
+			return err
 		}
 		if request.SenderID != "" {
 			if err := confirmSender(ctx, tx, session.ID, now); err != nil {
@@ -100,6 +111,16 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 	if superseded {
 		return Session{}, ErrOperationSuperseded
 	}
+	// The Receiver is told which of its Senders no longer forwards to it, and
+	// every participant of the work this report closed learns its outcome.
+	if outcome.lostPairingID != "" && s.deliveryNotifier != nil && completed.AuthorizedSenderID != "" {
+		s.deliveryNotifier.PairingRemoved(completed.AuthorizedSenderID, completed.ReceiverID, outcome.lostPairingID)
+	}
+	for _, sessionID := range outcome.canceledSessions {
+		if canceled, err := sessionByID(ctx, s.pool, sessionID); err == nil {
+			s.sessionChanged(canceled, now)
+		}
+	}
 	return completed, nil
 }
 
@@ -107,6 +128,11 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest, now tim
 // session's one issuance operation orders the attempts: an equal or lower
 // attempt and a competing operation are superseded, while the one permitted
 // higher attempt may replace a credential no one has proved possession of yet.
+// An older grant whose Receiver already has a credential from a newer session
+// is superseded instead, so a delayed first issuance cannot replace a working
+// newer generation. A recovery reports the Receiver whose superseded
+// credential lost its shared delivery access, so the replacement never shares
+// the connection it replaced.
 func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Time) (IssuedCredential, error) {
 	if request.Attempt != 0 && request.Attempt != 1 {
 		return IssuedCredential{}, ErrAttemptUnsupported
@@ -116,6 +142,8 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 	}
 
 	issued := IssuedCredential{}
+	supersededAccess := ""
+	stale := false
 	err := s.inTransaction(ctx, func(tx *sql.Tx) error {
 		// The restricted credential decides its own validity before the
 		// session's protected state: an expired B is an expired credential.
@@ -164,6 +192,24 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 		default:
 			return ErrPairingNotReady
 		}
+		if session.Mode == ModeRecoverReceiver {
+			// Issuing here replaces the Receiver's credential for every Sender
+			// that shares it, so the superseded generation loses its shared
+			// delivery access before the replacement is handed out.
+			supersededAccess = session.ReceiverID
+		}
+		supersededGrant, err := supersedeStaleGrant(ctx, tx, session, now)
+		if err != nil {
+			return err
+		}
+		stale = supersededGrant
+		if stale {
+			// A newer session of this Receiver already issued the credential
+			// that works, so this older grant cannot replace it. The
+			// supersession commits with the transaction, and the caller learns
+			// the outcome below.
+			return nil
+		}
 
 		token, generation, err := issueReceiverCredential(ctx, tx, session.ReceiverID, now)
 		if err != nil {
@@ -180,6 +226,12 @@ func (s *Service) Redeem(ctx context.Context, request RedeemRequest, now time.Ti
 	}
 	if session, err := sessionByID(ctx, s.pool, request.SessionID); err == nil {
 		s.sessionChanged(session, now)
+	}
+	if stale {
+		return IssuedCredential{}, ErrSessionClosed
+	}
+	if supersededAccess != "" && s.deliveryNotifier != nil {
+		s.deliveryNotifier.EndReceiverAccess(supersededAccess)
 	}
 	return issued, nil
 }

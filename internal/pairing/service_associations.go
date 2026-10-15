@@ -80,18 +80,8 @@ func (s *Service) RemoveAssociation(ctx context.Context, senderID, pairingID str
 		if err != nil {
 			return err
 		}
-		for _, reservation := range reservations {
-			// Closing a session releases its reservation exactly as an explicit
-			// cancellation does, so the two paths cannot drift apart.
-			if err := closeSession(ctx, tx, Session{
-				ID:               reservation.sessionID,
-				PendingPairingID: reservation.pairingID,
-			}, StateCanceled, now); err != nil {
-				return err
-			}
-			canceled = append(canceled, reservation.sessionID)
-		}
-		return nil
+		canceled, err = cancelReservations(ctx, tx, reservations, now)
+		return err
 	})
 	if err != nil {
 		return err
@@ -109,4 +99,23 @@ func (s *Service) RemoveAssociation(ctx context.Context, senderID, pairingID str
 		}
 	}
 	return nil
+}
+
+// cancelReservations releases the reservations of the given sessions and
+// records their cancellation, which is the state their participants read next.
+// Every path that ends unfinished pairing work releases it this way, so an
+// explicit cancellation, an association removal and a recovery cannot drift
+// apart.
+func cancelReservations(ctx context.Context, tx *sql.Tx, reservations []lockedReservation, now time.Time) ([]string, error) {
+	canceled := make([]string, 0, len(reservations))
+	for _, reservation := range reservations {
+		if err := closeSession(ctx, tx, Session{
+			ID:               reservation.sessionID,
+			PendingPairingID: reservation.pairingID,
+		}, StateCanceled, now); err != nil {
+			return nil, err
+		}
+		canceled = append(canceled, reservation.sessionID)
+	}
+	return canceled, nil
 }

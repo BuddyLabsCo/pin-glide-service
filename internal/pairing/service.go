@@ -431,6 +431,7 @@ func isOutcome(err error) bool {
 		ErrOperationSuperseded,
 		ErrAttemptUnsupported,
 		ErrIssuanceInvalid,
+		ErrRetainedPairingsInvalid,
 		ErrFreshIdentityRequired,
 		ErrWeChatAuthorizationInvalid,
 		ErrIdentityProvider,

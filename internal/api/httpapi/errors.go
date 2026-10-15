@@ -295,6 +295,7 @@ var businessOutcomes = []struct {
 	{pairing.ErrOperationSuperseded, protocol.OperationSuperseded},
 	{pairing.ErrAttemptUnsupported, protocol.ValidationFailed},
 	{pairing.ErrIssuanceInvalid, protocol.ValidationFailed},
+	{pairing.ErrRetainedPairingsInvalid, protocol.ValidationFailed},
 	{pairing.ErrInvalidMode, protocol.ValidationFailed},
 	{pairing.ErrReceiverNotOwned, protocol.ResourceNotFound},
 	{pairing.ErrAssociationNotFound, protocol.ResourceNotFound},
