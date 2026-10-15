@@ -290,10 +290,14 @@ func TestLogoutRejectsConflictingUnknownAndUnusableSources(t *testing.T) {
 	logoutFails(t, environment, issued.Refresh.Token, "", http.StatusUnauthorized, "credential_invalid")
 	logoutFails(t, environment, "", logoutRefreshBody(issued.Uploader.Token),
 		http.StatusUnauthorized, "credential_invalid")
-	// Account switching is a later slice: the mode it would need is not accepted
-	// here, so no request can be told its associations were cleaned up.
+	// Switching an Account removes associations, so a request that presents no
+	// management credential in the header cannot ask for it.
 	logoutFails(t, environment, "", `{"mode":"switch_account"}`,
-		http.StatusUnprocessableEntity, "validation_failed")
+		http.StatusUnauthorized, "credential_missing")
+	logoutFails(t, environment, "", `{"mode":"switch_account","refreshToken":"`+issued.Refresh.Token+`"}`,
+		http.StatusUnauthorized, "credential_missing")
+	logoutFails(t, environment, issued.Uploader.Token, `{"mode":"switch_account"}`,
+		http.StatusUnauthorized, "credential_invalid")
 
 	// Every rejection left the family that presented them untouched.
 	authorizes(t, environment, issued.UserSession.Token, identity.ScopeUserSession)

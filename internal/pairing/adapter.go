@@ -2,7 +2,9 @@ package pairing
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 )
@@ -25,6 +27,33 @@ func NewProvider(provider identity.Provider, accounts *identity.Service) Provide
 // Sender management credential the pairing channel authenticates.
 func NewAuthenticator(accounts *identity.Service) Authenticator {
 	return senderAuthenticator{accounts: accounts}
+}
+
+// NewSenderMutations adapts the identity service's transaction-scoped
+// credential changes to the seam a Sender revocation and an Account switch use,
+// so the credential change and the Pairing cleanup it requires commit together
+// without either domain restating the other's rules.
+func NewSenderMutations(accounts *identity.Service) SenderMutations {
+	return senderMutations{accounts: accounts}
+}
+
+// senderMutations restates the identity service's credential changes in the
+// pairing domain's own vocabulary, so its transports map one set of causes
+// rather than two.
+type senderMutations struct {
+	accounts *identity.Service
+}
+
+// SwitchAccount revokes one Sender's credential family inside the caller's
+// transaction.
+func (m senderMutations) SwitchAccount(ctx context.Context, tx *sql.Tx, senderID string, now time.Time) error {
+	return credentialOutcome(m.accounts.SwitchAccountTx(ctx, tx, senderID, now))
+}
+
+// RevokeSender closes one Sender registration and revokes every credential it
+// holds inside the caller's transaction.
+func (m senderMutations) RevokeSender(ctx context.Context, tx *sql.Tx, senderID, ownerAccount string, now time.Time) error {
+	return senderOutcome(m.accounts.RevokeSenderTx(ctx, tx, senderID, ownerAccount, now))
 }
 
 // wechatProofProvider turns one verified WeChat code into the Account it
@@ -73,6 +102,8 @@ func credentialOutcome(err error) error {
 		return ErrCredentialInvalid
 	case errors.Is(err, identity.ErrCredentialExpired):
 		return ErrCredentialExpired
+	case errors.Is(err, identity.ErrCredentialRevoked):
+		return ErrCredentialRevoked
 	case errors.Is(err, identity.ErrStorageUnavailable):
 		return ErrStorageUnavailable
 	default:

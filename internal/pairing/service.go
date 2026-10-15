@@ -19,6 +19,10 @@ type Service struct {
 	provider      Provider
 	authenticator Authenticator
 	notifier      Notifier
+	// revocations is the credential half of a Sender revocation and an Account
+	// switch, which commit inside the transaction that also removes that
+	// Sender's Pairings.
+	revocations SenderMutations
 	// deliveryNotifier reports a removed association to the Receiver's live
 	// delivery connection, which is a different live channel than the pairing
 	// one the session notifier serves.
@@ -39,9 +43,11 @@ func (s *Service) SetNotifier(notifier Notifier) {
 
 // NewService composes the pairing service. A nil provider is a process
 // composed without provider credentials: recovery then reports a provider
-// failure instead of verifying anything.
-func NewService(pool *sql.DB, provider Provider, authenticator Authenticator) *Service {
-	return &Service{pool: pool, provider: provider, authenticator: authenticator}
+// failure instead of verifying anything. A nil mutations value composes a
+// process that cannot change a Sender's credentials, so permanent revocation
+// and Account switching report unavailability instead of half-applying.
+func NewService(pool *sql.DB, provider Provider, authenticator Authenticator, mutations SenderMutations) *Service {
+	return &Service{pool: pool, provider: provider, authenticator: authenticator, revocations: mutations}
 }
 
 // Authorize claims a session for one authenticated Sender. The first
@@ -425,6 +431,8 @@ func isOutcome(err error) bool {
 		ErrReceiverLimitReached,
 		ErrInvalidMode,
 		ErrReceiverNotOwned,
+		ErrSenderNotOwned,
+		ErrSenderRevoked,
 		ErrAssociationNotFound,
 		ErrPairingNotReady,
 		ErrModeForbidsCredentialIssue,
@@ -437,6 +445,7 @@ func isOutcome(err error) bool {
 		ErrCredentialMissing,
 		ErrCredentialInvalid,
 		ErrCredentialExpired,
+		ErrCredentialRevoked,
 	} {
 		if errors.Is(err, outcome) {
 			return true

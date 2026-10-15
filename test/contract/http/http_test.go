@@ -204,6 +204,15 @@ type logoutFixture struct {
 	Errors map[string][]string `json:"errors"`
 }
 
+// deviceRevocationFixture is the accepted v1 compatibility contract of owner
+// security revocation, whose success returns no payload and whose failures
+// distinguish unusable credentials, a proof that does not name the owner, an
+// invisible registration and an already permanently closed one.
+type deviceRevocationFixture struct {
+	operationContract
+	Errors map[string][]string `json:"errors"`
+}
+
 // The published description must keep describing exactly the accepted login
 // contract: the documented request fields, success payload, credential payload
 // and every failure status a released v1 client handles.
@@ -253,6 +262,51 @@ func TestPublishedHTTPDescriptionKeepsTheLogoutContract(t *testing.T) {
 	}
 	if content, present := success["content"]; present {
 		t.Errorf("the bodyless logout success carries content: %v", content)
+	}
+
+	publishedErrors := map[string]bool{}
+	for status := range responses {
+		if !strings.HasPrefix(status, "2") {
+			publishedErrors[status] = true
+		}
+	}
+	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
+}
+
+// The published description must keep describing exactly the accepted owner
+// revocation contract: the fresh-proof request field, a success that returns no
+// payload at all and every failure status a released v1 client handles.
+func TestPublishedHTTPDescriptionKeepsTheDeviceRevocationContract(t *testing.T) {
+	fixture := readFixture[deviceRevocationFixture](t, "device_revocation_v1.json")
+	description := published(t)
+	operation := operationOf(t, description, fixture.operationContract)
+
+	requestBody, ok := operation["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatalf("owner revocation has no request body: %v", operation)
+	}
+	if required, _ := requestBody["required"].(bool); !required {
+		t.Error("owner revocation has an optional body, but its accepted contract requires the fresh proof")
+	}
+	content := requestBody["content"].(map[string]any)["application/json"].(map[string]any)
+	requestName, request := schemaOf(t, description, content["schema"])
+	if requestName != fixture.Request.Schema {
+		t.Errorf("request schema = %q, want %q", requestName, fixture.Request.Schema)
+	}
+	if required := requiredFields(t, request); !slices.Equal(required, fixture.Request.Required) {
+		t.Errorf("request required fields = %v, want %v", required, fixture.Request.Required)
+	}
+	if properties := propertyFields(t, request); !slices.Equal(properties, fixture.Request.Properties) {
+		t.Errorf("request fields = %v, want %v", properties, fixture.Request.Properties)
+	}
+
+	responses := operation["responses"].(map[string]any)
+	success, ok := responses[fixture.Success.Status].(map[string]any)
+	if !ok {
+		t.Fatalf("published description does not document success status %s", fixture.Success.Status)
+	}
+	if content, present := success["content"]; present {
+		t.Errorf("the bodyless revocation success carries content: %v", content)
 	}
 
 	publishedErrors := map[string]bool{}
