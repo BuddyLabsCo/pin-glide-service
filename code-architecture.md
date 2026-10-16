@@ -30,7 +30,7 @@ pin-glide-service/
 │   │   └── bailian/          # Bailian HTTP client
 │   ├── protocol/             # Shared HTTP/WSS wire types and errors
 │   ├── config/               # Environment configuration
-│   ├── db/                   # Connections, transactions and Jet output
+│   ├── db/                   # Connections and Jet output
 │   ├── observability/        # Logging, correlation and redaction
 │   └── release/              # Manifest, ledgers and migration execution
 ├── db/
@@ -65,10 +65,11 @@ helpers by responsibility; avoid catch-all `common`, `utils`, `shared` or `misc`
 ### 3.1 Domain package
 
 ```text
-internal/identity/
-├── identity.go       # Domain types, states and errors
+internal/<domain>/
+├── <domain>.go       # Domain types, states and errors
 ├── service.go        # Business operations and PostgreSQL transactions
-└── store.go          # Domain-owned Jet queries and result mapping
+├── store.go          # Domain-owned Jet queries and result mapping
+└── adapter.go        # Adapter over another domain's service, where consumed
 ```
 
 ### 3.2 API package
@@ -84,11 +85,11 @@ internal/api/
 │       ├── routes.go # HTTP input -> domain service -> response
 │       └── dto.go    # HTTP wrappers; shared payloads in internal/protocol
 └── wss/
-    ├── router.go     # Upgrade and handshake
-    ├── connection.go # Frame I/O, heartbeat and connection-ID-owned cleanup
-    ├── delivery.go   # Delivery service calls and frame mapping
+    ├── router.go     # WSS route registration and refused-subscription reporting
+    ├── connection.go # Pairing frame I/O and Close semantics
+    ├── delivery.go   # Delivery and Receipt frames of the receiver channel
     ├── pairing.go    # Restricted pairing-session channel (M and receiver-side B)
-    └── receiver.go   # Receiver delivery channel: admission, slot and presence
+    └── receiver.go   # Receiver delivery channel: upgrade, slot, heartbeat and presence
 ```
 
 ### 3.3 Adapter package
@@ -155,9 +156,9 @@ Generate both schemas using disposable PostgreSQL. Output goes to
 `internal/db/jetgen/{pin_glide,release}/{table,view,enum,model}/`.
 Each domain's store maps generated result structs to domain types.
 
-`internal/db/db.go` opens the shared pgx-stdlib `*sql.DB`; transaction/executor
-support stays in `internal/db`. Store queries accept an executor usable with
-`*sql.DB` or `*sql.Tx`. Keep external network calls outside database transactions.
+`internal/db/db.go` opens the shared pgx-stdlib `*sql.DB`; the pool stays in
+`internal/db`. Services own their transactions, and each store takes the
+executor it needs. Keep external network calls outside database transactions.
 
 Use Jet by default and parameterized raw SQL when needed. Business logic stays in
 Go; SQL functions/procedures handle database-local work such as cleanup. Quote
