@@ -284,9 +284,6 @@ func TestRejectedFrameEndsTheConnectionWithItsOwnStatus(t *testing.T) {
 	if err := environment.service.Stop(); err != nil {
 		t.Fatalf("stop the composed service: %v", err)
 	}
-	if statuses := environment.connectionStatuses(t, receiverID); len(statuses) != 2 ||
-		statuses[0] != http.StatusSwitchingProtocols ||
-		statuses[1] != int(websocket.StatusProtocolError) {
-		t.Errorf("the rejected connection retained the statuses %v, want [101 1002]", statuses)
-	}
+	environment.expectConnectionStatuses(t, receiverID,
+		http.StatusSwitchingProtocols, int(websocket.StatusProtocolError))
 }

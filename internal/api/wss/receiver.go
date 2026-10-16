@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -87,37 +86,6 @@ type ReceiverSocket struct {
 type receiverKey struct {
 	receiverID string
 	generation int64
-}
-
-// receiverSlot is the reserved connection of one Receiver generation. It is
-// reserved before the upgrade commits and released only by the connection that
-// owns it, so a failed upgrade, a rejected handshake or a stale close callback
-// cannot release a newer connection's slot.
-type receiverSlot struct {
-	connectionID uint64
-	key          receiverKey
-	socket       *websocket.Conn
-	// closeCode is the Close status this connection ended with, or 0 while it
-	// is open or its peer ended it. Shutdown and the liveness goroutine end a
-	// connection from different goroutines, so whichever ends it first claims
-	// the meaning the retained record carries.
-	closeCode atomic.Int32
-	// ending carries the Close meaning when the service ends this committed
-	// connection, so the goroutine that owns the socket also owns that close.
-	ending chan closeIntent
-}
-
-// claim records the Close status of this connection once, so the first closer
-// owns the meaning and a later one cannot restate it.
-func (s *receiverSlot) claim(code int) bool {
-	return s.closeCode.CompareAndSwap(0, int32(code))
-}
-
-// end claims a service-started close's status and performs it, so peer and record agree.
-func (s *receiverSlot) end(intent closeIntent) {
-	code, reason := closeMeaning(intent)
-	s.claim(int(code))
-	_ = s.socket.Close(code, reason)
 }
 
 // NewReceiverSocket composes the delivery channel on its domain and publishes
@@ -467,7 +435,9 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 				slog.Int64("generation", slot.key.generation),
 				slog.String("cause", err.Error()),
 			)
-			slot.claim(int(websocket.StatusAbnormalClosure))
+			if !slot.claim(int(websocket.StatusAbnormalClosure)) {
+				return
+			}
 			_ = slot.socket.CloseNow()
 			return
 		}
@@ -482,9 +452,11 @@ func (s *ReceiverSocket) Close() {
 	s.closed = true
 	sockets := make([]*websocket.Conn, 0, len(s.slots))
 	for _, slot := range s.slots {
-		// Shutdown ends these connections itself, so the record of each one
-		// carries the meaning the service closed it with.
-		slot.claim(int(closeCodes[closeGoingAway]))
+		// Shutdown ends the connections no other closer claimed, so each
+		// record carries the meaning its peer received.
+		if !slot.claim(int(closeCodes[closeGoingAway])) {
+			continue
+		}
 		if slot.socket != nil {
 			sockets = append(sockets, slot.socket)
 		}
