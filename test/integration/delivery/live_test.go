@@ -219,6 +219,45 @@ func TestRetainedTerminalResultIsReusedWithoutSendingAgain(t *testing.T) {
 	}
 }
 
+// TestRetainedDuplicateStillDeduplicatesPastItsRetentionWindow shows the dedup
+// identity outliving its own retention window: while scheduled cleanup has not
+// deleted the row, a Message already older than the seven-day window is still
+// the retained identity, so a later submission carrying different ciphertext
+// reads its outcome instead of sending again. Only deletion ends that, which is
+// the accepted repeat-delivery boundary.
+func TestRetainedDuplicateStillDeduplicatesPastItsRetentionWindow(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-window", "openid-window")
+	receiverID, pairingID, receiverToken := environment.paired(t, sender, "Windowed")
+	socket := receiverConnected(t, environment, receiverToken)
+
+	const messageID = "message-window"
+	answered := environment.sendUpload(sender.Uploader.Token, uploadBody(messageID, entryOf(receiverID, pairingID)))
+	frame := readDelivery(t, socket)
+	receipt(t, socket, frame)
+	if status, _, payload := awaitUpload(t, answered); status != http.StatusMultiStatus {
+		t.Fatalf("upload status = %d: %s", status, payload)
+	}
+
+	// The first attempt already aged past what scheduled cleanup deletes, and
+	// the cleanup itself has not run, so the row still is the identity.
+	environment.exec(t, `
+UPDATE pin_glide.delivery_deliveries
+SET created_at = now() - interval '8 days', completed_at = now() - interval '8 days'
+WHERE sender_id = $1 AND message_id = $2`, sender.SenderID, messageID)
+
+	status, response, payload := environment.upload(t, sender.Uploader.Token,
+		uploadBody(messageID, entryWithCiphertext(receiverID, pairingID, secondCiphertext)))
+	if status != http.StatusMultiStatus {
+		t.Fatalf("re-submission status = %d: %s", status, payload)
+	}
+	expectResult(t, response, 0, receiverID, "received", "")
+	expectNoDelivery(t, socket)
+	if rows := environment.deliveriesOf(t, sender.SenderID, messageID); rows != 1 {
+		t.Errorf("the aged retained identity admitted %d Deliveries, want the 1 it kept", rows)
+	}
+}
+
 // TestAdmittedWorkKeepsItsAuthorityThroughRevocation shows the authorization
 // decision an admitted request froze: revoking the Receiver while that request's
 // send is in flight adds no check in front of it, while a new request validates

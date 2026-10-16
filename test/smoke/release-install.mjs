@@ -81,6 +81,10 @@ function sql(install, statement) {
 function jobs(install) {
   return sql(install, "SELECT jobname || '=' || active FROM cron.job ORDER BY jobname").split('\n').filter(Boolean);
 }
+// The retention data script every release ships keeps one job active, and the
+// 63.0.1 fixture adds its own active and deliberately inactive jobs.
+const retentionJob = 'pin-glide-retention-cleanup=true';
+const declaredJobs = [retentionJob, 'pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true'];
 function cronRunning(install) {
   return sql(install, "SELECT (SELECT count(*) FROM cron.job_run_details WHERE status = 'running') + (SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_cron')");
 }
@@ -263,7 +267,8 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
       assert.match(sql(main, "SHOW shared_preload_libraries"), /pg_cron/);
       assert.equal(sql(main, "SELECT extversion FROM pg_extension WHERE extname = 'pg_cron'"), '1.6',
         'the packaged desired schema installs the extension the image preloads');
-      assert.deepEqual(jobs(main), [], 'the first release declares no scheduled work yet');
+      assert.deepEqual(jobs(main), [retentionJob],
+        'the first release declares only the adopted retention job');
     });
     const infrastructure = infra(main);
     evidence.infrastructure = infrastructure;
@@ -274,7 +279,7 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
       assert.deepEqual(infra(main), infrastructure, 'an ordinary release must not recreate PostgreSQL');
       assert.equal(sql(main, 'SELECT backup_probe.answer()'), '42');
       assert.equal(sql(main, "SELECT extversion FROM pg_extension WHERE extname = 'pg_cron'"), '1.6');
-      assert.deepEqual(jobs(main), ['pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true'],
+      assert.deepEqual(jobs(main), declaredJobs,
         'a release that declares jobs must leave their declared state untouched');
     });
     let baseline;
@@ -332,7 +337,7 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
       assert.deepEqual(infra(main), infrastructure);
       evidence.real.push('PostgreSQL 18 pg_dump -Fc / pg_restore with pg_cron job rows; full probe snapshot matched after a partial commit');
       saveCompose(main); cli(main, '63.0.2', '--cancel'); ready(main, '63.0.1'); archived(main, '63.0.2', 1);
-      assert.deepEqual(jobs(main), ['pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true'],
+      assert.deepEqual(jobs(main), declaredJobs,
         'a successful cancellation must restore the intended scheduling state');
       assert.deepEqual(infra(main), infrastructure);
     });
@@ -343,7 +348,7 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
       cleanupFailedMigration(main); cli(main, '63.0.2', '--prep');
       cli(main, '63.0.2', undefined, { menu: 6 }); ready(main, '63.0.2'); archived(main, '63.0.2', 2);
       assert.deepEqual(infra(main), infrastructure);
-      assert.deepEqual(jobs(main), ['pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true'],
+      assert.deepEqual(jobs(main), declaredJobs,
         'a standalone start must not leave the schedule held');
     });
     await check('Same-version retry invalidates a completed restore checkpoint', () => {
@@ -391,7 +396,7 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
       assert.notEqual(secondRestoreOID, firstRestoreOID, 'Second cancel skipped rebuilding the database');
       const restoredProbes = snapshot(main, 'same-version-second-restored.sql', 'backup_probe', 'removed_probe');
       assert.equal(restoredProbes, original);
-      assert.deepEqual(jobs(main), ['pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true']);
+      assert.deepEqual(jobs(main), declaredJobs);
       assert.equal(sql(main, "SELECT count(*) FROM pg_namespace WHERE nspname = 'broken_release'"), '0');
       assert.equal(sql(main, "SELECT count(*) FROM release.release_migration_scripts WHERE filename IN ('zz_issue12_02.sql', 'zz_issue12_03.sql')"), '0');
       assert.equal(hash(path.join(main.dir, '.env')), hash(path.join(main.dir, '.env.bak')));
@@ -416,7 +421,7 @@ UPDATE cron.job SET active = false WHERE jobname = 'pin_glide_smoke_probe';
         cleanupFailedMigration(main);
       }
       cli(main, '63.0.1', '--start-api'); ready(main, '63.0.1');
-      assert.deepEqual(jobs(main), ['pin_glide_smoke_dormant=false', 'pin_glide_smoke_probe=true']);
+      assert.deepEqual(jobs(main), declaredJobs);
     });
     await check('Initial data failure retains Database Release; only verified same-target retries may continue', () => {
       const cleanConfig = structuredClone(main.config);

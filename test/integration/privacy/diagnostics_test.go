@@ -65,6 +65,9 @@ func start(t *testing.T) *environment {
 
 	postgres := harness.StartPostgres(t)
 	postgres.ApplySchema(t, "pin_glide")
+	// Scheduled cleanup covers release audit history and pg_cron's own run
+	// history too, so the composed service runs against both desired schemas.
+	postgres.ApplySchema(t, "release")
 
 	pool, err := db.Open(context.Background(), postgres.DSN)
 	if err != nil {
@@ -123,6 +126,9 @@ type bundle struct {
 	Uploader struct {
 		Token string `json:"token"`
 	} `json:"uploader"`
+	Refresh struct {
+		Token string `json:"token"`
+	} `json:"refresh"`
 }
 
 // problem is the decoded whole-request failure.

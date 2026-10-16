@@ -145,7 +145,8 @@ non-development configuration and cannot reach a deployment installation.
 from published images: prepare, pull, stop the api and its scheduled database
 work, take a stopped-writer recovery backup, migrate, start and restore the
 intended scheduling state. `deploy/compose/README.md` documents the operator
-prerequisites, commands and recovery procedure.
+prerequisites, commands and recovery procedure, including the whole-table
+retention inventory, its clocks and the scheduled cleanup job.
 
 ## Release publication
 
