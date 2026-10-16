@@ -436,6 +436,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 				slog.String("cause", err.Error()),
 			)
 			if !slot.claim(int(websocket.StatusAbnormalClosure)) {
+				// A closer that claimed first owns this connection's end.
 				return
 			}
 			_ = slot.socket.CloseNow()
@@ -448,13 +449,15 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 // handshakes still arriving, so bounded shutdown does not wait for a reader
 // that would otherwise block until its transport failed.
 func (s *ReceiverSocket) Close() {
+	code, reason := closeMeaning(closeGoingAway)
+
 	s.mutex.Lock()
 	s.closed = true
 	sockets := make([]*websocket.Conn, 0, len(s.slots))
 	for _, slot := range s.slots {
 		// Shutdown ends the connections no other closer claimed, so each
 		// record carries the meaning its peer received.
-		if !slot.claim(int(closeCodes[closeGoingAway])) {
+		if !slot.claim(int(code)) {
 			continue
 		}
 		if slot.socket != nil {
@@ -463,7 +466,6 @@ func (s *ReceiverSocket) Close() {
 	}
 	s.mutex.Unlock()
 
-	code, reason := closeMeaning(closeGoingAway)
 	for _, socket := range sockets {
 		_ = socket.Close(code, reason)
 	}

@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// connectionStatuses reads the retained WSS statuses of one Receiver
-// connection, in the order the service stored them.
+// connectionStatuses reads the retained WSS statuses of one Receiver's
+// connections, in the order the service stored them.
 func (e *environment) connectionStatuses(t *testing.T, receiverID string) []int {
 	t.Helper()
 
