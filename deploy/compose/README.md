@@ -284,11 +284,14 @@ The Data Scripts own the job, and the release records each of them in
 `pin-glide-retention-cleanup` from its own script, with a stable name and owner
 through `cron.schedule`, explicit active state through `cron.alter_job`, and
 `cron.unschedule` for every other `pin-glide-` job name it no longer declares.
-Declaring the job again is what converges a row an earlier release left missing,
-inactive or drifted, so a later release that changes the scheduled set ships its
-own script instead of editing a recorded one. The cleanup configuration and the
-dynamic routine are revoked from `PUBLIC`, which PostgreSQL grants `EXECUTE` on
-a new function by default, so no other role writes targets or runs cleanup.
+Declaring it again adds a job row an earlier release left missing and rewrites
+the schedule and command of the row this owner holds, and the explicit
+activation rewrites that row's run state. A row another role owns is not
+something a declaration repairs, so a later release that changes the scheduled
+set ships its own script instead of editing a recorded one. The cleanup
+configuration and the dynamic routine are revoked from `PUBLIC`, which
+PostgreSQL grants `EXECUTE` on a new function by default, so no other role
+writes targets or runs cleanup.
 Schema Sync reconciles neither `cron.job` rows nor extension versions, so verify
 the job and the extension separately:
 

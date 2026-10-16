@@ -19,8 +19,9 @@ REVOKE ALL ON FUNCTION
 pin_glide.pin_glide_fn_cleanup_expired_rows(timestamptz) FROM PUBLIC;
 
 -- The scheduled job keeps its stable owner and name: declaring it again
--- converges the deployed row in place instead of adding a second job, so this
--- release declares it rather than assuming the earlier script already did.
+-- rewrites the schedule and command of the row this owner holds instead of
+-- adding a second one, and this release declares it instead of assuming the
+-- earlier script already did.
 SELECT cron.schedule(
     'pin-glide-retention-cleanup',
     '0 19 * * *',
