@@ -20,4 +20,6 @@ func UseSchema(schema string) {
 	ModelConfigurations = ModelConfigurations.FromSchema(schema)
 	PairingPairings = PairingPairings.FromSchema(schema)
 	PairingSessions = PairingSessions.FromSchema(schema)
+	RetentionPolicies = RetentionPolicies.FromSchema(schema)
+	ServiceDiagnostics = ServiceDiagnostics.FromSchema(schema)
 }

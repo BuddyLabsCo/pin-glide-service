@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
+	"github.com/coder/websocket"
 )
 
 // secondCiphertext is a second accepted ciphertext of the same profile, so a
@@ -259,4 +260,30 @@ func TestAdmittedWorkKeepsItsAuthorityThroughRevocation(t *testing.T) {
 		t.Errorf("a rejection rewrote the stored outcome to %q", stored)
 	}
 	environment.channel.expectNoWrite(t)
+}
+
+// TestRejectedFrameEndsTheConnectionWithItsOwnStatus shows a delivery
+// connection that sent a frame this channel does not carry: the peer is
+// answered with the protocol error, and the retained record of that same
+// connection carries that status rather than a normal close.
+func TestRejectedFrameEndsTheConnectionWithItsOwnStatus(t *testing.T) {
+	environment := start(t)
+	sender := environment.sender(t, "code-framing", "openid-framing")
+	receiverID, _, receiverToken := environment.paired(t, sender, "Framing")
+	socket := receiverConnected(t, environment, receiverToken)
+
+	writeFrame(t, socket, `{"version":1,"type":"delivery"}`)
+
+	closed, cancelClosed := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelClosed()
+	if _, _, err := socket.Read(closed); websocket.CloseStatus(err) != websocket.StatusProtocolError {
+		t.Fatalf("a frame this channel does not carry closed with %v, want %d",
+			err, websocket.StatusProtocolError)
+	}
+
+	if err := environment.service.Stop(); err != nil {
+		t.Fatalf("stop the composed service: %v", err)
+	}
+	environment.expectConnectionStatuses(t, receiverID,
+		http.StatusSwitchingProtocols, int(websocket.StatusProtocolError))
 }

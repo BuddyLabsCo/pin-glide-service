@@ -41,6 +41,9 @@ type Router struct {
 	// the refusal is logged with what the client receives.
 	Reject func(writer http.ResponseWriter, request *http.Request, reason error) protocol.ErrorCode
 	Logger *slog.Logger
+	// Diagnostics stores the safe outcome of every connection these channels
+	// accept and end. Channels registered without one record nothing.
+	Diagnostics observability.Recorder
 }
 
 // Register routes both channels on mux. An upgrade is a plain GET handler
@@ -50,6 +53,12 @@ type Router struct {
 func Register(mux *http.ServeMux, router Router) {
 	if router.Logger == nil {
 		router.Logger = slog.New(slog.NewTextHandler(discardOutput{}, nil))
+	}
+	if pairing, ok := router.Pairing.(*PairingSocket); ok {
+		pairing.SetDiagnostics(router.Diagnostics)
+	}
+	if receiver, ok := router.Receiver.(*ReceiverSocket); ok {
+		receiver.SetDiagnostics(router.Diagnostics)
 	}
 	if router.Pairing != nil {
 		mux.HandleFunc("GET /v1/pairing-sessions/{id}/events", func(writer http.ResponseWriter, request *http.Request) {
