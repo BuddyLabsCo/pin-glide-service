@@ -113,6 +113,13 @@ func (s *receiverSlot) claim(code int) bool {
 	return s.closeCode.CompareAndSwap(0, int32(code))
 }
 
+// end claims a service-started close's status and performs it, so peer and record agree.
+func (s *receiverSlot) end(intent closeIntent) {
+	code, reason := closeMeaning(intent)
+	s.claim(int(code))
+	_ = s.socket.Close(code, reason)
+}
+
 // NewReceiverSocket composes the delivery channel on its domain and publishes
 // presence into the registry of this process run, which whoever reports a
 // Receiver's liveness reads.
@@ -411,7 +418,7 @@ func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot, requestI
 			break
 		}
 		if intent, accepted := s.accept(slot.key.receiverID, messageType, data); !accepted {
-			_ = slot.socket.Close(closeMeaning(intent))
+			slot.end(intent)
 			break
 		}
 	}
@@ -442,9 +449,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 		case <-ctx.Done():
 			return
 		case intent := <-slot.ending:
-			code, reason := closeMeaning(intent)
-			slot.claim(int(code))
-			_ = slot.socket.Close(code, reason)
+			slot.end(intent)
 			return
 		case <-ticker.C:
 			pong, cancel := context.WithTimeout(ctx, s.pongTimeout)
