@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -96,12 +97,20 @@ type receiverSlot struct {
 	connectionID uint64
 	key          receiverKey
 	socket       *websocket.Conn
-	// closeCode is the Close status this slot's own goroutine ended it with, or
-	// 0 while the connection is open or its peer ended it.
-	closeCode int
+	// closeCode is the Close status this connection ended with, or 0 while it
+	// is open or its peer ended it. Shutdown and the liveness goroutine end a
+	// connection from different goroutines, so whichever ends it first claims
+	// the meaning the retained record carries.
+	closeCode atomic.Int32
 	// ending carries the Close meaning when the service ends this committed
 	// connection, so the goroutine that owns the socket also owns that close.
 	ending chan closeIntent
+}
+
+// claim records the Close status of this connection once, so the first closer
+// owns the meaning and a later one cannot restate it.
+func (s *receiverSlot) claim(code int) bool {
+	return s.closeCode.CompareAndSwap(0, int32(code))
 }
 
 // NewReceiverSocket composes the delivery channel on its domain and publishes
@@ -413,7 +422,7 @@ func (s *ReceiverSocket) serve(ctx context.Context, slot *receiverSlot, requestI
 	<-kept
 	// The service's own close owns its status; a peer that left first ends this
 	// connection normally.
-	code := slot.closeCode
+	code := int(slot.closeCode.Load())
 	if code == 0 {
 		code = int(websocket.StatusNormalClosure)
 	}
@@ -434,7 +443,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 			return
 		case intent := <-slot.ending:
 			code, reason := closeMeaning(intent)
-			slot.closeCode = int(code)
+			slot.claim(int(code))
 			_ = slot.socket.Close(code, reason)
 			return
 		case <-ticker.C:
@@ -453,7 +462,7 @@ func (s *ReceiverSocket) keepAlive(ctx context.Context, slot *receiverSlot) {
 				slog.Int64("generation", slot.key.generation),
 				slog.String("cause", err.Error()),
 			)
-			slot.closeCode = int(websocket.StatusAbnormalClosure)
+			slot.claim(int(websocket.StatusAbnormalClosure))
 			_ = slot.socket.CloseNow()
 			return
 		}
@@ -470,7 +479,7 @@ func (s *ReceiverSocket) Close() {
 	for _, slot := range s.slots {
 		// Shutdown ends these connections itself, so the record of each one
 		// carries the meaning the service closed it with.
-		slot.closeCode = int(closeCodes[closeGoingAway])
+		slot.claim(int(closeCodes[closeGoingAway]))
 		if slot.socket != nil {
 			sockets = append(sockets, slot.socket)
 		}

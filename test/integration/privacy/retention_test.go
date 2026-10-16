@@ -52,7 +52,8 @@ FROM pin_glide.retention_policies`)
 // TestRetentionPoliciesCoverTwoTiersAndDeleteByAge shows the adopted table
 // tiers as retained rows and as behaviour: one policy per target table, seven
 // days for transaction data, thirty for diagnostics, and scheduled cleanup
-// deleting exactly the rows each policy puts before its cutoff.
+// deleting exactly the rows each policy puts before its cutoff. Configuration
+// deletion removes configuration alone and leaves those retained rows behind.
 func TestRetentionPoliciesCoverTwoTiersAndDeleteByAge(t *testing.T) {
 	environment := start(t)
 	now := time.Now().UTC()
@@ -122,6 +123,23 @@ VALUES ($1, 'request-fresh', 'http', 'GET', 200, 3)`, now.AddDate(0, 0, -29))
 	if removed != 3 {
 		t.Errorf("scheduled cleanup removed %d rows, want the 3 outside their windows", removed)
 	}
+
+	// An authorized configuration deletion reaches configuration alone, so the
+	// rows every tier retained survive it.
+	environment.exec(t, `
+INSERT INTO pin_glide.model_configurations (id, workspace_id, model, enabled)
+VALUES ('default', 'retention-workspace', 'qwen3.7-flash', true)`)
+	environment.exec(t, `DELETE FROM pin_glide.model_configurations WHERE id = 'default'`)
+
+	var configurations int
+	if err := environment.pool.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM pin_glide.model_configurations`).Scan(&configurations); err != nil {
+		t.Fatalf("count model configurations: %v", err)
+	}
+	if configurations != 0 {
+		t.Errorf("the authorized configuration deletion left %d rows", configurations)
+	}
+
 	for name, query := range map[string]string{
 		"expired Delivery": `SELECT count(*) FROM pin_glide.delivery_deliveries
 		    WHERE id IN ('delivery-old', 'delivery-fresh')`,
@@ -135,7 +153,8 @@ VALUES ($1, 'request-fresh', 'http', 'GET', 200, 3)`, now.AddDate(0, 0, -29))
 			t.Fatalf("count %s rows: %v", name, err)
 		}
 		if kept != 1 {
-			t.Errorf("cleanup kept %d %s rows, want the 1 inside its window", kept, name)
+			t.Errorf("%d %s rows survived, want the 1 inside its window and outside configuration deletion",
+				kept, name)
 		}
 	}
 }

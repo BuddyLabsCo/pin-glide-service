@@ -70,8 +70,13 @@ type Diagnostics struct {
 	events  chan diagnosticEvent
 	done    chan struct{}
 	once    sync.Once
-	closed  atomic.Bool
 	dropped atomic.Int64
+
+	// mutex serializes the closed check with closing the queue, so a record in
+	// flight when the recorder closes is counted as dropped instead of being
+	// sent to a closed channel.
+	mutex  sync.Mutex
+	closed bool
 }
 
 // NewDiagnostics starts a recorder that stores outcomes through pool.
@@ -103,8 +108,10 @@ func (d *Diagnostics) RecordWSS(event DiagnosticEvent) {
 // read what it recorded before the process ends. It is safe to call twice.
 func (d *Diagnostics) Close() {
 	d.once.Do(func() {
-		d.closed.Store(true)
+		d.mutex.Lock()
+		d.closed = true
 		close(d.events)
+		d.mutex.Unlock()
 		<-d.done
 		if dropped := d.dropped.Load(); dropped > 0 {
 			d.logger.Warn("service diagnostics dropped records",
@@ -118,7 +125,10 @@ func (d *Diagnostics) Close() {
 // recorder has closed. An outcome record is diagnostic only, so losing it under
 // pressure is safe while delaying its caller is not.
 func (d *Diagnostics) record(kind string, event DiagnosticEvent) {
-	if d.closed.Load() {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
+	if d.closed {
 		d.dropped.Add(1)
 		return
 	}

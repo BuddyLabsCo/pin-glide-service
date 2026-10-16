@@ -428,6 +428,37 @@ WHERE sender_id = $1 AND message_id = $2 AND receiver_id = $3`,
 	return status
 }
 
+// connectionStatuses reads the retained WSS statuses of one Receiver
+// connection, in the order the service stored them.
+func (e *environment) connectionStatuses(t *testing.T, receiverID string) []int {
+	t.Helper()
+
+	rows, err := e.pool.QueryContext(context.Background(), `
+SELECT code FROM pin_glide.service_diagnostics
+WHERE kind = 'wss' AND subject = $1
+ORDER BY id`, receiverID)
+	if err != nil {
+		t.Fatalf("read retained connection records: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var statuses []int
+	for rows.Next() {
+		var code sql.NullInt64
+		if err := rows.Scan(&code); err != nil {
+			t.Fatalf("read one retained connection status: %v", err)
+		}
+		if !code.Valid {
+			t.Fatalf("a retained connection record carries no status")
+		}
+		statuses = append(statuses, int(code.Int64))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read retained connection records: %v", err)
+	}
+	return statuses
+}
+
 // count returns one row count from the database the composed service uses.
 func (e *environment) count(t *testing.T, query string, args ...any) int64 {
 	t.Helper()

@@ -284,6 +284,11 @@ func (s *Service) Stop() error {
 		return s.stopErr
 	}
 	s.stopped = true
+	// This process's own client releases its idle connections before the
+	// service drains: one the transport parked without ever sending a request
+	// is not idle to the server, so waiting for it would consume the whole
+	// bounded shutdown window.
+	s.Client.CloseIdleConnections()
 	s.cancel()
 
 	select {

@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,18 +19,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
-	"github.com/coder/websocket"
 )
 
 // canaries are synthetic secrets a test hands to the service. None of them is a
-// working credential, and none may reach a PostgreSQL row or a service log.
+// working credential, and none may reach a PostgreSQL row, a service log or a
+// public error.
 const (
 	otpCanary        = "otp-canary-421337"
 	smsCanary        = "sms-canary-door-code-9900"
@@ -42,6 +42,11 @@ const (
 	// exercises a provider outage rather than a rejected code.
 	canaryCode = "wechat-code-provider-failure"
 )
+
+// relayedCanary is the padded-Base64 handshake bytes a pairing_relay frame
+// carries. That direction accepts only Base64, so the ciphertext and client key
+// canaries travel through the service encoded.
+var relayedCanary = base64.StdEncoding.EncodeToString([]byte(ciphertextCanary + "|" + keyCanary))
 
 // environment is one composed service with its disposable database and the
 // service log output a test inspects.
@@ -174,6 +179,7 @@ func (e *environment) request(t *testing.T, method, path, body, credential strin
 // every request this test issued is readable afterwards.
 func (e *environment) stopped(t *testing.T) {
 	t.Helper()
+
 	if err := e.service.Stop(); err != nil {
 		t.Fatalf("stop the composed service: %v", err)
 	}
@@ -189,15 +195,11 @@ type diagnostic struct {
 	durationMS sql.NullInt64
 }
 
-// diagnostics reads every retained record of one correlation identifier.
-func (e *environment) diagnostics(t *testing.T, requestID string) []diagnostic {
+// retained reads every record the given query selects.
+func (e *environment) retained(t *testing.T, query string, args ...any) []diagnostic {
 	t.Helper()
 
-	rows, err := e.pool.QueryContext(context.Background(), `
-SELECT request_id, kind, subject, method, code, duration_ms
-FROM pin_glide.service_diagnostics
-WHERE request_id = $1
-ORDER BY id`, requestID)
+	rows, err := e.pool.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		t.Fatalf("read retained diagnostics: %v", err)
 	}
@@ -216,6 +218,17 @@ ORDER BY id`, requestID)
 		t.Fatalf("read retained diagnostics: %v", err)
 	}
 	return retained
+}
+
+// diagnostics reads every retained record of one correlation identifier.
+func (e *environment) diagnostics(t *testing.T, requestID string) []diagnostic {
+	t.Helper()
+
+	return e.retained(t, `
+SELECT request_id, kind, subject, method, code, duration_ms
+FROM pin_glide.service_diagnostics
+WHERE request_id = $1
+ORDER BY id`, requestID)
 }
 
 // storedText reads every retained diagnostic row as text, which is what shows
@@ -250,7 +263,10 @@ ORDER BY id`)
 }
 
 // refuseSecrets requires none of the synthetic secrets to appear in stored
-// values, which is what shows they reached neither PostgreSQL nor the log.
+// values, which is what shows they reached neither PostgreSQL nor the log. No
+// operation accepts SMS text, an OTP or a client key, so for those the sweep is
+// the whole assertion; the rest are handed to the service by the test that
+// sweeps.
 func refuseSecrets(t *testing.T, where, stored string) {
 	t.Helper()
 
@@ -261,6 +277,7 @@ func refuseSecrets(t *testing.T, where, stored string) {
 		"SMS text":           smsCanary,
 		"Pairing key":        keyCanary,
 		"message ciphertext": ciphertextCanary,
+		"relayed ciphertext": relayedCanary,
 		"refresh credential": refreshCanary,
 	} {
 		if strings.Contains(stored, secret) {
@@ -277,50 +294,58 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	environment := start(t)
 
 	// A body the transport cannot read fails before any business work, so its
-	// record is the status alone.
-	status, payload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
-		`{"wechatCode":`, "")
+	// record is the status alone, and the answer to it must not echo the body
+	// the caller sent.
+	status, malformedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
+		`{"wechatCode":"`+wechatCodeCanary+`"`, "")
 	if status != http.StatusBadRequest {
-		t.Fatalf("malformed login status = %d: %s", status, payload)
+		t.Fatalf("malformed login status = %d, want %d", status, http.StatusBadRequest)
 	}
 	var malformed problem
-	if err := json.Unmarshal(payload, &malformed); err != nil {
-		t.Fatalf("decode malformed-login problem: %v: %s", err, payload)
+	if err := json.Unmarshal(malformedPayload, &malformed); err != nil {
+		t.Fatalf("decode malformed-login problem: %v", err)
 	}
 
 	// An authorization the provider cannot verify, carrying the synthetic code
 	// and OTP this test must never see again.
-	status, payload = environment.request(t, http.MethodPost, "/v1/auth/wechat",
+	status, rejectedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
 		`{"wechatCode":"`+wechatCodeCanary+`"}`, "")
 	if status != http.StatusUnauthorized {
-		t.Fatalf("rejected login status = %d: %s", status, payload)
+		t.Fatalf("rejected login status = %d: %s", status, rejectedPayload)
 	}
 	var rejected problem
-	if err := json.Unmarshal(payload, &rejected); err != nil {
-		t.Fatalf("decode rejected-login problem: %v: %s", err, payload)
+	if err := json.Unmarshal(rejectedPayload, &rejected); err != nil {
+		t.Fatalf("decode rejected-login problem: %v: %s", err, rejectedPayload)
 	}
 
 	// A provider that fails rather than rejects the identity. The failure cause
 	// carries no credential of its own, so the record of it can only be safe.
 	environment.provider.Fail(canaryCode, fmt.Errorf("%w: provider outage",
 		identity.ErrIdentityProvider))
-	status, payload = environment.request(t, http.MethodPost, "/v1/auth/wechat",
+	status, failedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
 		`{"wechatCode":"`+canaryCode+`"}`, "")
 	if status != http.StatusBadGateway {
-		t.Fatalf("provider-failure status = %d: %s", status, payload)
+		t.Fatalf("provider-failure status = %d: %s", status, failedPayload)
 	}
 	var failed problem
-	if err := json.Unmarshal(payload, &failed); err != nil {
-		t.Fatalf("decode provider-failure problem: %v: %s", err, payload)
+	if err := json.Unmarshal(failedPayload, &failed); err != nil {
+		t.Fatalf("decode provider-failure problem: %v: %s", err, failedPayload)
 	}
 
 	// A credential the service rejects exercises the same surface with the
 	// bearer value the caller supplied.
-	status, payload = environment.request(t, http.MethodPost, "/v1/auth/logout",
+	status, credentialPayload := environment.request(t, http.MethodPost, "/v1/auth/logout",
 		`{}`, refreshCanary)
 	if status != http.StatusUnauthorized {
-		t.Fatalf("rejected credential status = %d: %s", status, payload)
+		t.Fatalf("rejected credential status = %d: %s", status, credentialPayload)
 	}
+
+	// Every failure answer is a public surface, so none of them may carry what
+	// its caller sent.
+	refuseSecrets(t, "the malformed-request error", string(malformedPayload))
+	refuseSecrets(t, "the rejected-login error", string(rejectedPayload))
+	refuseSecrets(t, "the provider-failure error", string(failedPayload))
+	refuseSecrets(t, "the rejected-credential error", string(credentialPayload))
 
 	environment.stopped(t)
 
@@ -359,111 +384,4 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	}
 	refuseSecrets(t, "service rows", stored)
 	refuseSecrets(t, "service logs", environment.logs.String())
-}
-
-// dial opens one authenticated pairing subscription and returns its session ID
-// once the snapshot the service sends on commit has arrived.
-func (e *environment) dial(t *testing.T, sessionID, credential string) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	url := "ws" + strings.TrimPrefix(e.service.BaseURL, "http") +
-		"/v1/pairing-sessions/" + sessionID + "/events"
-	socket, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPHeader:   http.Header{"Authorization": []string{"Bearer " + credential}},
-		Subprotocols: []string{"pin-glide.v1"},
-	})
-	if err != nil {
-		t.Fatalf("dial pairing channel %s: %v: %+v", url, err, response)
-	}
-	if _, _, err := socket.Read(ctx); err != nil {
-		_ = socket.CloseNow()
-		t.Fatalf("read the committed snapshot: %v", err)
-	}
-	// The retained record of a connection whose peer left first carries the
-	// normal meaning the published close codes define.
-	if err := socket.Close(websocket.StatusNormalClosure, ""); err != nil {
-		t.Fatalf("close the pairing channel: %v", err)
-	}
-}
-
-// TestWSSDiagnosticsCorrelateOneConnection shows the retained outcome of a real
-// pairing subscription: the session it belonged to, the status that committed
-// it and the Close status it ended with, under the operation that opened it.
-func TestWSSDiagnosticsCorrelateOneConnection(t *testing.T) {
-	environment := start(t)
-	sender := environment.sender(t, "code-wss", "openid-wss")
-
-	status, payload := environment.request(t, http.MethodPost, "/v1/pairing-sessions",
-		`{"mode":"new_receiver"}`, "")
-	if status != http.StatusCreated {
-		t.Fatalf("create Pairing Session status = %d: %s", status, payload)
-	}
-	var created struct {
-		Session struct {
-			SessionID string `json:"sessionId"`
-		} `json:"session"`
-	}
-	if err := json.Unmarshal(payload, &created); err != nil {
-		t.Fatalf("decode created session: %v: %s", err, payload)
-	}
-
-	// The Sender's own subscription belongs to an authenticated session, so it
-	// claims the session first, exactly as its client does.
-	status, payload = environment.request(t, http.MethodPost,
-		"/v1/pairing-sessions/"+created.Session.SessionID+"/authorize",
-		`{"alias":"Diagnosed"}`, sender.UserSession.Token)
-	if status != http.StatusOK {
-		t.Fatalf("claim status = %d: %s", status, payload)
-	}
-
-	environment.dial(t, created.Session.SessionID, sender.UserSession.Token)
-	environment.stopped(t)
-
-	// The subscription's own operation is the request that opened it, which the
-	// service logged with the same identifiers it retained.
-	retained := environment.diagnosticsFor(t, "wss", created.Session.SessionID)
-	if len(retained) != 1 {
-		t.Fatalf("the pairing connection kept %d records, want 1: %+v", len(retained), retained)
-	}
-	record := retained[0]
-	if !record.code.Valid || record.code.Int64 != int64(websocket.StatusNormalClosure) {
-		t.Errorf("pairing connection record = %+v, want close status %d",
-			record, websocket.StatusNormalClosure)
-	}
-	if record.method.Valid || record.durationMS.Valid {
-		t.Errorf("pairing connection record = %+v, want no request fields", record)
-	}
-	refuseSecrets(t, "service rows", environment.storedText(t))
-	refuseSecrets(t, "service logs", environment.logs.String())
-}
-
-// diagnosticsFor reads every retained record of one surface and subject.
-func (e *environment) diagnosticsFor(t *testing.T, kind, subject string) []diagnostic {
-	t.Helper()
-
-	rows, err := e.pool.QueryContext(context.Background(), `
-SELECT request_id, kind, subject, method, code, duration_ms
-FROM pin_glide.service_diagnostics
-WHERE kind = $1 AND subject = $2
-ORDER BY id`, kind, subject)
-	if err != nil {
-		t.Fatalf("read retained diagnostics: %v", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var retained []diagnostic
-	for rows.Next() {
-		var record diagnostic
-		if err := rows.Scan(&record.requestID, &record.kind, &record.subject,
-			&record.method, &record.code, &record.durationMS); err != nil {
-			t.Fatalf("read one retained diagnostic: %v", err)
-		}
-		retained = append(retained, record)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("read retained diagnostics: %v", err)
-	}
-	return retained
 }

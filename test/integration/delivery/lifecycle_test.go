@@ -104,6 +104,15 @@ func TestBoundedShutdownInterruptsOwnedWork(t *testing.T) {
 	if _, _, err := socket.Read(closed); websocket.CloseStatus(err) != websocket.StatusGoingAway {
 		t.Errorf("the delivery connection ended with %v, want the going-away meaning", err)
 	}
+
+	// The connection that carried the interrupted Delivery is correlated in the
+	// diagnostics table with the status that committed it and the meaning it
+	// ended with.
+	if statuses := environment.connectionStatuses(t, receiverID); len(statuses) != 2 ||
+		statuses[0] != http.StatusSwitchingProtocols ||
+		statuses[1] != int(websocket.StatusGoingAway) {
+		t.Errorf("the delivery connection retained the statuses %v, want [101 1001]", statuses)
+	}
 }
 
 // TestUploadOutlivesItsDisconnectedCaller shows registered work continuing
