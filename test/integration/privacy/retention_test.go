@@ -316,10 +316,12 @@ func (e *environment) runCleanup(t *testing.T, reference time.Time) int {
 	return removed
 }
 
-// applyDataScripts applies every shipped data script in filename order, which
-// is the order the release executes one commit's scripts in. The tests read
-// the policies and the scheduled job the release deploys rather than a
-// test-only copy of them.
+// applyDataScripts applies every shipped data script in filename order, the
+// order a release runs the scripts one commit introduces. The tests read the
+// policies and the scheduled job the release deploys rather than a test-only
+// copy of them, and apply the files directly: the release records each script
+// and never applies it again, so a second application here shows the
+// rerunnability the scripts owe instead of that skip.
 func (e *environment) applyDataScripts(t *testing.T) {
 	t.Helper()
 

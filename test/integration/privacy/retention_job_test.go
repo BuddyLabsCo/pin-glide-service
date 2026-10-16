@@ -63,11 +63,13 @@ func (e *environment) extensionVersion(t *testing.T, name string) string {
 }
 
 // TestScheduledCleanupJobConvergesThroughCreateUpdateActiveAndRetirement shows
-// the shipped data scripts as the whole lifecycle of one stable owner and name:
-// applying them twice is a safe rerun that keeps the job identity, a mutated or
-// missing job row is converged rather than duplicated, and a job under the
-// service's own name prefix that no shipped script declares is retired while an
-// unrelated operator job is left alone.
+// the shipped data scripts converging one stable owner and name whenever a
+// release applies them: a rerun keeps the job identity, a mutated or missing
+// job row is converged rather than duplicated, and a job under the service's
+// own name prefix that the release no longer declares is retired while an
+// unrelated operator job is left alone. The release records each script and
+// never applies it a second time, so these applications stand in for the
+// release that ships the script.
 func TestScheduledCleanupJobConvergesThroughCreateUpdateActiveAndRetirement(t *testing.T) {
 	environment := start(t)
 	environment.applyDataScripts(t)

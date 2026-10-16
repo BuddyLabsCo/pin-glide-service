@@ -18,8 +18,9 @@ REVOKE ALL ON TABLE pin_glide.retention_policies FROM PUBLIC;
 REVOKE ALL ON FUNCTION
 pin_glide.pin_glide_fn_cleanup_expired_rows(timestamptz) FROM PUBLIC;
 
--- The scheduled job keeps its stable owner and name, and re-running this
--- script updates the declaration in place instead of adding a second job.
+-- The scheduled job keeps its stable owner and name: declaring it again
+-- converges the deployed row in place instead of adding a second job, so this
+-- release declares it rather than assuming the earlier script already did.
 SELECT cron.schedule(
     'pin-glide-retention-cleanup',
     '0 19 * * *',
@@ -36,9 +37,11 @@ SELECT cron.alter_job(
     active => true
 );
 
--- Retirement: deleting a declaration never removes the deployed row, so the
--- service retires every job in its own name prefix that this release no longer
--- declares. Jobs with any other name are left alone.
+-- Retirement: deleting a declaration never removes the deployed row, so this
+-- release unschedules every job in its own name prefix that it no longer
+-- declares. Jobs with any other name are left alone. A recorded script is
+-- never applied twice, so a later release that stops declaring a job retires
+-- it from its own script.
 SELECT cron.unschedule(jobname)
 FROM cron.job
 WHERE

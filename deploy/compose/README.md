@@ -260,7 +260,7 @@ ledger table is a cleanup target:
 | --- | --- | --- |
 | `pin_glide.delivery_deliveries` | seven days | `created_at`: the admission time a duplicate joins until the row itself is deleted |
 | `pin_glide.identity_credentials` | seven days | `expires_at`: a live credential, and so a sliding family, is never deleted |
-| `pin_glide.identity_refresh_operations` | seven days | `expires_at` of the consumed token, so an ordering guard outlives the parent it orders |
+| `pin_glide.identity_refresh_operations` | seven days | `expires_at` of the consumed token, so an ordering guard is retained while that token is valid and goes with its parent |
 | `pin_glide.pairing_sessions` | seven days | `expires_at`: the absolute end of the session and its restricted credential |
 | `pin_glide.service_diagnostics` | thirty days | `occurred_at` |
 | `release.release_schema_audits` | thirty days | `executed_at` |
@@ -279,13 +279,18 @@ that carries it, not with a window: while that row exists a duplicate still
 joins it, and only its deletion admits the same Sender, Message and Receiver
 again as new work.
 
-The Data Scripts own the job: a stable name and owner, create/update through
-`cron.schedule`, explicit active state through `cron.alter_job`, and explicit
-retirement of any `pin-glide-` job name a later release no longer declares. The
-cleanup configuration and the dynamic routine are revoked from `PUBLIC`, so only
-the release owner writes targets or runs cleanup. Schema Sync reconciles neither
-`cron.job` rows nor extension versions, so verify the job and the extension
-separately:
+The Data Scripts own the job, and the release records each of them in
+`release.release_data_scripts` and applies it only once: this release declares
+`pin-glide-retention-cleanup` from its own script, with a stable name and owner
+through `cron.schedule`, explicit active state through `cron.alter_job`, and
+`cron.unschedule` for every other `pin-glide-` job name it no longer declares.
+Declaring the job again is what converges a row an earlier release left missing,
+inactive or drifted, so a later release that changes the scheduled set ships its
+own script instead of editing a recorded one. The cleanup configuration and the
+dynamic routine are revoked from `PUBLIC`, which PostgreSQL grants `EXECUTE` on
+a new function by default, so no other role writes targets or runs cleanup.
+Schema Sync reconciles neither `cron.job` rows nor extension versions, so verify
+the job and the extension separately:
 
 ```sh
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d pin_glide -c \
