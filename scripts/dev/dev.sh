@@ -6,8 +6,9 @@ cd "$root"
 mode="${1:-}"
 case "$mode" in
   '')
-    if [[ -z "${PIN_GLIDE_SNAPSHOT_PATH:-}" || ! -d "$PIN_GLIDE_SNAPSHOT_PATH" ]]; then
-      echo 'PIN_GLIDE_SNAPSHOT_PATH must name an existing directory' >&2
+    if [[ -z "${PIN_GLIDE_SNAPSHOT_PATH:-}" || ! -d "$PIN_GLIDE_SNAPSHOT_PATH" ||
+      ! -r "$PIN_GLIDE_SNAPSHOT_PATH" || ! -x "$PIN_GLIDE_SNAPSHOT_PATH" ]]; then
+      echo 'PIN_GLIDE_SNAPSHOT_PATH must name a readable existing directory' >&2
       exit 1
     fi
     ;;
@@ -30,9 +31,9 @@ compose() {
 
 # PID plus kernel start time prevents a stale file from killing a reused PID.
 if [[ -f "$state_dir/apps.pid" ]]; then
-  read -r old_pid old_start < "$state_dir/apps.pid"
-  if [[ "$old_pid" =~ ^[0-9]+$ && -r "/proc/$old_pid/stat" ]] &&
-    [[ "$(awk '{print $22}' "/proc/$old_pid/stat")" == "$old_start" ]]; then
+  read -r old_pid old_start < "$state_dir/apps.pid" || true
+  if [[ "${old_pid:-}" =~ ^[0-9]+$ && -n "${old_start:-}" && -r "/proc/$old_pid/stat" ]] &&
+    [[ "$(awk '{print $22}' "/proc/$old_pid/stat")" == "${old_start:-}" ]]; then
     kill -TERM "$old_pid" 2>/dev/null || true
     for ((attempt = 0; attempt < 100; attempt++)); do
       [[ ! -e "$state_dir/apps.pid" ]] && break
@@ -67,14 +68,18 @@ if [[ "$mode" != --code-only ]]; then
   snapshot=''
   shopt -s nullglob
   for candidate in "$PIN_GLIDE_SNAPSHOT_PATH"/*.dump; do
-    [[ -f "$candidate" ]] || continue
+    [[ -f "$candidate" && ! -L "$candidate" ]] || continue
     if [[ -z "$snapshot" || "$candidate" -nt "$snapshot" ||
       ( ! "$snapshot" -nt "$candidate" && "$candidate" > "$snapshot" ) ]]; then
       snapshot="$candidate"
     fi
   done
+  if [[ -n "$snapshot" && ! -r "$snapshot" ]]; then
+    echo "Snapshot file is not readable: $snapshot" >&2
+    exit 1
+  fi
   compose down --volumes --remove-orphans
-  compose up --detach --wait postgres
+  compose up --detach --wait --build postgres
   if [[ -n "$snapshot" ]]; then
     echo "Restoring snapshot: $snapshot"
     compose exec -T postgres pg_restore --exit-on-error --no-owner --no-privileges \

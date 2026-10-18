@@ -70,6 +70,32 @@ test('dev rejects missing and non-directory snapshot paths before touching Docke
       assert(!fs.existsSync(f.log), 'Docker ran before validating PIN_GLIDE_SNAPSHOT_PATH');
     }
   }
+  const unreadable = path.join(f.dir, 'unreadable');
+  fs.mkdirSync(unreadable);
+  fs.chmodSync(unreadable, 0o000);
+  let result;
+  try {
+    result = f.run('dev', { PIN_GLIDE_SNAPSHOT_PATH: unreadable });
+  } finally {
+    fs.chmodSync(unreadable, 0o700);
+  }
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /PIN_GLIDE_SNAPSHOT_PATH.*director/i);
+  assert(!fs.existsSync(f.log), 'Docker ran before validating PIN_GLIDE_SNAPSHOT_PATH');
+
+  const snapshots = path.join(f.dir, 'snapshots');
+  const blocked = path.join(snapshots, 'blocked.dump');
+  fs.mkdirSync(snapshots);
+  fs.writeFileSync(blocked, 'dump');
+  fs.chmodSync(blocked, 0o000);
+  try {
+    result = f.run('dev', { PIN_GLIDE_SNAPSHOT_PATH: snapshots });
+  } finally {
+    fs.chmodSync(blocked, 0o600);
+  }
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Snapshot file is not readable/);
+  assert(!fs.existsSync(f.log), 'Docker ran before validating the selected snapshot');
 });
 
 // Regression: stale snapshots or apps starting before masking expose unsafe data.
@@ -82,10 +108,13 @@ test('dev resets isolated infrastructure and restores the latest dump before mig
   fs.writeFileSync(path.join(snapshots, 'older.dump'), 'old dump');
   fs.writeFileSync(path.join(snapshots, 'newer.dump'), 'new dump');
   fs.writeFileSync(path.join(snapshots, 'zzz.dump'), 'tie dump');
+  fs.writeFileSync(path.join(snapshots, 'source'), 'symlink target');
+  fs.symlinkSync(path.join(snapshots, 'source'), path.join(snapshots, 'linked.dump'));
   fs.utimesSync(path.join(snapshots, 'older.dump'), 1, 1);
   const tied = new Date(2_000_000);
   fs.utimesSync(path.join(snapshots, 'newer.dump'), tied, tied);
   fs.utimesSync(path.join(snapshots, 'zzz.dump'), tied, tied);
+  fs.utimesSync(path.join(snapshots, 'source'), 3_000_000, 3_000_000);
   fs.writeFileSync(path.join(f.dir, 'dev/anon/fixture.sql'), '-- fixture label');
   const result = f.run('dev', { PIN_GLIDE_SNAPSHOT_PATH: snapshots, DLV_BIN: '/does/not/exist' });
   assert.equal(result.status, 0, result.stderr);
@@ -148,6 +177,20 @@ test('stale application PID does not stop an unrelated process', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotThrow(() => process.kill(unrelated.pid, 0), 'stale PID killed an unrelated process');
   assert(!fs.existsSync(path.join(state, 'apps.pid')));
+});
+
+test('malformed application PID state does not block recovery', t => {
+  const f = fixture(t);
+  commandFakes(f);
+  const project = `pin-glide-dev-${createHash('sha256').update(fs.realpathSync(f.dir)).digest('hex').slice(0, 16)}`;
+  const state = path.join(f.dir, 'tmp', project);
+  fs.mkdirSync(state, { recursive: true });
+  for (const contents of ['', '123\n']) {
+    fs.writeFileSync(path.join(state, 'apps.pid'), contents);
+    const result = f.run('dev-stop', { PIN_GLIDE_SNAPSHOT_PATH: '' });
+    assert.equal(result.status, 0, result.stderr);
+    assert(!fs.existsSync(path.join(state, 'apps.pid')));
+  }
 });
 
 // Regression: restore, migration or masking failure must never expose a raw dump.
@@ -282,6 +325,11 @@ setInterval(() => {}, 1000);`;
 if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.stringify(`#!/usr/bin/env node\n${gate}\n`)}, { mode: 0o755 });\n`);
   const snapshots = path.join(f.dir, 'snapshots');
   fs.mkdirSync(snapshots);
+  const providerSentinels = {
+    PIN_GLIDE_WECHAT_APP_ID: 'deployed-wechat-app',
+    PIN_GLIDE_WECHAT_APP_SECRET: 'deployed-wechat-secret',
+    PIN_GLIDE_BAILIAN_API_KEY: 'deployed-bailian-key',
+  };
   let active;
   let imageBuilt = false;
   t.after(() => {
@@ -293,7 +341,7 @@ if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.s
   });
   run('docker', ['build', '-f', path.join(root, 'deploy/compose/db-tools.Dockerfile'), '-t', image, root]);
   imageBuilt = true;
-  compose('up', '--detach', '--wait', 'postgres');
+  compose('up', '--detach', '--wait', '--build', 'postgres');
   run(go, ['run', './cmd/pin-glide-db-tools', 'migrate'], { cwd: root, env: {
     ...process.env, PIN_GLIDE_ENV: 'development', PIN_GLIDE_DATABASE_URL: 'postgres://pin_glide:pin_glide@127.0.0.1:55432/pin_glide?sslmode=disable',
     PIN_GLIDE_RELEASE_VERSION: JSON.parse(fs.readFileSync(path.join(root, 'version.json'))).version,
@@ -349,7 +397,7 @@ if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.s
   assert.match(rawData, /newer-workspace/, 'Snapshot data was masked at the producer');
   assert.match(rawData, /pin_glide_dev_canary/, 'Snapshot did not retain the active cron fixture');
   fs.copyFileSync(path.join(root, 'dev/anon/model_configurations.sql'), path.join(f.dir, 'dev/anon/model_configurations.sql'));
-  active = live(f, 'dev', { PIN_GLIDE_SNAPSHOT_PATH: snapshots });
+  active = live(f, 'dev', { PIN_GLIDE_SNAPSHOT_PATH: snapshots, ...providerSentinels });
   await active.ready;
   assert.equal(sql("SELECT enabled::text || '|' || workspace_id || '|' || model FROM pin_glide.model_configurations WHERE id = 'default'"),
     'false|local-workspace|qwen3');
@@ -365,7 +413,7 @@ if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.s
   process.kill(-active.child.pid, 'SIGINT');
   await active.exited;
   sql("UPDATE pin_glide.model_configurations SET workspace_id = 'local-edit'");
-  active = live(f, 'dev-code-only', { PIN_GLIDE_SNAPSHOT_PATH: '' });
+  active = live(f, 'dev-code-only', { PIN_GLIDE_SNAPSHOT_PATH: '', ...providerSentinels });
   await active.ready;
   assert.equal(sql("SELECT workspace_id FROM pin_glide.model_configurations WHERE id = 'default'"), 'local-edit');
   assert.equal(sql('SELECT count(*) FROM release.release_deploy_history'), history);
