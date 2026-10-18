@@ -19,6 +19,11 @@ from the merged release commit, the PostgreSQL/pg_cron image under its own tag,
 and both validated contract descriptions. Hosts pull packaged artifacts and
 never build the service.
 
+Use installation files and images from the same published Git tag. `main` can
+contain unreleased image names or CLI changes; changing `RELEASE` alone does
+not make those files compatible with an older release. For example, `v0.1.1`
+uses `pin-glide-migrate`, while this checkout uses `pin-glide-db-tools`.
+
 `pin-glide-postgres` is built from `postgres.Dockerfile`: the official
 PostgreSQL 18 Debian (trixie) distribution, pg_cron 1.6.8 from the PGDG apt
 repository, and the preload/database configuration pg_cron requires
@@ -49,18 +54,31 @@ Supply a personal access token (classic) with at least `read:packages` at the
 password prompt; GHCR package access does not accept fine-grained tokens. Never
 put a token in the script, Compose file, or `.env`.
 
-Place `docker-compose.yml`, `.env`, and a copy of the repository-root
-`install.sh` in the same directory on the server:
+For a new installation, run these commands from a repository clone on the
+server. Choose a published release and extract all three files from its tag;
+the checkout's current branch does not matter. Do not overwrite an existing
+installation's `.env`:
 
 ```sh
+set -eu
+umask 077
+RELEASE=0.1.1
+git fetch origin tag "v${RELEASE}"
 mkdir -p /srv/pin-glide
-cp deploy/compose/docker-compose.yml /srv/pin-glide/docker-compose.yml
-cp deploy/compose/.env.example /srv/pin-glide/.env
-cp install.sh /srv/pin-glide/install.sh
+git show "v${RELEASE}:deploy/compose/docker-compose.yml" \
+  > /srv/pin-glide/docker-compose.yml
+git show "v${RELEASE}:deploy/compose/.env.example" > /srv/pin-glide/.env
+git show "v${RELEASE}:install.sh" > /srv/pin-glide/install.sh
+sed -i "s/^RELEASE=.*/RELEASE=${RELEASE}/" /srv/pin-glide/.env
 chmod 700 /srv/pin-glide/install.sh
 chmod 600 /srv/pin-glide/.env
+git show "v${RELEASE}:deploy/compose/README.md"
 cd /srv/pin-glide
 ```
+
+Follow the displayed deployment guide from the selected tag for configuration
+and installer commands. The remaining sections describe this checkout; older
+releases may use different service names or lack newer actions.
 
 Edit `.env` before running the installer:
 

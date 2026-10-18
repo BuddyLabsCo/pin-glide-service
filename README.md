@@ -163,7 +163,10 @@ Database Release history, so local migration records the checkout's
 `install.sh` with `deploy/compose` installs and upgrades one Pin Glide instance
 from published images: prepare, pull, stop the api and its scheduled database
 work, take a stopped-writer recovery backup, migrate, start and restore the
-intended scheduling state. `deploy/compose/README.md` documents the operator
+intended scheduling state. Select a published release and take the installer,
+Compose file, environment template and deployment guide from that same Git tag.
+`main` can contain changes that its latest published images do not support.
+`deploy/compose/README.md` documents the operator
 prerequisites, commands and recovery procedure, including the whole-table
 retention inventory, its clocks and the scheduled cleanup job.
 
