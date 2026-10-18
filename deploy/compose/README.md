@@ -193,11 +193,11 @@ JSON is the only workflow state.
 
 ## Initial deployment and upgrades
 
-First deployment:
+First deployment, using the `RELEASE` selected above:
 
 ```sh
-./install.sh --version 0.1.0 --prep --initial-install
-./install.sh --version 0.1.0 --initial-deploy
+./install.sh --version "$RELEASE" --prep --initial-install
+./install.sh --version "$RELEASE" --initial-deploy
 ```
 
 The `--initial-install` modifier is valid only with prep. It records
