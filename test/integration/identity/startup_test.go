@@ -4,16 +4,20 @@ package identity_test
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
 
@@ -23,6 +27,11 @@ import (
 func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 	postgres := harness.StartPostgres(t)
 	postgres.ApplySchema(t, "pin_glide")
+	pool, err := db.Open(context.Background(), postgres.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -40,25 +49,25 @@ func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		wechatAppID  string
-		wechatSecret string
-		qqAppID      string
-		qqAppKey     string
+		name              string
+		wechatAppID       string
+		wechatSecret      string
+		qqAppID           string
+		qqAppKey          string
+		unavailableProofs []string
 	}{
-		{name: "neither configured"},
-		{name: "only wechat", wechatAppID: "wx-app", wechatSecret: "wx-secret"},
-		{name: "only qq", qqAppID: "qq-app", qqAppKey: "qq-key"},
+		{name: "neither configured", unavailableProofs: []string{"wechat", "qq"}},
+		{name: "only wechat", wechatAppID: "wx-app", wechatSecret: "wx-secret", unavailableProofs: []string{"qq"}},
+		{name: "only qq", qqAppID: "qq-app", qqAppKey: "qq-key", unavailableProofs: []string{"wechat"}},
 		{name: "both configured", wechatAppID: "wx-app", wechatSecret: "wx-secret", qqAppID: "qq-app", qqAppKey: "qq-key"},
-		{name: "wechat partial", wechatAppID: "wx-app"},
-		{name: "qq partial", qqAppKey: "qq-key"},
+		{name: "wechat partial", wechatAppID: "wx-app", unavailableProofs: []string{"wechat"}},
+		{name: "qq partial", qqAppKey: "qq-key", unavailableProofs: []string{"qq"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			address := freeAddress(t)
 			t.Setenv("PIN_GLIDE_ENV", "production")
 			t.Setenv("PIN_GLIDE_DATABASE_URL", postgres.DSN)
-			t.Setenv("PIN_GLIDE_API_ADDRESS", address)
+			t.Setenv("PIN_GLIDE_API_ADDRESS", "127.0.0.1:0")
 			t.Setenv("PIN_GLIDE_WECHAT_APP_ID", test.wechatAppID)
 			t.Setenv("PIN_GLIDE_WECHAT_APP_SECRET", test.wechatSecret)
 			t.Setenv("PIN_GLIDE_QQ_APP_ID", test.qqAppID)
@@ -67,9 +76,9 @@ func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 
 			command := exec.Command(binary)
 			command.Dir = root
-			var logs bytes.Buffer
-			command.Stdout = &logs
-			command.Stderr = &logs
+			logs := &lockedBuffer{}
+			command.Stdout = logs
+			command.Stderr = logs
 			if err := command.Start(); err != nil {
 				t.Fatalf("start api: %v", err)
 			}
@@ -81,7 +90,11 @@ func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 			exited := make(chan error, 1)
 			go func() { exited <- command.Wait() }()
 
-			waitForHealth(t, address, exited, &logs)
+			address := waitForListeningAddress(t, exited, logs)
+			waitForHealth(t, address, exited, logs)
+			for _, proof := range test.unavailableProofs {
+				assertUnavailableProof(t, address, pool, proof)
+			}
 			if err := command.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Fatalf("stop api: %v", err)
 			}
@@ -97,21 +110,75 @@ func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 	}
 }
 
-func freeAddress(t *testing.T) string {
+func waitForListeningAddress(t *testing.T, exited <-chan error, logs *lockedBuffer) string {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case err := <-exited:
+			t.Fatalf("api exited before listening: %v\n%s", err, logs.String())
+		default:
+		}
+
+		text := logs.String()
+		const marker = `"address":"`
+		if start := strings.Index(text, marker); start >= 0 {
+			start += len(marker)
+			if end := strings.IndexByte(text[start:], '"'); end >= 0 {
+				return text[start : start+end]
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("api did not report a listening address\n%s", logs.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return address
 }
 
-func waitForHealth(t *testing.T, address string, exited <-chan error, logs *bytes.Buffer) {
+func assertUnavailableProof(t *testing.T, address string, pool *sql.DB, provider string) {
+	t.Helper()
+
+	var path, body string
+	switch provider {
+	case "wechat":
+		path, body = "/v1/auth/wechat", `{"wechatCode":"unconfigured-provider"}`
+	case "qq":
+		path, body = "/v1/auth/qq", `{"qqCode":"unconfigured-provider"}`
+	default:
+		t.Fatalf("unknown unavailable provider %q", provider)
+	}
+
+	response, err := http.Post("http://"+address+path, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("%s login through unconfigured provider: %v", provider, err)
+	}
+	payload, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read %s login response: %v", provider, err)
+	}
+	if response.StatusCode != http.StatusBadGateway ||
+		!strings.Contains(string(payload), "identity_provider_error") {
+		t.Fatalf("%s login through unconfigured provider = %d %s, want 502 identity_provider_error",
+			provider, response.StatusCode, payload)
+	}
+
+	var accounts, senders, credentials int
+	if err := pool.QueryRow(`SELECT
+		(SELECT count(*) FROM pin_glide.identity_accounts),
+		(SELECT count(*) FROM pin_glide.identity_sender_registrations),
+		(SELECT count(*) FROM pin_glide.identity_credentials)`).Scan(
+		&accounts, &senders, &credentials); err != nil {
+		t.Fatalf("count identity state: %v", err)
+	}
+	if accounts != 0 || senders != 0 || credentials != 0 {
+		t.Fatalf("failed QQ login wrote identity state: accounts=%d senders=%d credentials=%d",
+			accounts, senders, credentials)
+	}
+}
+
+func waitForHealth(t *testing.T, address string, exited <-chan error, logs *lockedBuffer) {
 	t.Helper()
 
 	client := &http.Client{Timeout: time.Second}
@@ -136,4 +203,21 @@ func waitForHealth(t *testing.T, address string, exited <-chan error, logs *byte
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(data)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
 }

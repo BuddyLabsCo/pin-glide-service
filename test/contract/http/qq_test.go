@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -34,7 +35,20 @@ func TestPublishedHTTPDescriptionIncludesQQRecoveryProof(t *testing.T) {
 	if properties := propertyFields(t, request); !slices.Equal(properties, []string{"alias", "qqCode", "wechatCode"}) {
 		t.Errorf("request fields = %v, want [alias qqCode wechatCode]", properties)
 	}
-	if _, ok := operation["responses"].(map[string]any)["502"]; !ok {
-		t.Error("Pairing authorization has no 502 identity provider response")
+	for _, status := range []string{"401", "422", "502"} {
+		if _, ok := operation["responses"].(map[string]any)[status]; !ok {
+			t.Errorf("Pairing authorization has no %s failure response", status)
+		}
+	}
+	operationDescription, _ := operation["description"].(string)
+	for _, code := range []string{
+		"wechat_authorization_invalid",
+		"qq_authorization_invalid",
+		"validation_failed",
+		"identity_provider_error",
+	} {
+		if !strings.Contains(operationDescription, code) {
+			t.Errorf("Pairing authorization description does not document %s", code)
+		}
 	}
 }

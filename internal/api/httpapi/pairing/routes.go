@@ -100,7 +100,7 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 			"A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. " +
 			"recover_receiver additionally requires exactly one fresh WeChat or QQ proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. " +
 			"Sending both proof fields is rejected. " +
-			"Failures report 401 for an unusable management credential or provider authorization, 403 fresh_identity_required, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, 502 identity_provider_error, or 503 service_unavailable.",
+			"Failures report 401 for an unusable management credential, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for absent or conflicting recovery proof, 502 identity_provider_error, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusForbidden,
