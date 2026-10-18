@@ -77,8 +77,10 @@ cd /srv/pin-glide
 ```
 
 Follow the displayed deployment guide from the selected tag for configuration
-and installer commands. The remaining sections describe this checkout; older
-releases may use different service names or lack newer actions.
+and installer commands. Use the selected `RELEASE` for every `--version`
+argument, even when the tagged guide shows a different example version.
+The remaining sections describe this checkout; older releases may use different
+service names or lack newer actions.
 
 Edit `.env` before running the installer:
 
