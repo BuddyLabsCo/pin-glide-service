@@ -8,7 +8,7 @@ database image:
 | Service | Image | Lifecycle |
 | --- | --- | --- |
 | `api` | `ghcr.io/buddylabsco/pin-glide-api:${RELEASE}` | One release tag per release |
-| `migrate` | `ghcr.io/buddylabsco/pin-glide-migrate:${RELEASE}` | One release tag per release |
+| `db-tools` | `ghcr.io/buddylabsco/pin-glide-db-tools:${RELEASE}` | One release tag per release |
 | `postgres` | `ghcr.io/buddylabsco/pin-glide-postgres:18-1.6.8` | Independent infrastructure tag |
 
 Git tag / GitHub Release `v0.1.0` maps to literal `RELEASE=0.1.0` in `.env` and
@@ -24,12 +24,14 @@ PostgreSQL 18 Debian (trixie) distribution, pg_cron 1.6.8 from the PGDG apt
 repository, and the preload/database configuration pg_cron requires
 (`shared_preload_libraries = 'pg_cron'`, `cron.database_name = 'pin_glide'`).
 The base image cannot load the extension at all, so Compose, the disposable
-lint/codegen loader and the integration harness all use this one image. Its tag
-is independent of `RELEASE`: ordinary releases reuse the same running
-PostgreSQL container and do not recreate, upgrade or delete its volume.
+lint/codegen loader and the integration harness all use this one image. Local
+development uses the separate `scripts/dev/postgres.Dockerfile` because it also
+needs Anonymizer. Its tag is independent of `RELEASE`: ordinary releases reuse
+the same running PostgreSQL container and do not recreate, upgrade or delete
+its volume.
 PostgreSQL stores data in the project-scoped `pin-glide-postgres-data` volume.
 A PostgreSQL or pg_cron upgrade is a separate operation, not part of the
-release CLI.
+db-tools CLI.
 
 ## Prepare the host and files manually
 
@@ -84,6 +86,12 @@ Edit `.env` before running the installer:
   Workspace, which only authorizes temporary Sender keys for the enabled model
   row below. It is required for the `api` service to start in production and
   stays outside images, source files and logs.
+- `PIN_GLIDE_SNAPSHOT_PATH`: an existing host directory writable by the cron
+  user's UID/GID. It is used only when automatic deployment snapshots are
+  enabled.
+- `PIN_GLIDE_SNAPSHOT_TIME`: daily snapshot time in host-local `HH:MM` form.
+- `PIN_GLIDE_SNAPSHOT_KEEP`: positive number of completed tool-owned snapshots
+  to retain.
 
 Temporary model credentials additionally need the enabled, non-secret model
 configuration row in PostgreSQL: the service never invents a Workspace ID, and
@@ -132,9 +140,13 @@ Multiple installations need distinct project names and host ports.
 | 7 | Full release | `--full-release` |
 | 8 | Cancel release | `--cancel` |
 | 9 | Initial deployment | `--initial-deploy` |
+| 10 | Enable automatic deployment snapshots | `--enable-auto-snapshot` |
+| 11 | Disable automatic deployment snapshots | `--disable-auto-snapshot` |
 
-Choose exactly one action per invocation. Every action except prep requires the
-matching active `attempt-X.Y.Z.json`; no action prepares an attempt implicitly.
+Choose exactly one action per invocation. Release actions other than prep require
+the matching active `attempt-X.Y.Z.json`; snapshot actions need no active
+attempt and do not read or mutate release state. No action prepares an attempt
+implicitly.
 Calls in the same installation directory are mutually exclusive through
 `flock` on the directory inode.
 
@@ -186,7 +198,7 @@ Upgrade or equal-version redeployment:
 
 The full release order is fixed:
 
-1. `docker compose pull api migrate`.
+1. `docker compose pull api db-tools`.
 2. `docker compose stop api`, then hold scheduled work and prove it is drained.
 3. Create the stopped-writer recovery backup; abort on failure.
 4. Run migration; abort on failure, without automatically starting the api.
@@ -228,7 +240,7 @@ Concrete roles, owners and intended state:
 | --- | --- |
 | pg_cron extension and `cron.job` control | `POSTGRES_USER` (`pin_glide`), superuser on a fresh volume |
 | Scheduled job owner and database | `pin_glide` in database `pin_glide` (`cron.database_name`) |
-| Job definitions and their intended active state | Data Scripts in the packaged `pin-glide-migrate` image |
+| Job definitions and their intended active state | Data Scripts in the packaged `pin-glide-db-tools` image |
 | Complete dump, database recreation and restore | `POSTGRES_USER` through the in-container `pg_dump`, `pg_restore`, `dropdb` and `createdb` clients |
 | Maintenance connection for recreation | The `postgres` database inside the same container |
 
@@ -313,7 +325,7 @@ an erasure guarantee, and it is the whole of the service's own log retention.
 
 ## Migration failures, backups, and cancellation
 
-The migrate image contains the release and pin_glide desired schemas and
+The db-tools image contains the release and pin_glide desired schemas and
 Migration Scripts, plus Data Scripts. Release metadata is upgraded first; each
 schema uses psqldef apply followed by check, with separate audits. Successful
 Pin Glide Schema Sync appends Database Release before Data Scripts execute.
@@ -323,23 +335,23 @@ passwords, tablespaces, other databases, server-global settings, or database
 identity.
 
 The installer passes `PIN_GLIDE_RELEASE_VERSION=<target>` and the prepared
-`PIN_GLIDE_RELEASE_INITIAL=true|false` explicitly to `compose run migrate`. For a
-verified initial attempt, partial Schema Sync or Data Script failure can be
-retried without a new prep. The installer persists
+`PIN_GLIDE_RELEASE_INITIAL=true|false` explicitly to
+`compose run db-tools migrate`. For a verified initial attempt, partial Schema
+Sync or Data Script failure can be retried without a new prep. The installer persists
 `.migration.initial_verified` only after reading the exact
-`pin-glide-release migrate: initial database accepted` line from this attempt's
+`pin-glide-db-tools migrate: initial database accepted` line from this attempt's
 retained container logs, and passes `PIN_GLIDE_RELEASE_INITIAL_RETRY=true` only
 from that saved marker.
 
 Migration runs in the foreground with `docker compose run --no-deps`, a fixed
-name `<compose-project>-migrate`, and **no `--rm`**. On success the installer
+name `<compose-project>-db-tools`, and **no `--rm`**. On success the installer
 confirms a zero exit status, writes success to the active JSON, and only then
 removes the container. Failure, interruption, or a failed JSON update retains
 the container, logs, and exit status.
 
 ```sh
-docker logs pin-glide-migrate
-docker inspect --format '{{json .State}}' pin-glide-migrate
+docker logs <compose-project>-db-tools
+docker inspect --format '{{json .State}}' <compose-project>-db-tools
 jq . attempt-1.0.1.json
 ```
 
@@ -350,7 +362,7 @@ automatic recovery. After confirming a **failed, exited** container, remove it
 manually and retry the same attempt with its original backup:
 
 ```sh
-docker rm pin-glide-migrate
+docker rm <compose-project>-db-tools
 ./install.sh --version 1.0.1 --migrate
 ```
 
@@ -402,17 +414,73 @@ deliberately end the attempt and prepare a **higher** repair version after
 confirming the migration result is recorded and no migration is running. Keep
 the upgraded schema in place; there is no automatic rollback.
 
+## Development snapshots
+
+Deployment snapshots are raw logical data for local development, not recovery
+backups. Create an existing host directory, add the three snapshot variables to
+`.env`, then enable the daily entry:
+
+```sh
+mkdir -p /var/lib/pin-glide/snapshots
+./install.sh --enable-auto-snapshot
+./install.sh --make-snapshot
+```
+
+Enable validates the directory through a non-creating bind, the daily time and
+positive retention count before replacing the current user's crontab. Only the
+marked entry for this Compose project is changed. Disable with
+`./install.sh --disable-auto-snapshot`.
+
+Each run writes a private temporary custom-format `pg_dump`, rejects empty or
+invalid archives with `pg_restore --list`, and atomically publishes
+`pin-glide-snapshot-<UTC timestamp>-<suffix>.dump` with the invoking UID/GID and
+`0600` mode. The dump excludes the `anon` extension and security labels but
+keeps business, release and pg_cron job data. Retention removes only older
+completed files matching this naming format; unrelated files, directories,
+symlinks and `backup-X.Y.Z.dump` are preserved. A failed export publishes
+nothing and prunes nothing.
+
+The cron wrapper uses its own snapshot lock and does not require interactive
+input, a target version or release-attempt state. It also does not read or
+modify `attempt-*.json`. The stopped-writer `backup-X.Y.Z.dump` used by release
+cancellation remains a separate, manually retained recovery artifact.
+
 ## Local development
 
 ```sh
-make dev
+export PIN_GLIDE_SNAPSHOT_PATH=/var/lib/pin-glide/snapshots
+make dev            # destructive rebuild, restore, migrate, mask, then api
+make dev-code-only  # rebuild/restart only the api; keep local data
+make dev-stop       # stop and remove this checkout's local project and volume
 ```
 
-`make dev` uses a separate Compose project (`pin-glide-dev`), its own volume,
-loopback-only `127.0.0.1:5432` and `127.0.0.1:8080`, and its own `0.0.0`
-Database Release. It starts only local PostgreSQL, runs migrations from source
-through the release CLI, and runs the api (under delve when available). It
-refuses inherited `PIN_GLIDE_ENV` values other than `development` and drops
-inherited database, origin, project and release variables, so it cannot reach a
-deployment installation. Use a separate development installation, never a
-production deployment directory or Docker context.
+`make dev` uses a checkout-derived Compose project, its own volume,
+loopback-only `127.0.0.1:55432` for PostgreSQL and `127.0.0.1:8080` for the api,
+and its own Database Release. It validates `PIN_GLIDE_SNAPSHOT_PATH` before
+stopping an application or deleting local data. An invalid value causes no
+destructive operation.
+
+The launcher ignores deployment Compose files, `.env`, project overrides and
+database URLs. It resets only its own project, restores the newest regular
+`*.dump` by modification time with a lexical tie-breaker, migrates, applies
+`dev/anon` labels transactionally, and starts the api only after every step
+succeeds. An empty snapshot directory initializes a fresh database. The local
+PostgreSQL image pins PostgreSQL 18, Anonymizer 3.2.3 and pg_cron 1.6.8 while
+disabling pg_cron execution, so restored jobs and Data Script activations cannot
+run during local work.
+
+Local migrations record the checkout's `version.json`, not a synthetic `0.0.0`
+Database Release. A restored deployment snapshot already carries its published
+release history, so the old synthetic target would be a downgrade.
+
+Inherited `PIN_GLIDE_WECHAT_APP_ID`, `PIN_GLIDE_WECHAT_APP_SECRET` and
+`PIN_GLIDE_BAILIAN_API_KEY` are removed before the api starts, including
+`make dev-code-only`. Provider-bound operations therefore fail their existing
+credential checks before network I/O; this workflow does not provide a real
+provider acceptance environment.
+
+Ctrl-C stops application descendants and keeps PostgreSQL and its data.
+`make dev-code-only` requires a successful prior preparation, rebuilds only the
+api and does not invoke Docker, a snapshot, restore, migration or masking.
+`make dev-stop` stops the application supervisors and removes only this
+checkout's development containers, network and volume.

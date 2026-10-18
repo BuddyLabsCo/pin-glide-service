@@ -18,10 +18,10 @@ services:
       retries: 12
     restart: unless-stopped
 
-  migrate:
-    container_name: ${COMPOSE_PROJECT_NAME}-migrate
-    image: ghcr.io/buddylabsco/pin-glide-migrate:${RELEASE:?Set RELEASE in .env}
-    entrypoint: ["/pin-glide-release"]
+  db-tools:
+    container_name: ${COMPOSE_PROJECT_NAME}-db-tools
+    image: ghcr.io/buddylabsco/pin-glide-db-tools:${RELEASE:?Set RELEASE in .env}
+    entrypoint: ["/pin-glide-db-tools"]
     command: ["migrate"]
     environment:
       PIN_GLIDE_ENV: production

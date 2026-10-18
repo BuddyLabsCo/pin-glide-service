@@ -14,7 +14,7 @@ if [[ ! "$commit" =~ ^[a-f0-9]{40}$ || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ 
   exit 2
 fi
 
-directory="$(mktemp -d "${TMPDIR:-/tmp}/pin-glide-release-${version}.XXXXXX")"
+directory="$(mktemp -d "${TMPDIR:-/tmp}/pin-glide-db-tools-${version}.XXXXXX")"
 trap 'rm -rf "$directory"' EXIT
 git archive --format=tar "$commit" | tar -x -C "$directory"
 

@@ -27,7 +27,7 @@ const targetBranch = 'main';
 const versionFile = 'version.json';
 const packageScript = fileURLToPath(new URL('./package-release.sh', import.meta.url));
 const source = 'https://github.com/BuddyLabsCo/pin-glide-service';
-const applications = ['api', 'migrate'];
+const applications = ['api', 'db-tools'];
 const contracts = [
   { name: 'openapi.yaml', environment: 'OPENAPI_ASSET' },
   { name: 'asyncapi.yaml', environment: 'ASYNCAPI_ASSET' },
@@ -226,7 +226,7 @@ function assertMatchingAsset(tag, asset, directory) {
 
 function publishRelease(tag, notes, assets) {
   const state = releaseState(tag);
-  const directory = mkdtempSync(join(tmpdir(), 'pin-glide-release-assets-'));
+  const directory = mkdtempSync(join(tmpdir(), 'pin-glide-db-tools-assets-'));
   try {
     if (state && !state.isDraft) {
       for (const asset of assets) assertMatchingAsset(tag, asset, directory);

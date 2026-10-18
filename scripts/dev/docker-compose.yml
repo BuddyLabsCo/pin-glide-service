@@ -1,0 +1,23 @@
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: scripts/dev/postgres.Dockerfile
+    image: pin-glide-dev-postgres:18-anon3.2.3-cron1.6.8
+    environment:
+      POSTGRES_USER: pin_glide
+      POSTGRES_PASSWORD: pin_glide
+      POSTGRES_DB: pin_glide
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pin_glide -d pin_glide"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+    restart: "no"
+
+volumes:
+  postgres-data:

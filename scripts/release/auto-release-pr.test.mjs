@@ -12,7 +12,7 @@ const versionFile = 'version.json';
 // All cases exercise the public CLI, real Git history and remote refs. Only the
 // external GitHub boundary is faked; no existing test covers this release flow.
 function fixture(t, tagged = true) {
-  const root = mkdtempSync(join(tmpdir(), 'pin-glide-release-test-'));
+  const root = mkdtempSync(join(tmpdir(), 'pin-glide-db-tools-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cwd = join(root, 'repo'), origin = join(root, 'origin.git');
   const bin = join(root, 'bin'), state = join(root, 'gh-state.json'), log = join(root, 'gh-log.jsonl');

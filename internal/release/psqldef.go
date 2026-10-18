@@ -57,7 +57,7 @@ func newPSQLDef(databaseURL string) (psqlDef, error) {
 		// Local development already installs psqldef as a pinned Go tool.
 		tool.command, err = exec.LookPath("go")
 		if err != nil {
-			return tool, fmt.Errorf("psqldef is required (bundled in the migrate image): %w", err)
+			return tool, fmt.Errorf("psqldef is required (bundled in the db-tools image): %w", err)
 		}
 		tool.args = []string{"tool", "psqldef"}
 	}
@@ -92,7 +92,7 @@ type schemaAudit struct {
 }
 
 func (tool psqlDef) run(ctx context.Context, schema, mode, desired string) (schemaAudit, error) {
-	fmt.Printf("pin-glide-release migrate: phase psqldef %s --%s\n", schema, mode)
+	fmt.Printf("pin-glide-db-tools migrate: phase psqldef %s --%s\n", schema, mode)
 	args := append(append([]string(nil), tool.args...), "--config-inline", "target_schema: "+schema, "--"+mode)
 	command := exec.CommandContext(ctx, tool.command, args...)
 	command.Env = tool.env

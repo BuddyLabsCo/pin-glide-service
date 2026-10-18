@@ -110,10 +110,10 @@ func runScripts(ctx context.Context, conn *sql.Conn, scripts []script, applied m
 		}
 		key := s.schema + "/" + s.name
 		if _, ok := applied[key]; ok {
-			fmt.Printf("pin-glide-release migrate: skip %s (already processed)\n", key)
+			fmt.Printf("pin-glide-db-tools migrate: skip %s (already processed)\n", key)
 			continue
 		}
-		fmt.Printf("pin-glide-release migrate: process %s\n", key)
+		fmt.Printf("pin-glide-db-tools migrate: process %s\n", key)
 		done, err := applyScript(ctx, conn, s, initial)
 		if err != nil {
 			return nil, fmt.Errorf("script %s: %w", key, err)

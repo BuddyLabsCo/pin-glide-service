@@ -32,7 +32,7 @@ const probeSeed = "INSERT INTO pin_glide.release_probe (id, message) VALUES (1, 
 
 // Regression: upgrading previously treated CREATE TABLE IF NOT EXISTS as a schema
 // migration, and retries had no durable application-migration ledger.
-// Seam: the deployed pin-glide-release migrate process, its bundled SQL, and an
+// Seam: the deployed pin-glide-db-tools migrate process, its bundled SQL, and an
 // isolated PostgreSQL. Observe exit status, phases, preserved data, and
 // convergence; no existing release test exercises a real database or this
 // public command.
@@ -59,7 +59,7 @@ func TestMigrateReleasePipeline(t *testing.T) {
 		t.Fatalf("expected four independent schema audits, got %s", got)
 	}
 	last := -1
-	for _, phase := range []string{"phase release migrations", "phase psqldef release --apply", "phase psqldef release --check", "phase pin_glide migrations", "phase psqldef pin_glide --apply", "phase psqldef pin_glide --check", "phase data scripts", "pin-glide-release migrate: complete"} {
+	for _, phase := range []string{"phase release migrations", "phase psqldef release --apply", "phase psqldef release --check", "phase pin_glide migrations", "phase psqldef pin_glide --apply", "phase psqldef pin_glide --check", "phase data scripts", "pin-glide-db-tools migrate: complete"} {
 		index := strings.Index(output, phase)
 		if index <= last {
 			t.Fatalf("missing or out-of-order phase %q: %s", phase, output)
@@ -234,7 +234,7 @@ ALTER TABLE pin_glide.release_probe DROP COLUMN legacy_amount;`)
 // carrying the superseded shape needs the explicit Migration Script to keep
 // converging; without it the replacement reservation of a re-pairing cannot be
 // inserted next to the working association.
-// Seam: the deployed pin-glide-release migrate process, the repository's real
+// Seam: the deployed pin-glide-db-tools migrate process, the repository's real
 // pairing migration and an isolated PostgreSQL.
 func TestPairingReplacementIndexUpgrade(t *testing.T) {
 	root, work, bin, pool, dsn := releaseDatabase(t)
@@ -316,7 +316,7 @@ func (p releaseProcess) migrate(t *testing.T, success bool, want string) string 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, filepath.Join(p.bin, "pin-glide-release"), "migrate")
+	command := exec.CommandContext(ctx, filepath.Join(p.bin, "pin-glide-db-tools"), "migrate")
 	command.Dir = p.work
 	command.Env = append(os.Environ(), "PATH="+p.bin+":"+os.Getenv("PATH"), "PIN_GLIDE_ENV=production", "PIN_GLIDE_DATABASE_URL="+p.dsn, "PIN_GLIDE_RELEASE_VERSION="+p.version, "PIN_GLIDE_RELEASE_INITIAL="+p.initial, "PIN_GLIDE_RELEASE_INITIAL_RETRY="+p.retry)
 	output, err := command.CombinedOutput()
@@ -335,7 +335,7 @@ func releaseDatabase(t *testing.T) (string, string, string, *sql.DB, string) {
 	work := t.TempDir()
 	bin := filepath.Join(work, "bin")
 	must(t, os.MkdirAll(bin, 0755))
-	run(t, root, "go", "build", "-o", filepath.Join(bin, "pin-glide-release"), "./cmd/pin-glide-release")
+	run(t, root, "go", "build", "-o", filepath.Join(bin, "pin-glide-db-tools"), "./cmd/pin-glide-db-tools")
 	run(t, root, "go", "build", "-o", filepath.Join(bin, "psqldef"), "github.com/sqldef/sqldef/v3/cmd/psqldef")
 	// A published image carries the exported schema SQL next to a Git-derived
 	// manifest. Each test supplies its own migration and data scripts, so only

@@ -20,18 +20,19 @@ make format-check   # gofmt check over handwritten Go sources
 make lint           # pinned golangci-lint, then the source-size check
 make lint-sql       # disposable PostgreSQL load, catalog, Schemalint, SQLFluff
 make format-sql     # SQLFluff fixes for the desired schemas
-make dev            # disposable PostgreSQL, migrations, then the api on loopback
+make dev            # rebuild local data from the newest snapshot, mask, then run the api
+make dev-code-only  # rebuild/restart only the api, keeping local data
+make dev-stop       # stop and remove this checkout's local container and volume
 ```
 
 The default tests need no credentials and no database. They start the composed
 service on a real loopback listener and assert the sanitized `/health` contract,
 routing fallbacks, the shared problem-details error model and bounded shutdown.
 
-Every disposable database in those commands runs the derived PostgreSQL 18 +
-pg_cron image built from `deploy/compose/postgres.Dockerfile`, because pg_cron
-needs a preloaded extension the base image does not ship. `make dev` starts only
-that database from the same Compose file with its own project, volume, port and
-Database Release, runs `cmd/pin-glide-release` against it, then runs the api.
+Disposable SQL and integration databases run the derived PostgreSQL 18 + pg_cron
+image built from `deploy/compose/postgres.Dockerfile`. Local development uses
+`scripts/dev/postgres.Dockerfile` instead: the same PostgreSQL and pg_cron
+versions plus Anonymizer 3.2.3, with pg_cron's launcher disabled.
 
 `make lint-sql` loads `db/schema/release` and `db/schema/pin_glide` into a
 disposable loopback PostgreSQL container, runs the native catalog naming checks,
@@ -115,12 +116,13 @@ the adapter's own HTTP tests; confirming the real temporary-key endpoint, its
 lifetime parameter, its answer and the parent key's permissions is a separate
 request-driven acceptance step.
 
-## Running the release CLI
+## Running the database tools
 
-`cmd/pin-glide-release` applies one Database Release from the packaged migration
-image: it holds one database lock, synchronizes the `release` and `pin_glide`
-desired schemas with the pinned psqldef, appends the Database Release and then
-runs the Data Scripts.
+`cmd/pin-glide-db-tools migrate` applies one Database Release from the packaged
+migration image: it holds one database lock, synchronizes the `release` and
+`pin_glide` desired schemas with the pinned psqldef, appends the Database
+Release and then runs the Data Scripts. `snapshot` writes and validates one
+custom-format archive.
 
 | Variable | Meaning |
 | --- | --- |
@@ -129,6 +131,8 @@ runs the Data Scripts.
 | `PIN_GLIDE_RELEASE_VERSION` | Target `X.Y.Z`, literal and without `v` |
 | `PIN_GLIDE_RELEASE_INITIAL` | `true` only for a verified fresh database |
 | `PIN_GLIDE_RELEASE_INITIAL_RETRY` | `true` to retry that initial version |
+| `PIN_GLIDE_SNAPSHOT_PATH` | Existing host directory for `snapshot` |
+| `PIN_GLIDE_SNAPSHOT_KEEP` | Positive count of completed snapshots to retain |
 
 Scripts run in the order of the `db/migrations/order.txt` manifest packaged with
 the release. Without that manifest, a checkout derives the same order from its
@@ -137,9 +141,24 @@ supported migration streams are rejected.
 
 ## Local development and installation
 
-`make dev` starts a disposable local PostgreSQL with pg_cron, runs the packaged
-release CLI against it and then runs the api on loopback; it refuses
-non-development configuration and cannot reach a deployment installation.
+Set an existing snapshot directory before the first local start:
+
+```sh
+mkdir -p /path/to/pin-glide-snapshots
+export PIN_GLIDE_SNAPSHOT_PATH=/path/to/pin-glide-snapshots
+make dev
+```
+
+`make dev` is destructive for this checkout's local project only. It validates
+the directory before deleting local state, starts an isolated PostgreSQL on
+loopback, restores the newest regular `*.dump` by modification time, migrates,
+applies `dev/anon`, and only then starts the api. An empty directory starts a
+fresh database. Ctrl-C stops application descendants but keeps PostgreSQL for
+`make dev-code-only`; `make dev-stop` removes the local container, network and
+volume. Local provider credential variables are cleared, so provider-bound
+operations fail before network I/O. A restored snapshot keeps its published
+Database Release history, so local migration records the checkout's
+`version.json` instead of a synthetic `0.0.0` target.
 
 `install.sh` with `deploy/compose` installs and upgrades one Pin Glide instance
 from published images: prepare, pull, stop the api and its scheduled database
@@ -166,7 +185,7 @@ contract assets always come from one commit.
      validators and proves they are the committed descriptions the contract
      tests cover;
    - publishes `ghcr.io/buddylabsco/pin-glide-api:<version>` and
-     `ghcr.io/buddylabsco/pin-glide-migrate:<version>` from the exact commit;
+     `ghcr.io/buddylabsco/pin-glide-db-tools:<version>` from the exact commit;
    - publishes `ghcr.io/buddylabsco/pin-glide-postgres:<tag>` from
      `deploy/compose/postgres.Dockerfile` when that image is missing, and reuses
      it otherwise, because `deploy/compose/docker-compose.yml` is the authority
@@ -204,7 +223,8 @@ credentials and no registry. Real PostgreSQL migration behavior stays in
 `go test -tags=integration ./test/integration/...`, and the real Compose
 install/upgrade/restore journey stays in
 `node test/smoke/release-install.mjs --integration-ready`; neither suite is a
-publication gate.
+publication gate. The real local restore/mask/lifecycle check is explicit:
+`node test/smoke/dev-snapshot.mjs --docker`.
 
 The repository is implemented ticket by ticket, and the published descriptions
 describe only the surface delivered so far: the WSS definitions declare no
