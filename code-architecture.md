@@ -134,6 +134,8 @@ db/
 │   └── release/
 ├── migrations/{pin_glide,release}/issue_<number>_<sequence>_<summary>.sql
 └── scripts/issue_<number>_<sequence>_<summary>.sql
+dev/anon/
+└── <table>.sql               # Local-only masking labels for one table
 ```
 
 Keep one primary object per desired-schema file. A table file owns its columns,
@@ -153,28 +155,10 @@ Keep configuration, transaction and log data in separate tables with one retenti
 policy per table. Cleanup SQL and its policy table belong in desired schema; cron
 job registration belongs in Data Scripts.
 
-Local masking rules belong under `dev/anon/`, one file per table. They are not
-deployed desired schema, release scripts, generated Jet output or runtime image
-payload.
-
-The reviewed storage boundary covers every current source table:
-
-- `model_configurations`: mask `enabled` to `false` and `workspace_id` to the
-  inert `local-workspace`; keep the `default` row, model metadata and constraints.
-- `identity_accounts`, `identity_sender_registrations` and
-  `identity_receiver_registrations`: keep identifiers and device state.
-- `identity_credentials`, `identity_receiver_credentials`,
-  `identity_refresh_operations` and `pairing_sessions`: keep credential and
-  workflow state.
-- `pairing_pairings`, `delivery_deliveries` and `service_diagnostics`: keep local
-  workflow and history data.
-- `retention_policies`: keep the configured deletion targets while the local
-  scheduler remains disabled.
-- `release_migration_scripts`, `release_data_scripts`,
-  `release_deploy_history` and `release_schema_audits`: keep ledger identity,
-  checksums, SQL history and audit state; do not replay applied scripts.
-- Extension-owned `cron.job` and `cron.job_run_details`: keep definitions and
-  history, but disable the local scheduler independently of restored job state.
+Add an anon script for each table with external-service credentials, URLs/hosts,
+callbacks/webhooks, or service switches. Update its labels when those columns
+change so local development uses inert values. See the
+[masking examples](dev/anon/README.md).
 
 ### 4.3 Jet generation and generated Go types
 
