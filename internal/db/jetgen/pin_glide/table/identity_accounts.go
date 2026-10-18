@@ -13,16 +13,17 @@ import (
 
 var IdentityAccounts = newIdentityAccountsTable("pin_glide", "identity_accounts", "")
 
-// Configuration Data: one Account per verified WeChat identity, no cleanup.
+// Configuration Data: one Account per provider identity, no cleanup.
 type identityAccountsTable struct {
 	postgres.Table
 
 	// Columns
-	ID            postgres.ColumnString     // Internal opaque Account identifier issued by the service.
-	WechatAppID   postgres.ColumnString     // Configured WeChat AppID that verified this OpenID.
-	WechatOpenID  postgres.ColumnString     // WeChat OpenID verified for the configured AppID.
-	WechatUnionID postgres.ColumnString     // Optional WeChat UnionID, recorded only; it never merges Accounts.
-	CreatedAt     postgres.ColumnTimestampz // When the Account was first created.
+	ID        postgres.ColumnString     // Internal opaque Account identifier issued by the service.
+	Provider  postgres.ColumnString     // Identity provider namespace: wechat or qq.
+	AppID     postgres.ColumnString     // Configured provider application that verified this OpenID.
+	OpenID    postgres.ColumnString     // Provider-verified OpenID within its provider application namespace.
+	UnionID   postgres.ColumnString     // Optional provider UnionID, recorded only; it never merges Accounts.
+	CreatedAt postgres.ColumnTimestampz // When the Account was first created.
 
 	AllColumns     postgres.ColumnList
 	MutableColumns postgres.ColumnList
@@ -64,25 +65,27 @@ func newIdentityAccountsTable(schemaName, tableName, alias string) *IdentityAcco
 
 func newIdentityAccountsTableImpl(schemaName, tableName, alias string) identityAccountsTable {
 	var (
-		IDColumn            = postgres.StringColumn("id")
-		WechatAppIDColumn   = postgres.StringColumn("wechat_app_id")
-		WechatOpenIDColumn  = postgres.StringColumn("wechat_open_id")
-		WechatUnionIDColumn = postgres.StringColumn("wechat_union_id")
-		CreatedAtColumn     = postgres.TimestampzColumn("created_at")
-		allColumns          = postgres.ColumnList{IDColumn, WechatAppIDColumn, WechatOpenIDColumn, WechatUnionIDColumn, CreatedAtColumn}
-		mutableColumns      = postgres.ColumnList{WechatAppIDColumn, WechatOpenIDColumn, WechatUnionIDColumn, CreatedAtColumn}
-		defaultColumns      = postgres.ColumnList{CreatedAtColumn}
+		IDColumn        = postgres.StringColumn("id")
+		ProviderColumn  = postgres.StringColumn("provider")
+		AppIDColumn     = postgres.StringColumn("app_id")
+		OpenIDColumn    = postgres.StringColumn("open_id")
+		UnionIDColumn   = postgres.StringColumn("union_id")
+		CreatedAtColumn = postgres.TimestampzColumn("created_at")
+		allColumns      = postgres.ColumnList{IDColumn, ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, CreatedAtColumn}
+		mutableColumns  = postgres.ColumnList{ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, CreatedAtColumn}
+		defaultColumns  = postgres.ColumnList{CreatedAtColumn}
 	)
 
 	return identityAccountsTable{
 		Table: postgres.NewTable(schemaName, tableName, alias, allColumns...),
 
 		//Columns
-		ID:            IDColumn,
-		WechatAppID:   WechatAppIDColumn,
-		WechatOpenID:  WechatOpenIDColumn,
-		WechatUnionID: WechatUnionIDColumn,
-		CreatedAt:     CreatedAtColumn,
+		ID:        IDColumn,
+		Provider:  ProviderColumn,
+		AppID:     AppIDColumn,
+		OpenID:    OpenIDColumn,
+		UnionID:   UnionIDColumn,
+		CreatedAt: CreatedAtColumn,
 
 		AllColumns:     allColumns,
 		MutableColumns: mutableColumns,

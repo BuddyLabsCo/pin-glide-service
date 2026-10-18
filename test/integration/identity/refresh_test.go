@@ -183,7 +183,7 @@ func assertRefreshFields(t *testing.T, payload []byte) {
 // response, and ordinary rotation leaves existing access tokens working.
 func TestRefreshRotatesTheBundleAndRecoversOneLostResponse(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-rotate", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-rotate"})
+	environment.provider.Accept("code-rotate", identity.Identity{AppID: "wx-app", OpenID: "openid-rotate"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-rotate"}`)
 
 	// An expired access token never blocks renewal: the refresh token alone
@@ -254,7 +254,7 @@ func TestRefreshRotatesTheBundleAndRecoversOneLostResponse(t *testing.T) {
 // or revokes the family, even after later logical renewals.
 func TestRefreshKeepsRecordedAttemptsSuperseded(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-order", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-order"})
+	environment.provider.Accept("code-order", identity.Identity{AppID: "wx-app", OpenID: "openid-order"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-order"}`)
 
 	// Attempt 1 reaches the service first while its parent is still current and
@@ -308,7 +308,7 @@ func TestRefreshKeepsRecordedAttemptsSuperseded(t *testing.T) {
 // renews with it nor revokes its family.
 func TestRefreshRejectsAnAttemptThatIsNotItsRetransmission(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-mismatch", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-mismatch"})
+	environment.provider.Accept("code-mismatch", identity.Identity{AppID: "wx-app", OpenID: "openid-mismatch"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-mismatch"}`)
 
 	// The successor the recorded operation issued is still current, so it is
@@ -326,7 +326,7 @@ func TestRefreshRejectsAnAttemptThatIsNotItsRetransmission(t *testing.T) {
 
 	// A stale operation ID of the family a fresh login replaced is not an
 	// operation of the family that login authenticated either.
-	environment.provider.Accept("code-mismatch-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-mismatch"})
+	environment.provider.Accept("code-mismatch-again", identity.Identity{AppID: "wx-app", OpenID: "openid-mismatch"})
 	authenticated := environment.loginOK(t, `{"wechatCode":"code-mismatch-again","senderId":"`+issued.SenderID+`"}`)
 	refreshFails(t, environment, authenticated.Refresh.Token, "operation-mismatch", 1,
 		http.StatusConflict, "operation_mismatch")
@@ -340,8 +340,8 @@ func TestRefreshRejectsAnAttemptThatIsNotItsRetransmission(t *testing.T) {
 // nothing else.
 func TestRefreshRevokesOnlyTheReusedFamily(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-reuse", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-reuse"})
-	environment.provider.Accept("code-unrelated", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-unrelated"})
+	environment.provider.Accept("code-reuse", identity.Identity{AppID: "wx-app", OpenID: "openid-reuse"})
+	environment.provider.Accept("code-unrelated", identity.Identity{AppID: "wx-app", OpenID: "openid-unrelated"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-reuse"}`)
 	unrelated := environment.loginOK(t, `{"wechatCode":"code-unrelated"}`)
 
@@ -360,7 +360,7 @@ func TestRefreshRevokesOnlyTheReusedFamily(t *testing.T) {
 
 	// Replay revocation ends a family, not the registration: the same Sender
 	// signs in again and receives a new family.
-	environment.provider.Accept("code-reuse-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-reuse"})
+	environment.provider.Accept("code-reuse-again", identity.Identity{AppID: "wx-app", OpenID: "openid-reuse"})
 	restored := environment.loginOK(t, `{"wechatCode":"code-reuse-again","senderId":"`+issued.SenderID+`"}`)
 	if restored.SenderID != issued.SenderID {
 		t.Errorf("login restored sender %q, want %q", restored.SenderID, issued.SenderID)
@@ -371,8 +371,8 @@ func TestRefreshRevokesOnlyTheReusedFamily(t *testing.T) {
 // revoking the family a caller might claim.
 func TestRefreshRejectsUnknownAndExpiredTokensWithoutRevoking(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-expiry", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-expiry"})
-	environment.provider.Accept("code-bystander", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-bystander"})
+	environment.provider.Accept("code-expiry", identity.Identity{AppID: "wx-app", OpenID: "openid-expiry"})
+	environment.provider.Accept("code-bystander", identity.Identity{AppID: "wx-app", OpenID: "openid-bystander"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-expiry"}`)
 	bystander := environment.loginOK(t, `{"wechatCode":"code-bystander"}`)
 
@@ -400,8 +400,8 @@ func TestRefreshRejectsUnknownAndExpiredTokensWithoutRevoking(t *testing.T) {
 // inside the overlap and before the consumed token's own expiry.
 func TestRefreshRecoveryIsBoundedByOverlapAndParentExpiry(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-window", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-window"})
-	environment.provider.Accept("code-parent-expiry", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-parent-expiry"})
+	environment.provider.Accept("code-window", identity.Identity{AppID: "wx-app", OpenID: "openid-window"})
+	environment.provider.Accept("code-parent-expiry", identity.Identity{AppID: "wx-app", OpenID: "openid-parent-expiry"})
 	windowed := environment.loginOK(t, `{"wechatCode":"code-window"}`)
 	expiring := environment.loginOK(t, `{"wechatCode":"code-parent-expiry"}`)
 

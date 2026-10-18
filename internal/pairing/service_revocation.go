@@ -33,16 +33,16 @@ type senderCleanUp struct {
 
 // DeviceRevocation permanently closes one device registration the caller's own
 // Account owns, whichever role that registration has: the caller proves a fresh
-// WeChat authorization for the Account its management credential belongs to, and
-// the device ID names one Sender or Receiver registration of that Account, so
-// revocation stays an owner action. A Sender revocation invalidates every
+// identity authorization for the Account its management credential belongs to,
+// and the device ID names one Sender or Receiver registration of that Account,
+// so revocation stays an owner action. A Sender revocation invalidates every
 // credential of the named Sender, cancels its unfinished authorized Pairing work
 // and removes its own associations; a Receiver revocation invalidates its
 // credential generation, cancels the grants it could still redeem, ends its
 // delivery connection and removes every Pairing that forwards to it. Each is one
 // commit, and each leaves every other registration, credential, association and
 // connection as it was.
-func (s *Service) DeviceRevocation(ctx context.Context, managementCredential, deviceID, wechatCode string, now time.Time) error {
+func (s *Service) DeviceRevocation(ctx context.Context, managementCredential, deviceID string, proof identity.Proof, now time.Time) error {
 	if s.revocations == nil {
 		return ErrStorageUnavailable
 	}
@@ -59,7 +59,7 @@ func (s *Service) DeviceRevocation(ctx context.Context, managementCredential, de
 	}
 	// The provider call is an external boundary, so it stays outside the
 	// transaction that closes the registration.
-	owner, err := s.verifyOwner(ctx, wechatCode)
+	owner, err := s.verifyOwner(ctx, proof)
 	if err != nil {
 		return err
 	}

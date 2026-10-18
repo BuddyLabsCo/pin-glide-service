@@ -16,18 +16,24 @@ import (
 // Service implements Account mapping, Sender login and credential resolution
 // over PostgreSQL.
 type Service struct {
-	pool     *sql.DB
-	provider Provider
+	pool      *sql.DB
+	providers map[ProviderKind]Provider
 }
 
-// NewService composes the identity service on pool. A nil provider is a
-// process composed without provider credentials: login then reports a provider
-// failure instead of calling anyone.
-func NewService(pool *sql.DB, provider Provider) *Service {
-	return &Service{pool: pool, provider: provider}
+// NewService composes the identity service on pool. A provider that is absent
+// reports a provider failure when its operation is invoked instead of preventing
+// process startup.
+func NewService(pool *sql.DB, providers ...Provider) *Service {
+	byKind := make(map[ProviderKind]Provider, len(providers))
+	for _, provider := range providers {
+		if provider != nil {
+			byKind[provider.Kind()] = provider
+		}
+	}
+	return &Service{pool: pool, providers: byKind}
 }
 
-// Login verifies the supplied WeChat code and creates or restores this
+// Login verifies the supplied provider proof and creates or restores this
 // installation's Sender registration, replacing that Sender's previous
 // credential family. The provider is called first, so a slow or failing
 // provider never holds a database transaction.
@@ -40,10 +46,7 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundl
 		}
 	}()
 
-	if s.provider == nil {
-		return Bundle{}, ErrIdentityProvider
-	}
-	verified, err := s.provider.Verify(ctx, request.WeChatCode)
+	verified, err := s.verify(ctx, request.Proof)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -333,10 +336,14 @@ func revokeForReuse(ctx context.Context, tx *sql.Tx, credential model.IdentityCr
 	return ErrRefreshReuse
 }
 
-// AccountFor resolves the Account one verified WeChat identity belongs to.
-// Unknown identities report the same outcome as invisible ones, so a caller
-// cannot confirm whether another Account holds one.
-func (s *Service) AccountFor(ctx context.Context, verified WeChatIdentity) (string, error) {
+// AccountFor verifies one fresh provider proof and resolves the Account it
+// belongs to. Unknown identities report the same outcome as invisible ones, so
+// a caller cannot confirm whether another Account holds one.
+func (s *Service) AccountFor(ctx context.Context, proof Proof) (string, error) {
+	verified, err := s.verify(ctx, proof)
+	if err != nil {
+		return "", err
+	}
 	account, err := findAccount(ctx, s.pool, verified)
 	if errors.Is(err, ErrSenderNotFound) {
 		return "", err
@@ -345,6 +352,24 @@ func (s *Service) AccountFor(ctx context.Context, verified WeChatIdentity) (stri
 		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	return account, nil
+}
+
+// verify selects the configured provider and rejects an adapter answer that
+// does not belong to the selected provider.
+func (s *Service) verify(ctx context.Context, proof Proof) (Identity, error) {
+	provider := s.providers[proof.Provider]
+	if provider == nil || proof.Code == "" {
+		return Identity{}, ErrIdentityProvider
+	}
+	verified, err := provider.Verify(ctx, proof.Code)
+	if err != nil {
+		return Identity{}, err
+	}
+	if verified.Provider != proof.Provider {
+		return Identity{}, fmt.Errorf("%w: provider answer belongs to %q",
+			ErrIdentityProvider, verified.Provider)
+	}
+	return verified, nil
 }
 
 // newBundle issues three independent credentials with the adopted lifetimes.
@@ -368,7 +393,10 @@ func newValue() string {
 func isOutcome(err error) bool {
 	for _, outcome := range []error{
 		ErrWeChatAuthorizationInvalid,
+		ErrQQAuthorizationInvalid,
 		ErrIdentityProvider,
+		ErrIdentityProofRequired,
+		ErrIdentityProofConflicting,
 		ErrSenderNotFound,
 		ErrSenderRevoked,
 		ErrCredentialMissing,

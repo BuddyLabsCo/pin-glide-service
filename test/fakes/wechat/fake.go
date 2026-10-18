@@ -14,22 +14,23 @@ import (
 // one, so a test states every accepted identity explicitly.
 type Fake struct {
 	mutex      sync.Mutex
-	identities map[string]identity.WeChatIdentity
+	identities map[string]identity.Identity
 	failures   map[string]error
 }
 
 // New returns a fake that accepts no code yet.
 func New() *Fake {
 	return &Fake{
-		identities: map[string]identity.WeChatIdentity{},
+		identities: map[string]identity.Identity{},
 		failures:   map[string]error{},
 	}
 }
 
 // Accept maps one authorization code to the identity the provider verified.
-func (f *Fake) Accept(code string, verified identity.WeChatIdentity) {
+func (f *Fake) Accept(code string, verified identity.Identity) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
+	verified.Provider = identity.ProviderWeChat
 	f.identities[code] = verified
 }
 
@@ -41,16 +42,21 @@ func (f *Fake) Fail(code string, err error) {
 	f.failures[code] = err
 }
 
+// Kind reports the provider this fake verifies.
+func (f *Fake) Kind() identity.ProviderKind {
+	return identity.ProviderWeChat
+}
+
 // Verify implements identity.Provider.
-func (f *Fake) Verify(_ context.Context, code string) (identity.WeChatIdentity, error) {
+func (f *Fake) Verify(_ context.Context, code string) (identity.Identity, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
 	if err, failed := f.failures[code]; failed {
-		return identity.WeChatIdentity{}, err
+		return identity.Identity{}, err
 	}
 	if verified, accepted := f.identities[code]; accepted {
 		return verified, nil
 	}
-	return identity.WeChatIdentity{}, identity.ErrWeChatAuthorizationInvalid
+	return identity.Identity{}, identity.ErrWeChatAuthorizationInvalid
 }

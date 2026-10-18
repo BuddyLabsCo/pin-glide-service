@@ -18,8 +18,11 @@ const (
 	// WeChatAuthorizationInvalid marks a WeChat authorization code the provider
 	// rejected, so the caller must obtain a fresh one.
 	WeChatAuthorizationInvalid ErrorCode = "wechat_authorization_invalid"
-	// IdentityProviderError marks a WeChat provider that could not verify an
-	// authorization code.
+	// QQAuthorizationInvalid marks a QQ authorization code the provider rejected
+	// as invalid, expired or already used.
+	QQAuthorizationInvalid ErrorCode = "qq_authorization_invalid"
+	// IdentityProviderError marks an identity provider that could not verify a
+	// fresh identity proof.
 	IdentityProviderError ErrorCode = "identity_provider_error"
 	// ModelProviderError marks a model provider that could not issue a
 	// temporary credential or answered unusably.

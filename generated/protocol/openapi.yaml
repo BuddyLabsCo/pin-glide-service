@@ -8,8 +8,12 @@ components:
           description: Replacement for the claiming Sender's own alias; omit it to preserve the current alias
           maxLength: 256
           type: string
+        qqCode:
+          description: Fresh QQ authorization; required for recover_receiver when no WeChat proof is sent
+          maxLength: 512
+          type: string
         wechatCode:
-          description: Fresh WeChat authorization; required for recover_receiver
+          description: Fresh WeChat authorization; required for recover_receiver when no QQ proof is sent
           maxLength: 512
           type: string
       type: object
@@ -493,6 +497,21 @@ components:
         - code
         - requestId
       type: object
+    QQLoginRequest:
+      additionalProperties: false
+      properties:
+        qqCode:
+          description: Fresh single-use QQ authorization code obtained by the Android client
+          maxLength: 512
+          minLength: 1
+          type: string
+        senderId:
+          description: Saved Sender ID to restore; omit it to register this installation as a new Sender
+          maxLength: 128
+          type: string
+      required:
+        - qqCode
+      type: object
     ReceiverAssociation:
       additionalProperties: false
       properties:
@@ -746,13 +765,14 @@ components:
     WeChatProofRequest:
       additionalProperties: false
       properties:
+        qqCode:
+          description: Fresh single-use QQ authorization code obtained by the Account owner
+          maxLength: 512
+          type: string
         wechatCode:
           description: Fresh single-use WeChat authorization code obtained by the Account owner
           maxLength: 512
-          minLength: 1
           type: string
-      required:
-        - wechatCode
       type: object
   securitySchemes:
     bearerAuth:
@@ -836,6 +856,75 @@ paths:
           description: Service Unavailable
       security: []
       summary: Revoke the Sender's service access
+      tags:
+        - identity
+  /v1/auth/qq:
+    post:
+      description: Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
+      operationId: PostAuthQQ
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QQLoginRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialBundle"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Gateway
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security: []
+      summary: Verify QQ login and issue Sender credentials
       tags:
         - identity
   /v1/auth/refresh:
@@ -966,7 +1055,7 @@ paths:
         - identity
   /v1/devices/{id}/revoke:
     post:
-      description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat proof verifies, and answers 204. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. For a Sender registration, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit: the Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. For a Receiver registration, its credential generation, the issuance and recovery grants it could still redeem, its delivery connection and every Pairing that forwards to it are invalidated in the same commit: a committed delivery connection receives device_revoked and then closes with 1008 policy_violation, a handshake still committing is refused before its upgrade, that Receiver's associations are removed for every Sender that owned one, and every other Receiver keeps its registration, its credential, its Pairings and its connection, including a Receiver the same Account owns. Revoking a registration never reaches back into work already admitted: a Delivery the service already accepted keeps the authorization it was admitted with, a revoked Sender's Receiver keeps the delivery connection it already held, and every new request validates the current credentials again. A revoked Receiver's own retained history, and the Delivery records of the Pairings it lost, are not deleted by the revocation. Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. This response carries no credential and is never cacheable."
+      description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat or QQ proof verifies, and answers 204. Exactly one of wechatCode or qqCode must be present; sending both is rejected. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. For a Sender registration, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit: the Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. For a Receiver registration, its credential generation, the issuance and recovery grants it could still redeem, its delivery connection and every Pairing that forwards to it are invalidated in the same commit: a committed delivery connection receives device_revoked and then closes with 1008 policy_violation, a handshake still committing is refused before its upgrade, that Receiver's associations are removed for every Sender that owned one, and every other Receiver keeps its registration, its credential, its Pairings and its connection, including a Receiver the same Account owns. Revoking a registration never reaches back into work already admitted: a Delivery the service already accepted keeps the authorization it was admitted with, a revoked Sender's Receiver keeps the delivery connection it already held, and every new request validates the current credentials again. A revoked Receiver's own retained history, and the Delivery records of the Pairings it lost, are not deleted by the revocation. Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable or conflicting fresh proof, 502 identity_provider_error, or 503 service_unavailable. This response carries no credential and is never cacheable."
       operationId: PostDeviceRevoke
       parameters:
         - description: Sender or Receiver registration ID (deviceId) to revoke permanently
@@ -1304,7 +1393,7 @@ paths:
         - pairing
   /v1/pairing-sessions/{id}/authorize:
     post:
-      description: "Fixes the claiming Sender for a session and reserves binding capacity for a new distinct Receiver. A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. recover_receiver additionally requires fresh WeChat proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. Failures report 401 for an unusable management credential, 403 fresh_identity_required, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable."
+      description: "Fixes the claiming Sender for a session and reserves binding capacity for a new distinct Receiver. A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. recover_receiver additionally requires exactly one fresh WeChat or QQ proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. Sending both proof fields is rejected. Failures report 401 for an unusable management credential, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for absent or foreign recovery proof, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for conflicting proof fields, 502 identity_provider_error, or 503 service_unavailable."
       operationId: PostPairingSessionAuthorize
       parameters:
         - description: Pairing Session ID
@@ -1370,6 +1459,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
           description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Bad Gateway
         "503":
           content:
             application/problem+json:

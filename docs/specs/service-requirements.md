@@ -16,20 +16,22 @@ No offline ciphertext backlog, historical SMS API, server-side inference, additi
 
 ## 2. Identities and authorization
 
-- An Account is associated with the configured WeChat AppID plus verified OpenID. Allocate an internal Account ID. UnionID is optional and does not automatically merge Accounts.
-- Any successfully verified identity for the configured approved mobile app can create/associate an Account. No allowlist, invitation or approval gate.
+- An Account is associated with the provider, configured AppID and verified OpenID. WeChat and QQ identities remain separate even when their AppID and OpenID strings match. Allocate an internal Account ID. UnionID is optional and does not automatically merge Accounts.
+- Any successfully verified identity for a completely configured approved mobile app can create/associate an Account. No allowlist, invitation or approval gate.
+- Neither provider pair is required at process startup. A missing or partial pair fails only an operation that uses that provider, without issuing identity.
+- QQ uses the mobile server-side authorization-code flow. The service exchanges the code with its configured AppID and AppKey, then trusts only the provider-returned OpenID bound to that AppID. UnionID permission is not required.
 - Sender and Receiver identities are app-installation registrations. The service assigns deviceId. Reinstallation creates a new identity and requires re-pairing.
-- Sender re-login supplies fresh WeChat authorization and its saved deviceId. Restore only an active registration owned by that Account. deviceId alone is not authentication, and this is not a hardware/cloning proof.
+- Sender re-login supplies fresh WeChat or QQ authorization and its saved deviceId. Restore only an active registration owned by that Account. deviceId alone is not authentication, and this is not a hardware/cloning proof.
 - Ordinary Sender logout stops new local forwarding and revokes its service credentials while preserving its Pairings and local pairing keys.
 - Account switching revokes the old Sender credentials, removes that Sender's own Pairings, clears its old local identity/keys, and creates a new registration.
-- Ordinary management changes only the current Sender's associations. Fresh WeChat identity verification additionally permits Account-owner security revocation of any owned device. Global Receiver revocation closes its connection and affects all of its Pairings.
+- Ordinary management changes only the current Sender's associations. Fresh WeChat or QQ identity verification additionally permits Account-owner security revocation of any owned device. Global Receiver revocation closes its connection and affects all of its Pairings.
 - A shared Receiver may have independent Pairings with multiple Senders in the same Account. Removing one Pairing does not remove the others or close their shared delivery connection.
 
 ### Sender login, security revocation and re-pairing
 
 The user approved these lifecycle rules in [Sender lifecycle and re-pairing](https://github.com/BuddyLabsCo/pin-glide-service/issues/2#issuecomment-6080579614).
 
-Fresh verified WeChat login restoring the same active Sender atomically revokes its previous M/U/F family and issues a new family, preserving Pairings and local keys. Serialize issuance with refresh/logout/security revocation; delayed old operations cannot restore the replaced family. A revoked previous family cannot revoke a later freshly authenticated family. Ordinary refresh keeps its approved access-token overlap rules.
+Fresh verified WeChat or QQ login restoring the same active Sender atomically revokes its previous M/U/F family and issues a new family, preserving Pairings and local keys. Serialize issuance with refresh/logout/security revocation; delayed old operations cannot restore the replaced family. A revoked previous family cannot revoke a later freshly authenticated family. Ordinary refresh keeps its approved access-token overlap rules.
 
 Account-owner security revocation of a Sender permanently closes that registration, invalidates all its credentials, cancels its unfinished authorized pairing operations and removes its Pairings. The old deviceId cannot be restored. A fresh login without the old Sender ID creates a new registration for subsequent re-pairing. Return 409 device_registration_revoked for an owned security-revoked Sender ID; unknown or caller-invisible IDs return 404 resource_not_found. Never recreate a supplied old ID. Other Senders' Pairings and the Receiver's shared credential/connection remain unaffected. Previously admitted Deliveries retain the original authorization/lifecycle rule. Ordinary logout and refresh-family replay revocation do not permanently close a registration.
 
@@ -57,7 +59,7 @@ All service credentials are independent, unpredictable opaque tokens. Store only
 
 A login/refresh returns M, U and F with expiry timestamps. Both foreground management and background uploading share one single-flight refresher. Refresh before a required operation when access expiry is within 5 minutes, or after an access-expired rejection that occurred before business work.
 
-Each successful refresh generates fresh M/U/F, with expiration now + 3h/3h/7d. No additional absolute session-age cap. Seven days without successful renewal requires WeChat login. Existing M/U tokens keep their original expirations during ordinary rotation.
+Each successful refresh generates fresh M/U/F, with expiration now + 3h/3h/7d. No additional absolute session-age cap. Seven days without successful renewal requires WeChat or QQ login. Existing M/U tokens keep their original expirations during ordinary rotation.
 
 Use the approved operation ID and attempt ordering: original attempt 0, at most one uncertain-transport retransmission attempt 1, same operation ID. If attempt 1 reaches the service first while F is still current, it can perform the original rotation; a later attempt 0 is superseded. The 30-second overlap/original-expiry check applies only when a higher attempt uses an already-consumed immediate predecessor. A recorded lower/equal attempt is superseded without new issuance or family revocation. Preserve this guard after later operations advance the family.
 
@@ -73,7 +75,7 @@ A Pairing Session is one-time, valid for 5 minutes, and may be confirmed by one 
 | --- | --- | --- |
 | new_receiver | New Windows context; subsequent owning Sender confirmation | Reserve capacity, establish a new Pairing, and permit first R issuance |
 | add_sender | Existing R for that Receiver; owning Sender confirmation | Establish/replace only that Sender's Pairing; no R issuance or replacement |
-| recover_receiver | Fresh Account-owner WeChat verification and explicit replacement approval | Confirm existing key possession where available, replace R only; no new Pairing or binding-capacity reservation |
+| recover_receiver | Fresh Account-owner WeChat or QQ verification and explicit replacement approval | Confirm existing key possession where available, replace R only; no new Pairing or binding-capacity reservation |
 
 The normal new-receiver flow is:
 
@@ -93,7 +95,7 @@ Each Receiver has one current issuance generation. Newly owner-approved recovery
 
 An already credentialed Receiver authenticates add_sender session creation with existing R. Activate only the new/replacing Pairing for the confirming Sender; preserve R, its delivery connection and all other Pairings. Its B token cannot enter the receiver-token issuance path: return mode_forbids_credential_issue without changing credentials.
 
-If R is lost, a recover_receiver QR requires fresh WeChat Account-owner verification and explicit replacement approval. Clients confirm possession of an existing Pairing key where available through their authenticated reports; do not create a new Pairing or reserve a sixth binding for pure credential recovery. Revoke old R and close/cancel its active/pending connection, then return the replacement through the restricted session. Explicitly tell the approving owner that replacement interrupts this shared Receiver's connection for all of its Senders. Preserve Pairings only where Windows still has the local keys; missing keys require a separate pairing operation. New installations use new registrations. A public deviceId cannot independently recover a credential.
+If R is lost, a recover_receiver QR requires fresh WeChat or QQ Account-owner verification and explicit replacement approval. Clients confirm possession of an existing Pairing key where available through their authenticated reports; do not create a new Pairing or reserve a sixth binding for pure credential recovery. Revoke old R and close/cancel its active/pending connection, then return the replacement through the restricted session. Explicitly tell the approving owner that replacement interrupts this shared Receiver's connection for all of its Senders. Preserve Pairings only where Windows still has the local keys; missing keys require a separate pairing operation. New installations use new registrations. A public deviceId cannot independently recover a credential.
 
 ## 5. Cryptographic profile v1
 
@@ -240,14 +242,15 @@ IDs are opaque strings; callers do not infer identity or authority from them. Me
 | Operation | Credential | Purpose |
 | --- | --- | --- |
 | POST /v1/auth/wechat | fresh WeChat code | Create/restore Account and Sender registration; issue M/U/F |
+| POST /v1/auth/qq | fresh QQ code | Create/restore Account and Sender registration; issue M/U/F |
 | POST /v1/auth/refresh | F in body | Rotate Sender bundle using operationId and attempt |
 | POST /v1/auth/logout | valid Sender self access credential or F; M for switch_account | Revoke current Sender credentials; Account switching also removes own Pairings |
 | GET /v1/self/receivers | M | Own Receiver list, aliases and presence |
 | PATCH /v1/self/pairings/{id} | M | Rename own association alias |
 | DELETE /v1/self/pairings/{id} | M | Remove own association only |
-| POST /v1/devices/{id}/revoke | M plus fresh WeChat proof | Account-owner security revocation |
+| POST /v1/devices/{id}/revoke | M plus fresh WeChat or QQ proof | Account-owner security revocation |
 | POST /v1/pairing-sessions | none for new/recovery; R for add_sender | Create a mode-fixed restricted 5-minute context |
-| POST /v1/pairing-sessions/{id}/authorize | M; fresh WeChat proof for recovery | Confirm owner; reserve capacity only for a new distinct Pairing |
+| POST /v1/pairing-sessions/{id}/authorize | M; fresh WeChat or QQ proof for recovery | Confirm owner; reserve capacity only for a new distinct Pairing |
 | POST /v1/pairing-sessions/{id}/complete | M or B for its side | Report mode-specific key confirmation; activate Pairing only for new/add |
 | DELETE /v1/pairing-sessions/{id} | owning M or B | Cancel and release reservation |
 | POST /v1/pairing-sessions/{id}/receiver-token | B, new_receiver or recover_receiver only | Redeem current issuance grant, operation/attempt protected; add_sender is forbidden |
@@ -271,14 +274,15 @@ Common response objects:
 | Operation | Request | Success |
 | --- | --- | --- |
 | POST /v1/auth/wechat | wechatCode; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
+| POST /v1/auth/qq | qqCode; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
 | POST /v1/auth/refresh | refreshToken, operationId, attempt (0 or 1) | 200 CredentialBundle plus the accepted operationId and attempt |
 | POST /v1/auth/logout | Optional mode: logout or switch_account, default logout; refreshToken when using F | 204; logout revokes the current Sender's credentials and preserves Pairings; switch_account also removes its Pairings and requires M management authority |
 | GET /v1/self/receivers | No body | 200 {items: ReceiverAssociation[]} |
 | PATCH /v1/self/pairings/{id} | alias string | 200 ReceiverAssociation with the updated own alias |
 | DELETE /v1/self/pairings/{id} | No body | 204; remove only the current Sender's association |
-| POST /v1/devices/{id}/revoke | wechatCode for fresh same-Account owner verification | 204; apply the device-specific security-revocation lifecycle |
+| POST /v1/devices/{id}/revoke | exactly one of wechatCode or qqCode for fresh same-Account owner verification | 204; apply the device-specific security-revocation lifecycle |
 | POST /v1/pairing-sessions | mode; existing receiverId for add_sender/recover_receiver | 201 {session: PairingSessionView, pairingToken, pairingTokenExpiresAt}; new_receiver allocates receiverId, add_sender also authenticates existing R |
-| POST /v1/pairing-sessions/{id}/authorize | Optional own alias; recovery also requires wechatCode | 200 PairingSessionView after owner/capacity checks; repeated confirmation by the same Sender returns the same authorized session |
+| POST /v1/pairing-sessions/{id}/authorize | Optional own alias; recovery also requires exactly one of wechatCode or qqCode | 200 PairingSessionView after owner/capacity checks; repeated confirmation by the same Sender returns the same authorized session |
 | POST /v1/pairing-sessions/{id}/complete | keyConfirmation: confirmed; recovery may instead report not_available; Windows recovery also reports retainedPairingIds | 200 PairingSessionView; derive the reporting side from M/B and apply mode-specific completion |
 | DELETE /v1/pairing-sessions/{id} | No body | 204 before activation; cancel unfinished work and release its reservation |
 | POST /v1/pairing-sessions/{id}/receiver-token | operationId, attempt (0 or 1) | 200 {receiverId, receiverToken}; long-lived R has no expiry field |
@@ -377,14 +381,14 @@ HTTP categories and initial code mapping:
 | 400 | invalid_request | Malformed JSON or missing required request body |
 | 422 | validation_failed | Whole-request shape/field validation, including invalid path/query/header values |
 | 401 | credential_missing, credential_invalid, credential_expired, credential_revoked | Required service credential is absent or unusable |
-| 401 | wechat_authorization_invalid, refresh_reuse_detected | Invalid WeChat authorization, or confirmed refresh reuse with the approved family-revocation effect |
+| 401 | wechat_authorization_invalid, qq_authorization_invalid, refresh_reuse_detected | Invalid provider authorization, or confirmed refresh reuse with the approved family-revocation effect |
 | 403 | insufficient_scope, fresh_identity_required | Valid credential lacks operation scope or required fresh owner verification |
 | 404 | resource_not_found | Resource does not exist or is not visible to this caller; do not distinguish another Account's resource |
 | 409 | receiver_limit_reached, receiver_already_connected | Binding cap or exclusive delivery-connection conflict |
 | 409 | device_registration_revoked | Fresh login requested restoration of an owned permanently revoked Sender registration |
 | 409 | operation_superseded, pairing_session_claimed, pairing_not_ready, mode_forbids_credential_issue | Operation ordering or authenticated session-state conflict |
 | 410 | pairing_session_expired, pairing_session_closed | An authorized caller's pairing context has expired or closed |
-| 502 | identity_provider_error, model_provider_error | The service's WeChat validation or provider-key issuance dependency failed |
+| 502 | identity_provider_error, model_provider_error | The service's identity verification or provider-key issuance dependency failed |
 | 503 | service_unavailable, model_configuration_unavailable | Service/storage or required model configuration is unavailable |
 | 503 | delivery_status_unavailable | A reliable terminal Delivery result cannot be obtained; delivery may already have occurred |
 | 500 | internal_error | Unexpected server failure, with safe public detail |
@@ -491,7 +495,7 @@ Interrupted cleanup reruns the filters on the next scheduled day without a progr
 
 These retention periods apply only to PostgreSQL. Docker/container logs are operator-managed. Backups follow the Helm manual retention/recovery workflow; unfinished recovery dependencies must not be removed. Logical deletion is not immediate physical erasure from backups or storage.
 
-Memory ciphertext release follows Delivery/request terminal processing, never the daily metadata schedule. Keep raw credentials and WeChat/Bailian secret-bearing requests/responses out of logs and published examples.
+Memory ciphertext release follows Delivery/request terminal processing, never the daily metadata schedule. Keep raw credentials and WeChat, QQ or Bailian secret-bearing requests/responses out of logs and published examples.
 
 ## 11. Acceptance and validation
 
@@ -503,7 +507,7 @@ Repository performance tests, load/benchmark plans, latency sampling procedures 
 
 ### Required scenarios
 
-- Fresh WeChat login, same-Account restore, Account switch and cross-Account rejection.
+- Fresh WeChat and QQ login, same-Account restore, provider namespace separation, Account switch and cross-Account rejection.
 - Fresh re-login atomically replacing the old family without losing Pairings; security-revoked Sender ID refusing restoration; delayed old refresh unable to restore/revoke the new family.
 - M/U/F scope separation, refresh with expired access, family replay/overlap/order, response loss and logout races.
 - First Receiver credential, add-Sender non-interference, owner recovery, superseded grants and pending-upgrade revocation.
@@ -534,7 +538,7 @@ Keep the future static homepage owned/hosted here, but its content, UI and imple
 
 | Baseline | Specification |
 | --- | --- |
-| S01 | Account mapping/open registration, WeChat-backed credential issuance |
+| S01 | Account mapping/open registration, WeChat and QQ credential issuance |
 | S02 | One-time QR, client-only key establishment, delayed Pairing activation |
 | S03 | Opaque scopes, joint M/U/F renewal, long-lived Receiver credential |
 | S04 | Own aliases/Pairing removal, presence, Account security revocation |

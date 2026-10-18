@@ -82,10 +82,15 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 		title:  "WeChat authorization invalid",
 		detail: "The WeChat authorization code is invalid or has already been used.",
 	},
+	protocol.QQAuthorizationInvalid: {
+		status: http.StatusUnauthorized,
+		title:  "QQ authorization invalid",
+		detail: "The QQ authorization code is invalid, expired or has already been used.",
+	},
 	protocol.IdentityProviderError: {
 		status: http.StatusBadGateway,
 		title:  "Identity provider error",
-		detail: "The WeChat identity provider could not verify the authorization.",
+		detail: "The identity provider could not verify the authorization.",
 	},
 	protocol.ModelProviderError: {
 		status: http.StatusBadGateway,
@@ -135,7 +140,7 @@ var errorCodeDefinitions = map[protocol.ErrorCode]errorCodeDefinition{
 	protocol.FreshIdentityRequired: {
 		status: http.StatusForbidden,
 		title:  "Fresh identity required",
-		detail: "This operation requires fresh verification of the owning WeChat Account.",
+		detail: "This operation requires fresh verification of the owning Account.",
 	},
 	protocol.ReceiverLimitReached: {
 		status: http.StatusConflict,
@@ -290,7 +295,10 @@ var businessOutcomes = []struct {
 	code  protocol.ErrorCode
 }{
 	{identity.ErrWeChatAuthorizationInvalid, protocol.WeChatAuthorizationInvalid},
+	{identity.ErrQQAuthorizationInvalid, protocol.QQAuthorizationInvalid},
 	{identity.ErrIdentityProvider, protocol.IdentityProviderError},
+	{identity.ErrIdentityProofRequired, protocol.ValidationFailed},
+	{identity.ErrIdentityProofConflicting, protocol.ValidationFailed},
 	{identity.ErrSenderNotFound, protocol.ResourceNotFound},
 	{identity.ErrSenderRevoked, protocol.DeviceRegistrationRevoked},
 	{identity.ErrCredentialMissing, protocol.CredentialMissing},
@@ -333,6 +341,7 @@ var businessOutcomes = []struct {
 	{pairing.ErrAssociationNotFound, protocol.ResourceNotFound},
 	{pairing.ErrFreshIdentityRequired, protocol.FreshIdentityRequired},
 	{pairing.ErrWeChatAuthorizationInvalid, protocol.WeChatAuthorizationInvalid},
+	{pairing.ErrQQAuthorizationInvalid, protocol.QQAuthorizationInvalid},
 	{pairing.ErrIdentityProvider, protocol.IdentityProviderError},
 	{pairing.ErrCredentialMissing, protocol.CredentialMissing},
 	{pairing.ErrCredentialInvalid, protocol.CredentialInvalid},

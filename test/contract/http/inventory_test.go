@@ -20,6 +20,7 @@ var v1Inventory = []string{
 	"DELETE /v1/self/pairings/{id}",
 	"DELETE /v1/pairing-sessions/{id}",
 	"POST /v1/auth/logout",
+	"POST /v1/auth/qq",
 	"POST /v1/auth/refresh",
 	"POST /v1/auth/wechat",
 	"POST /v1/devices/{id}/revoke",

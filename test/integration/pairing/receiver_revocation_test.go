@@ -28,7 +28,7 @@ import (
 func (e *environment) revokeDevice(t *testing.T, deviceID, credential, code, openID string) (int, []byte) {
 	t.Helper()
 
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 	return e.post(t, "/v1/devices/"+deviceID+"/revoke", `{"wechatCode":"`+code+`"}`, credential)
 }
 
@@ -253,7 +253,7 @@ func TestReceiverRevocationNeedsAnOwnedReceiverAndFreshSameAccountProof(t *testi
 			if refused.code != "" {
 				body = `{"wechatCode":"` + refused.code + `"}`
 			}
-			environment.provider.Accept(refused.code, identity.WeChatIdentity{AppID: "wx-app", OpenID: refused.openID})
+			environment.provider.Accept(refused.code, identity.Identity{AppID: "wx-app", OpenID: refused.openID})
 			status, payload := environment.post(t, "/v1/devices/"+refused.deviceID+"/revoke", body, refused.credential)
 			if status != refused.wantStatus {
 				t.Fatalf("revocation = %d, want %d: %s", status, refused.wantStatus, payload)

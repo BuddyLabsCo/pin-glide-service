@@ -26,7 +26,8 @@ type CreateRequest struct {
 // /v1/pairing-sessions/{id}/authorize body.
 type AuthorizeRequest struct {
 	Alias      string `json:"alias,omitempty" maxLength:"256" doc:"Replacement for the claiming Sender's own alias; omit it to preserve the current alias"`
-	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh WeChat authorization; required for recover_receiver"`
+	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh WeChat authorization; required for recover_receiver when no QQ proof is sent"`
+	QQCode     string `json:"qqCode,omitempty" maxLength:"512" doc:"Fresh QQ authorization; required for recover_receiver when no WeChat proof is sent"`
 }
 
 // CompleteRequest is the accepted POST /v1/pairing-sessions/{id}/complete

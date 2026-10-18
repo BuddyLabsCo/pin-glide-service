@@ -15,12 +15,14 @@ import (
 	"syscall"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/adapters/bailian"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/adapters/qq"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/adapters/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/httpapi"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/api/wss"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/config"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 )
 
@@ -53,10 +55,6 @@ func run(exportOpenAPI, exportAsyncAPI bool) error {
 	if err != nil {
 		return err
 	}
-	if configuration.Environment == config.Production &&
-		(configuration.WeChatAppID == "" || configuration.WeChatAppSecret == "") {
-		return errors.New("PIN_GLIDE_WECHAT_APP_ID and PIN_GLIDE_WECHAT_APP_SECRET are required to serve login in production")
-	}
 	if configuration.Environment == config.Production && configuration.BailianAPIKey == "" {
 		return errors.New("PIN_GLIDE_BAILIAN_API_KEY is required to serve model credentials in production")
 	}
@@ -83,9 +81,12 @@ func run(exportOpenAPI, exportAsyncAPI bool) error {
 	defer diagnostics.Close()
 
 	return api.Serve(ctx, listener, api.Dependencies{
-		Database:    pool,
-		Logger:      logger,
-		WeChat:      wechat.New(configuration.WeChatAppID, configuration.WeChatAppSecret),
+		Database: pool,
+		Logger:   logger,
+		IdentityProviders: []identity.Provider{
+			wechat.New(configuration.WeChatAppID, configuration.WeChatAppSecret),
+			qq.New(configuration.QQAppID, configuration.QQAppKey),
+		},
 		Bailian:     bailian.New(configuration.BailianAPIKey),
 		Diagnostics: diagnostics,
 	})

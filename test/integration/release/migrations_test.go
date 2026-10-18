@@ -273,6 +273,93 @@ WHERE namespace.nspname = 'pin_glide'
 	}
 }
 
+// Regression: the Account namespace was the pair of WeChat AppID and OpenID, so
+// a QQ identity with the same values would collide with an existing WeChat
+// Account and the old columns cannot represent provider separation.
+// Seam: the deployed migration process, a database carrying the released
+// WeChat shape, and the public schema it must converge to without changing
+// Account IDs or dependent registration state.
+func TestIdentityProviderAccountUpgrade(t *testing.T) {
+	root, work, bin, pool, dsn := releaseDatabase(t)
+	process := releaseProcess{work: work, bin: bin, dsn: dsn, version: "0.1.0", initial: "true", retry: "false"}
+	sqlExec := func(query string) { t.Helper(); _, err := pool.Exec(query); must(t, err) }
+	writeWorkFile(t, work, "db/migrations/order.txt", "")
+	process.migrate(t, true, "complete")
+
+	// Recreate the released WeChat-only Account shape and seed data that the
+	// provider-aware schema must preserve.
+	sqlExec(`DROP INDEX pin_glide.uidx_identity_accounts_provider_app_id_open_id`)
+	sqlExec(`ALTER TABLE pin_glide.identity_accounts DROP CONSTRAINT chk_identity_accounts_provider`)
+	sqlExec(`ALTER TABLE pin_glide.identity_accounts DROP COLUMN provider`)
+	sqlExec(`ALTER TABLE pin_glide.identity_accounts RENAME COLUMN app_id TO wechat_app_id`)
+	sqlExec(`ALTER TABLE pin_glide.identity_accounts RENAME COLUMN open_id TO wechat_open_id`)
+	sqlExec(`ALTER TABLE pin_glide.identity_accounts RENAME COLUMN union_id TO wechat_union_id`)
+	sqlExec(`CREATE UNIQUE INDEX uidx_identity_accounts_wechat_app_id_wechat_open_id
+		ON pin_glide.identity_accounts (wechat_app_id, wechat_open_id)`)
+	sqlExec(`INSERT INTO pin_glide.identity_accounts
+		(id, wechat_app_id, wechat_open_id, wechat_union_id)
+		VALUES ('legacy-account', 'shared-app', 'shared-openid', 'legacy-union')`)
+	sqlExec(`INSERT INTO pin_glide.identity_sender_registrations (id, account_id)
+		VALUES ('legacy-sender', 'legacy-account')`)
+	sqlExec(`INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
+		VALUES ('legacy-receiver', 'legacy-account', 'active')`)
+	sqlExec(`INSERT INTO pin_glide.identity_credentials
+		(sender_id, family_id, scope, token_digest, expires_at)
+		VALUES ('legacy-sender', 'legacy-family', 'user_session', 'legacy-digest', now() + interval '1 day')`)
+	sqlExec(`INSERT INTO pin_glide.identity_receiver_credentials
+		(receiver_id, generation, token_digest)
+		VALUES ('legacy-receiver', 1, 'legacy-receiver-digest')`)
+	sqlExec(`INSERT INTO pin_glide.pairing_pairings
+		(id, sender_id, receiver_id, state, alias, activated_at)
+		VALUES ('legacy-pairing', 'legacy-sender', 'legacy-receiver', 'active', 'Legacy', now())`)
+
+	migration, err := os.ReadFile(filepath.Join(root,
+		"db/migrations/pin_glide/issue_77_1_identity_provider_namespace.sql"))
+	must(t, err)
+	writeWorkFile(t, work, "db/migrations/pin_glide/issue_77_1_identity_provider_namespace.sql",
+		string(migration))
+	writeWorkFile(t, work, "db/migrations/order.txt",
+		"db/migrations/pin_glide/issue_77_1_identity_provider_namespace.sql\n")
+	process.initial = "false"
+	process.migrate(t, true, "complete")
+	process.migrate(t, true, "already processed")
+
+	var provider, appID, openID string
+	var unionID sql.NullString
+	must(t, pool.QueryRow(`SELECT provider, app_id, open_id, union_id
+		FROM pin_glide.identity_accounts WHERE id = 'legacy-account'`).
+		Scan(&provider, &appID, &openID, &unionID))
+	if provider != "wechat" || appID != "shared-app" || openID != "shared-openid" ||
+		!unionID.Valid || unionID.String != "legacy-union" {
+		t.Fatalf("migrated Account = %q/%q/%q/%v, want the original WeChat identity",
+			provider, appID, openID, unionID)
+	}
+
+	var senderID, receiverID, pairingID string
+	must(t, pool.QueryRow(`SELECT id FROM pin_glide.identity_sender_registrations
+		WHERE id = 'legacy-sender' AND account_id = 'legacy-account'`).Scan(&senderID))
+	must(t, pool.QueryRow(`SELECT id FROM pin_glide.identity_receiver_registrations
+		WHERE id = 'legacy-receiver' AND account_id = 'legacy-account' AND state = 'active'`).Scan(&receiverID))
+	must(t, pool.QueryRow(`SELECT id FROM pin_glide.pairing_pairings
+		WHERE id = 'legacy-pairing' AND state = 'active'`).Scan(&pairingID))
+	var activeCredentials int
+	must(t, pool.QueryRow(`SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = 'legacy-sender' AND revoked_at IS NULL AND expires_at > now()`).
+		Scan(&activeCredentials))
+	if activeCredentials != 1 {
+		t.Fatalf("the upgrade left %d active Sender credentials, want 1", activeCredentials)
+	}
+
+	// The same provider application and OpenID under QQ is now a distinct
+	// Account, while repeating the WeChat identity still collides.
+	sqlExec(`INSERT INTO pin_glide.identity_accounts
+		(id, provider, app_id, open_id) VALUES ('qq-account', 'qq', 'shared-app', 'shared-openid')`)
+	if _, err := pool.Exec(`INSERT INTO pin_glide.identity_accounts
+		(id, provider, app_id, open_id) VALUES ('duplicate-wechat', 'wechat', 'shared-app', 'shared-openid')`); err == nil {
+		t.Fatal("the provider-aware unique index accepted a duplicate WeChat identity")
+	}
+}
+
 func run(t *testing.T, directory, program string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

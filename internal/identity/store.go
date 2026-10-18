@@ -20,19 +20,20 @@ import (
 // none. It returns the existing Account ID when two first logins race.
 const upsertAccountSQL = `
 INSERT INTO pin_glide.identity_accounts AS account
-    (id, wechat_app_id, wechat_open_id, wechat_union_id)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (wechat_app_id, wechat_open_id) DO UPDATE
-SET wechat_union_id = COALESCE(EXCLUDED.wechat_union_id, account.wechat_union_id)
+    (id, provider, app_id, open_id, union_id)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (provider, app_id, open_id) DO UPDATE
+SET union_id = COALESCE(EXCLUDED.union_id, account.union_id)
 RETURNING id`
 
 // upsertAccount maps the verified identity to its Account, creating the Account
-// on first login. The AppID is part of the key, so the same OpenID under
-// another configured application is a different Account.
-func upsertAccount(ctx context.Context, tx *sql.Tx, verified WeChatIdentity) (string, error) {
+// on first login. Provider and AppID are part of the key, so the same OpenID
+// under another provider or configured application is a different Account.
+func upsertAccount(ctx context.Context, tx *sql.Tx, verified Identity) (string, error) {
 	var accountID string
 	err := tx.QueryRowContext(ctx, upsertAccountSQL,
-		newValue(), verified.AppID, verified.OpenID, nullable(verified.UnionID)).Scan(&accountID)
+		newValue(), verified.Provider, verified.AppID, verified.OpenID,
+		nullable(verified.UnionID)).Scan(&accountID)
 	return accountID, err
 }
 
@@ -167,14 +168,15 @@ func insertCredentials(ctx context.Context, tx *sql.Tx, familyID string, bundle 
 	return err
 }
 
-// findAccount reads the Account one verified WeChat identity belongs to.
-func findAccount(ctx context.Context, db qrm.Queryable, verified WeChatIdentity) (string, error) {
+// findAccount reads the Account one verified identity belongs to.
+func findAccount(ctx context.Context, db qrm.Queryable, verified Identity) (string, error) {
 	var account model.IdentityAccounts
 	err := table.IdentityAccounts.
 		SELECT(table.IdentityAccounts.ID).
 		FROM(table.IdentityAccounts).
-		WHERE(table.IdentityAccounts.WechatAppID.EQ(postgres.String(verified.AppID)).
-			AND(table.IdentityAccounts.WechatOpenID.EQ(postgres.String(verified.OpenID)))).
+		WHERE(table.IdentityAccounts.Provider.EQ(postgres.String(string(verified.Provider))).
+			AND(table.IdentityAccounts.AppID.EQ(postgres.String(verified.AppID))).
+			AND(table.IdentityAccounts.OpenID.EQ(postgres.String(verified.OpenID)))).
 		QueryContext(ctx, db, &account)
 	if errors.Is(err, qrm.ErrNoRows) {
 		return "", ErrSenderNotFound

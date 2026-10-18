@@ -22,7 +22,7 @@ import (
 func (e *environment) claimRecovery(t *testing.T, sessionID, code, openID string, sender bundle) sessionView {
 	t.Helper()
 
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 	status, claimed, payload := e.claim(t, sessionID, `{"wechatCode":"`+code+`"}`, sender.UserSession.Token)
 	if status != http.StatusOK {
 		t.Fatalf("recovery claim status = %d: %s", status, payload)

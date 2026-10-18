@@ -60,7 +60,8 @@ fi
 export PIN_GLIDE_ENV=development
 export PIN_GLIDE_DATABASE_URL='postgres://pin_glide:pin_glide@127.0.0.1:55432/pin_glide?sslmode=disable'
 export PIN_GLIDE_API_ADDRESS=127.0.0.1:8080
-unset PIN_GLIDE_WECHAT_APP_ID PIN_GLIDE_WECHAT_APP_SECRET PIN_GLIDE_BAILIAN_API_KEY
+unset PIN_GLIDE_WECHAT_APP_ID PIN_GLIDE_WECHAT_APP_SECRET \
+  PIN_GLIDE_QQ_APP_ID PIN_GLIDE_QQ_APP_KEY PIN_GLIDE_BAILIAN_API_KEY
 
 if [[ "$mode" != --code-only ]]; then
   rm -f "$state_dir/ready"

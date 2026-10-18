@@ -55,7 +55,7 @@ func TestPairingCapacityIsAtomicAndReleasesOnCancellation(t *testing.T) {
 	// An existing Receiver consumes no second slot. Recovery reserves no
 	// association at all, so the repeated Receiver stays one of the four, and
 	// the fresh owner proof its claim requires is what approves the replacement.
-	environment.provider.Accept("code-recover", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-capacity"})
+	environment.provider.Accept("code-recover", identity.Identity{AppID: "wx-app", OpenID: "openid-capacity"})
 	recovery, restricted := environment.createRecovery(t, first.ReceiverID)
 	if restricted == "" {
 		t.Error("recovery session returned no restricted credential for its receiver side")

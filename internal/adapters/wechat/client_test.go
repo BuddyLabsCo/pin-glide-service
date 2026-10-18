@@ -141,12 +141,24 @@ func TestVerifyWithoutConfiguredCredentialsDoesNotCallTheProvider(t *testing.T) 
 	}))
 	defer provider.Close()
 
-	client := New("", "")
-	client.endpoint = provider.URL
-	client.httpClient = provider.Client()
+	for _, test := range []struct {
+		name   string
+		appID  string
+		secret string
+	}{
+		{name: "neither"},
+		{name: "missing app secret", appID: "wx-app"},
+		{name: "missing app id", secret: "wx-secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := New(test.appID, test.secret)
+			client.endpoint = provider.URL
+			client.httpClient = provider.Client()
 
-	if _, err := client.Verify(context.Background(), "code-one"); !errors.Is(err, identity.ErrIdentityProvider) {
-		t.Fatalf("Verify error = %v, want %v", err, identity.ErrIdentityProvider)
+			if _, err := client.Verify(context.Background(), "code-one"); !errors.Is(err, identity.ErrIdentityProvider) {
+				t.Fatalf("Verify error = %v, want %v", err, identity.ErrIdentityProvider)
+			}
+		})
 	}
 }
 

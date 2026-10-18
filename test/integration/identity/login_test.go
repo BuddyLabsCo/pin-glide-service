@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	qqadapter "github.com/BuddyLabsCo/pin-glide-service/internal/adapters/qq"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
+	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
@@ -70,10 +72,11 @@ type problem struct {
 }
 
 // loginEnvironment is one composed service with its disposable database and
-// faked WeChat boundary.
+// faked WeChat and QQ boundaries.
 type loginEnvironment struct {
 	service  *harness.Service
 	provider *wechatfake.Fake
+	qq       *qqfake.Fake
 	pool     *sql.DB
 }
 
@@ -88,6 +91,19 @@ func startLogin(t *testing.T) *loginEnvironment {
 func startLoginWith(t *testing.T, logger *slog.Logger) *loginEnvironment {
 	t.Helper()
 
+	provider := wechatfake.New()
+	qqProvider := qqfake.New()
+	environment := startLoginWithProviders(t, logger, provider, qqProvider)
+	environment.provider = provider
+	environment.qq = qqProvider
+	return environment
+}
+
+// startLoginWithProviders composes only the identity boundaries a test needs,
+// so provider absence remains observable.
+func startLoginWithProviders(t *testing.T, logger *slog.Logger, providers ...identity.Provider) *loginEnvironment {
+	t.Helper()
+
 	postgres := harness.StartPostgres(t)
 	postgres.ApplySchema(t, "pin_glide")
 
@@ -97,11 +113,9 @@ func startLoginWith(t *testing.T, logger *slog.Logger) *loginEnvironment {
 	}
 	t.Cleanup(func() { _ = pool.Close() })
 
-	provider := wechatfake.New()
 	return &loginEnvironment{
-		service:  harness.StartServiceLogging(t, postgres.DSN, provider, nil, logger),
-		provider: provider,
-		pool:     pool,
+		service: harness.StartProvidersLogging(t, postgres.DSN, providers, nil, logger),
+		pool:    pool,
 	}
 }
 
@@ -196,10 +210,10 @@ func (e *loginEnvironment) count(t *testing.T, query string, args ...any) int64 
 // every documented failure without confirming another Account's registrations.
 func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-first", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-a"})
-	environment.provider.Accept("code-second", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-a"})
-	environment.provider.Accept("code-other", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-b"})
-	environment.provider.Accept("code-revoked", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoked"})
+	environment.provider.Accept("code-first", identity.Identity{AppID: "wx-app", OpenID: "openid-a"})
+	environment.provider.Accept("code-second", identity.Identity{AppID: "wx-app", OpenID: "openid-a"})
+	environment.provider.Accept("code-other", identity.Identity{AppID: "wx-app", OpenID: "openid-b"})
+	environment.provider.Accept("code-revoked", identity.Identity{AppID: "wx-app", OpenID: "openid-revoked"})
 	environment.provider.Fail("code-broken", identity.ErrIdentityProvider)
 
 	// A login without a saved Sender ID registers this installation.
@@ -240,8 +254,8 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 
 	// An owned, permanently security-revoked registration is refused and
 	// never recreated.
-	environment.exec(t, `INSERT INTO pin_glide.identity_accounts (id, wechat_app_id, wechat_open_id)
-		VALUES ('account-revoked', 'wx-app', 'openid-revoked')`)
+	environment.exec(t, `INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
+		VALUES ('account-revoked', 'wechat', 'wx-app', 'openid-revoked')`)
 	environment.exec(t, `INSERT INTO pin_glide.identity_sender_registrations (id, account_id, state, revoked_at)
 		VALUES ('sender-revoked', 'account-revoked', 'revoked', now())`)
 	environment.loginFails(t, `{"wechatCode":"code-revoked","senderId":"sender-revoked"}`, http.StatusConflict)
@@ -250,8 +264,8 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	}
 
 	// A shared UnionID never merges Accounts.
-	environment.provider.Accept("code-union-a", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-union-a", UnionID: "union-shared"})
-	environment.provider.Accept("code-union-b", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-union-b", UnionID: "union-shared"})
+	environment.provider.Accept("code-union-a", identity.Identity{AppID: "wx-app", OpenID: "openid-union-a", UnionID: "union-shared"})
+	environment.provider.Accept("code-union-b", identity.Identity{AppID: "wx-app", OpenID: "openid-union-b", UnionID: "union-shared"})
 	unionA := environment.loginOK(t, `{"wechatCode":"code-union-a"}`)
 	unionB := environment.loginOK(t, `{"wechatCode":"code-union-b"}`)
 	if unionA.AccountID == unionB.AccountID {
@@ -267,13 +281,43 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment.loginFails(t, `{"wechatCode":"code-broken"}`, http.StatusBadGateway)
 }
 
+// A configured provider is independent of an absent or incomplete provider pair.
+func TestWeChatLoginWorksWithoutCompleteQQConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		incomplete bool
+	}{
+		{name: "absent"},
+		{name: "incomplete", incomplete: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := wechatfake.New()
+			providers := []identity.Provider{provider}
+			if test.incomplete {
+				providers = append(providers, qqadapter.New("qq-app", ""))
+			}
+			environment := startLoginWithProviders(t,
+				observability.NewLogger(os.Stderr, "integration"), providers...)
+			environment.provider = provider
+			provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
+
+			issued := environment.loginOK(t, `{"wechatCode":"wechat-only"}`)
+			if issued.AccountID == "" || issued.SenderID == "" {
+				t.Fatalf("WeChat-only login issued an incomplete bundle: %+v", issued)
+			}
+			environment.qqLoginFails(t, `{"qqCode":"qq-missing"}`,
+				http.StatusBadGateway, "identity_provider_error")
+		})
+	}
+}
+
 // A storage failure inside the login transaction must roll the whole
 // registration back: no Account or Sender row may survive a login whose
 // credentials were never stored, and the same login must succeed once storage
 // answers again.
 func TestWeChatLoginRollsBackWhenCredentialStorageFails(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-rollback", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-rollback"})
+	environment.provider.Accept("code-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-rollback"})
 
 	rejectCredentials := `CREATE FUNCTION pin_glide.identity_credentials_test_reject() RETURNS trigger
 		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected credential storage failure'; END $$`
@@ -283,7 +327,8 @@ func TestWeChatLoginRollsBackWhenCredentialStorageFails(t *testing.T) {
 		FOR EACH ROW EXECUTE FUNCTION pin_glide.identity_credentials_test_reject()`)
 
 	environment.loginFails(t, `{"wechatCode":"code-rollback"}`, http.StatusServiceUnavailable)
-	if count := environment.count(t, `SELECT count(*) FROM pin_glide.identity_accounts WHERE wechat_open_id = 'openid-rollback'`); count != 0 {
+	if count := environment.count(t, `SELECT count(*) FROM pin_glide.identity_accounts
+		WHERE provider = 'wechat' AND app_id = 'wx-app' AND open_id = 'openid-rollback'`); count != 0 {
 		t.Errorf("failed login left %d Account rows", count)
 	}
 	if count := environment.count(t, `SELECT count(*) FROM pin_glide.identity_sender_registrations`); count != 0 {

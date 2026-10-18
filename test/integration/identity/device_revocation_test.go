@@ -134,14 +134,14 @@ func readDeviceRevocationFixture(t *testing.T) deviceRevocationFixture {
 func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 	environment := startLogin(t)
 	for _, openID := range []string{"revoked", "sharing"} {
-		environment.provider.Accept("code-"+openID, identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-" + openID})
+		environment.provider.Accept("code-"+openID, identity.Identity{AppID: "wx-app", OpenID: "openid-" + openID})
 	}
 	revoked := environment.loginOK(t, `{"wechatCode":"code-revoked"}`)
 	sharing := environment.loginOK(t, `{"wechatCode":"code-sharing"}`)
 	environment.seedPairing(t, "receiver-revoke", "pairing-revoked", revoked.SenderID)
 	environment.seedPairing(t, "receiver-revoke", "pairing-sharing", sharing.SenderID)
 
-	environment.provider.Accept("code-revoke-owner", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoked"})
+	environment.provider.Accept("code-revoke-owner", identity.Identity{AppID: "wx-app", OpenID: "openid-revoked"})
 	revokeOK(t, environment, revoked.SenderID, revoked.UserSession.Token,
 		`{"wechatCode":"code-revoke-owner"}`)
 
@@ -185,7 +185,7 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 		WHERE id = $1 AND state = 'revoked' AND revoked_at IS NOT NULL`, revoked.SenderID); closed != 1 {
 		t.Errorf("the revoked registration is not stored as permanently closed: %d rows", closed)
 	}
-	environment.provider.Accept("code-revoke-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoked"})
+	environment.provider.Accept("code-revoke-again", identity.Identity{AppID: "wx-app", OpenID: "openid-revoked"})
 	environment.loginFails(t, `{"wechatCode":"code-revoke-again","senderId":"`+revoked.SenderID+`"}`, http.StatusConflict)
 	if recreated := environment.count(t, `SELECT count(*) FROM pin_glide.identity_sender_registrations
 		WHERE account_id = $1`, revoked.AccountID); recreated != 1 {
@@ -203,7 +203,7 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 	// A live installation of the same Account learns that the registration it
 	// names is already closed instead of closing it twice, while another
 	// Account's view of the same ID stays invisible.
-	environment.provider.Accept("code-revoke-closed", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoked"})
+	environment.provider.Accept("code-revoke-closed", identity.Identity{AppID: "wx-app", OpenID: "openid-revoked"})
 	revokeFails(t, environment, revoked.SenderID, registered.UserSession.Token,
 		`{"wechatCode":"code-revoke-closed"}`, http.StatusConflict, "device_registration_revoked")
 	revokeFails(t, environment, revoked.SenderID, sharing.UserSession.Token,
@@ -217,14 +217,14 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 // and association as they were.
 func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-owned", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owned"})
-	environment.provider.Accept("code-foreign", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-foreign"})
+	environment.provider.Accept("code-owned", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
+	environment.provider.Accept("code-foreign", identity.Identity{AppID: "wx-app", OpenID: "openid-foreign"})
 	owned := environment.loginOK(t, `{"wechatCode":"code-owned"}`)
 	foreign := environment.loginOK(t, `{"wechatCode":"code-foreign"}`)
 	environment.seedPairing(t, "receiver-owner", "pairing-owner", owned.SenderID)
 
-	environment.provider.Accept("code-owned-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owned"})
-	environment.provider.Accept("code-foreign-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-foreign"})
+	environment.provider.Accept("code-owned-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
+	environment.provider.Accept("code-foreign-again", identity.Identity{AppID: "wx-app", OpenID: "openid-foreign"})
 	environment.provider.Fail("code-broken", identity.ErrIdentityProvider)
 	environment.provider.Fail("code-invalid", identity.ErrWeChatAuthorizationInvalid)
 
@@ -236,7 +236,7 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 		http.StatusUnauthorized, "credential_invalid")
 	revokeFails(t, environment, owned.SenderID, owned.Uploader.Token, `{"wechatCode":"code-owned-again"}`,
 		http.StatusUnauthorized, "credential_invalid")
-	environment.provider.Accept("code-owned-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owned"})
+	environment.provider.Accept("code-owned-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
 
 	// Fresh proof is mandatory and must name the Account that owns the
 	// registration; another Account's proof revokes nothing.
@@ -264,9 +264,9 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 
 	// An owned registration that is already closed reports its own permanent
 	// outcome instead of being closed twice, and its owner alone learns that.
-	environment.provider.Accept("code-owned-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owned"})
+	environment.provider.Accept("code-owned-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-owned-again"}`)
-	environment.provider.Accept("code-closed-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owned"})
+	environment.provider.Accept("code-closed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
 	// The credential itself is revoked with its registration, so the caller
 	// reports that before the already closed registration is considered.
 	revokeFails(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-closed-again"}`,
@@ -278,10 +278,10 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 // revocation for a closed registration, and the retry succeeds.
 func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-revoke-rollback", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
+	environment.provider.Accept("code-revoke-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
 	owned := environment.loginOK(t, `{"wechatCode":"code-revoke-rollback"}`)
 	environment.seedPairing(t, "receiver-revoke-rollback", "pairing-revoke-rollback", owned.SenderID)
-	environment.provider.Accept("code-revoke-rollback-owner", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
+	environment.provider.Accept("code-revoke-rollback-owner", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
 
 	environment.exec(t, `CREATE FUNCTION pin_glide.identity_sender_registrations_test_reject_close() RETURNS trigger
 		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected registration close failure'; END $$`)
@@ -300,7 +300,7 @@ func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 	environment.exec(t, `DROP TRIGGER trg_identity_sender_registrations_test_reject_close ON pin_glide.identity_sender_registrations`)
 	environment.exec(t, `DROP FUNCTION pin_glide.identity_sender_registrations_test_reject_close()`)
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-revoke-rollback-owner"}`)
-	environment.provider.Accept("code-revoke-rollback-restore", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
+	environment.provider.Accept("code-revoke-rollback-restore", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
 	environment.loginFails(t, `{"wechatCode":"code-revoke-rollback-restore","senderId":"`+owned.SenderID+`"}`,
 		http.StatusConflict)
 }
@@ -311,14 +311,14 @@ func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 // authorizes nothing.
 func TestRevokedSenderCannotActOnItsOwnRegistration(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-revoke-quiet", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
+	environment.provider.Accept("code-revoke-quiet", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
 	owned := environment.loginOK(t, `{"wechatCode":"code-revoke-quiet"}`)
-	environment.provider.Accept("code-revoke-quiet-owner", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
+	environment.provider.Accept("code-revoke-quiet-owner", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-revoke-quiet-owner"}`)
 
 	// The closed registration cannot act again: every credential it held is
 	// revoked with it.
-	environment.provider.Accept("code-revoke-quiet-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
+	environment.provider.Accept("code-revoke-quiet-again", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
 	revokeFails(t, environment, owned.SenderID, owned.UserSession.Token,
 		`{"wechatCode":"code-revoke-quiet-again"}`, http.StatusUnauthorized, "credential_revoked")
 	status, payload, _ := environment.logout(t, owned.UserSession.Token, "")

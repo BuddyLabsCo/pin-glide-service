@@ -26,7 +26,8 @@ flock -u 9
 exec 9>&-
 
 # Local applications must not reach providers or inherit deployment identity.
-unset PIN_GLIDE_WECHAT_APP_ID PIN_GLIDE_WECHAT_APP_SECRET PIN_GLIDE_BAILIAN_API_KEY
+unset PIN_GLIDE_WECHAT_APP_ID PIN_GLIDE_WECHAT_APP_SECRET \
+  PIN_GLIDE_QQ_APP_ID PIN_GLIDE_QQ_APP_KEY PIN_GLIDE_BAILIAN_API_KEY
 
 dlv_bin="${DLV_BIN:-$(command -v dlv || printf '%s' "$HOME/go/bin/dlv")}"
 [[ -x "$dlv_bin" ]] || dlv_bin=''

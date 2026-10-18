@@ -217,8 +217,8 @@ type Service struct {
 // listener and returns once health answers. Tests cannot select a shared or
 // production database or origin: the harness only starts disposable loopback
 // databases and binds one loopback port. provider and mint are the faked
-// external WeChat and Bailian boundaries of that service; a test that does not
-// exercise one of them passes nil.
+// external identity-provider and Bailian boundaries of that service; a test
+// that does not exercise one of them passes nil.
 func StartService(t *testing.T, databaseURL string, provider identity.Provider, mint model.Provider) *Service {
 	t.Helper()
 	return StartServiceLogging(t, databaseURL, provider, mint, observability.NewLogger(os.Stderr, "integration"))
@@ -227,6 +227,24 @@ func StartService(t *testing.T, databaseURL string, provider identity.Provider, 
 // StartServiceLogging composes the service like StartService with the supplied
 // logger, so a test can assert what reaches service diagnostics.
 func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Provider, mint model.Provider, logger *slog.Logger) *Service {
+	t.Helper()
+	return startServiceLogging(t, databaseURL, []identity.Provider{provider}, mint, logger)
+}
+
+// StartProviders composes the service with multiple identity-provider fakes.
+func StartProviders(t *testing.T, databaseURL string, providers []identity.Provider, mint model.Provider) *Service {
+	t.Helper()
+	return StartProvidersLogging(t, databaseURL, providers, mint, observability.NewLogger(os.Stderr, "integration"))
+}
+
+// StartProvidersLogging composes the service like StartProviders with a
+// caller-supplied logger.
+func StartProvidersLogging(t *testing.T, databaseURL string, providers []identity.Provider, mint model.Provider, logger *slog.Logger) *Service {
+	t.Helper()
+	return startServiceLogging(t, databaseURL, providers, mint, logger)
+}
+
+func startServiceLogging(t *testing.T, databaseURL string, providers []identity.Provider, mint model.Provider, logger *slog.Logger) *Service {
 	t.Helper()
 	requireDisposableDatabase(t, databaseURL)
 
@@ -250,12 +268,12 @@ func StartServiceLogging(t *testing.T, databaseURL string, provider identity.Pro
 	diagnostics := observability.NewDiagnostics(pool, logger)
 	go func() {
 		served <- api.Serve(ctx, listener, api.Dependencies{
-			Database:    pool,
-			Logger:      logger,
-			WeChat:      provider,
-			Bailian:     mint,
-			Presence:    presence,
-			Diagnostics: diagnostics,
+			Database:          pool,
+			Logger:            logger,
+			IdentityProviders: providers,
+			Bailian:           mint,
+			Presence:          presence,
+			Diagnostics:       diagnostics,
 		})
 	}()
 

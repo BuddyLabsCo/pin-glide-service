@@ -1,5 +1,5 @@
-// Package identity owns Accounts, Sender installation registrations, the
-// WeChat-backed login and the lifecycle of the Sender credential family.
+// Package identity owns Accounts, provider-verified login and the lifecycle of
+// the Sender credential family.
 package identity
 
 import (
@@ -33,28 +33,63 @@ const (
 	RefreshOverlap = 30 * time.Second
 )
 
-// WeChatIdentity is one identity the WeChat provider verified. AppID is the
-// configured application the verification belongs to, so the same OpenID under
-// another AppID is another Account.
-type WeChatIdentity struct {
-	AppID   string
-	OpenID  string
-	UnionID string
+// ProviderKind names one supported external identity provider. Provider is part
+// of an Account's identity, so equal application and OpenID values from two
+// providers remain distinct Accounts.
+type ProviderKind string
+
+const (
+	// ProviderWeChat is the WeChat Open Platform mobile application provider.
+	ProviderWeChat ProviderKind = "wechat"
+	// ProviderQQ is the QQ Connect mobile application provider.
+	ProviderQQ ProviderKind = "qq"
+)
+
+// Identity is one identity a provider verified. AppID is the configured
+// application the verification belongs to, so the same OpenID under another
+// AppID or provider is another Account.
+type Identity struct {
+	Provider ProviderKind
+	AppID    string
+	OpenID   string
+	UnionID  string
 }
 
-// Provider verifies a fresh WeChat authorization code. It is the external
-// boundary the identity service depends on and is implemented by the WeChat
-// adapter.
+// Provider verifies one fresh authorization code. It is the external boundary
+// the identity service depends on and is implemented by each provider adapter.
 type Provider interface {
-	Verify(ctx context.Context, wechatCode string) (WeChatIdentity, error)
+	Kind() ProviderKind
+	Verify(ctx context.Context, code string) (Identity, error)
 }
 
-// LoginRequest is one fresh login. An empty SenderID asks for a new
+// Proof is one provider-selected fresh identity proof.
+type Proof struct {
+	Provider ProviderKind
+	Code     string
+}
+
+// SelectProof maps the compatibility fields of the proof-carrying HTTP
+// operations to one provider proof. Exactly one field may be present; callers
+// that require a proof reject an absent value in their own operation.
+func SelectProof(wechatCode, qqCode string) (Proof, error) {
+	switch {
+	case wechatCode != "" && qqCode != "":
+		return Proof{}, ErrIdentityProofConflicting
+	case wechatCode != "":
+		return Proof{Provider: ProviderWeChat, Code: wechatCode}, nil
+	case qqCode != "":
+		return Proof{Provider: ProviderQQ, Code: qqCode}, nil
+	default:
+		return Proof{}, nil
+	}
+}
+
+// LoginRequest is one fresh provider login. An empty SenderID asks for a new
 // installation registration; a supplied one may only restore an owned, active
 // registration, never recreate one.
 type LoginRequest struct {
-	WeChatCode string
-	SenderID   string
+	Proof    Proof
+	SenderID string
 }
 
 // RefreshRequest is one ordered renewal: the token that authorizes it, the
@@ -101,9 +136,18 @@ var (
 	// ErrWeChatAuthorizationInvalid marks an authorization code the provider
 	// rejected; the caller must obtain a fresh one.
 	ErrWeChatAuthorizationInvalid = errors.New("wechat authorization invalid")
+	// ErrQQAuthorizationInvalid marks a QQ authorization code the provider
+	// rejected as invalid, expired or already used.
+	ErrQQAuthorizationInvalid = errors.New("qq authorization invalid")
 	// ErrIdentityProvider marks a provider that could not answer or answered
 	// unusably.
-	ErrIdentityProvider = errors.New("wechat provider failed")
+	ErrIdentityProvider = errors.New("identity provider failed")
+	// ErrIdentityProofRequired marks an operation that requires fresh identity
+	// proof but received none.
+	ErrIdentityProofRequired = errors.New("identity proof required")
+	// ErrIdentityProofConflicting marks a request carrying proof fields for
+	// more than one provider.
+	ErrIdentityProofConflicting = errors.New("identity proof providers conflict")
 	// ErrSenderNotFound marks an unknown registration or one this Account does
 	// not own; the two are deliberately indistinguishable.
 	ErrSenderNotFound = errors.New("sender registration not found")

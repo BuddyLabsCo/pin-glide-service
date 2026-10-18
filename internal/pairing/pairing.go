@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 )
 
 // ReceiverLimit is how many distinct Receivers one Sender may associate with.
@@ -133,10 +135,10 @@ func (s Session) Expired(now time.Time) bool {
 
 // CreateRequest is one request for a restricted session. A recovery session is
 // created anonymously, like a new-receiver one: the fresh owner approval and
-// its WeChat proof belong to the claim, which is the operation that acts on the
-// target Receiver. Attaching one more Sender to an already credentialed
-// Receiver is authorized by that Receiver's own current credential, which
-// creation presents and which proves possession of it.
+// its identity-provider proof belong to the claim, which is the operation that
+// acts on the target Receiver. Attaching one more Sender to an already
+// credentialed Receiver is authorized by that Receiver's own current
+// credential, which creation presents and which proves possession of it.
 type CreateRequest struct {
 	Mode       Mode
 	ReceiverID string
@@ -145,12 +147,12 @@ type CreateRequest struct {
 
 // AuthorizeRequest is one Sender's claim of a session. Alias replaces the
 // owning Sender's own label when it is non-empty; a recovery claim also
-// carries a fresh owner-verification code.
+// carries fresh owner verification from one identity provider.
 type AuthorizeRequest struct {
-	SessionID    string
-	SenderID     string
-	Alias        string
-	RecoveryCode string
+	SessionID string
+	SenderID  string
+	Alias     string
+	Proof     identity.Proof
 }
 
 // KeyConfirmation is one client's authenticated report that it saved the
@@ -293,11 +295,13 @@ var (
 	ErrRetainedPairingsInvalid = errors.New("retained pairing keys invalid")
 	// ErrFreshIdentityRequired marks a recovery request without fresh owner
 	// verification.
-	ErrFreshIdentityRequired = errors.New("fresh wechat verification required")
+	ErrFreshIdentityRequired = errors.New("fresh identity verification required")
 	// ErrWeChatAuthorizationInvalid marks a recovery code the provider rejected.
 	ErrWeChatAuthorizationInvalid = errors.New("wechat authorization invalid")
+	// ErrQQAuthorizationInvalid marks a QQ recovery code the provider rejected.
+	ErrQQAuthorizationInvalid = errors.New("qq authorization invalid")
 	// ErrIdentityProvider marks a provider that could not answer.
-	ErrIdentityProvider = errors.New("wechat provider failed")
+	ErrIdentityProvider = errors.New("identity provider failed")
 	// ErrCredentialMissing marks a subscription without a credential.
 	ErrCredentialMissing = errors.New("pairing credential missing")
 	// ErrCredentialInvalid marks a restricted credential that authorizes
@@ -313,10 +317,10 @@ var (
 	ErrStorageUnavailable = errors.New("storage unavailable")
 )
 
-// Provider verifies the fresh WeChat proof a recovery session requires. It is
-// the same external boundary the identity service depends on.
+// Provider verifies the fresh owner proof a recovery session requires through
+// the shared identity service.
 type Provider interface {
-	VerifyIdentity(ctx context.Context, wechatCode string) (WeChatProof, error)
+	VerifyIdentity(ctx context.Context, proof identity.Proof) (IdentityProof, error)
 }
 
 // Authenticator resolves one Sender credential. The identity service
@@ -347,8 +351,9 @@ type DeliveryNotifier interface {
 	DeviceRevoked(receiverID string)
 }
 
-// WeChatProof is one verified WeChat identity and the Account it belongs to.
-type WeChatProof struct {
+// IdentityProof is one verified provider identity and the Account it belongs
+// to.
+type IdentityProof struct {
 	AccountID string
 }
 

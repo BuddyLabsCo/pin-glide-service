@@ -382,8 +382,8 @@ func (e *environment) registrations(t *testing.T) (senderID, receiverID, pairing
 
 	e.exec(t, `
 INSERT INTO pin_glide.identity_accounts
-    (id, wechat_app_id, wechat_open_id)
-VALUES ('account-retention', 'wx-app', 'openid-retention')`)
+    (id, provider, app_id, open_id)
+VALUES ('account-retention', 'wechat', 'wx-app', 'openid-retention')`)
 	e.exec(t, `
 INSERT INTO pin_glide.identity_sender_registrations (id, account_id)
 VALUES ('sender-retention', 'account-retention')`)

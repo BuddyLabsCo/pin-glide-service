@@ -47,6 +47,11 @@ func New(appID, appSecret string) *Client {
 	}
 }
 
+// Kind reports the provider this adapter verifies.
+func (c *Client) Kind() identity.ProviderKind {
+	return identity.ProviderWeChat
+}
+
 // exchange is the provider answer. Access and refresh tokens are deliberately
 // not decoded: the service needs only the verified identity, and a value it
 // never reads cannot reach a log, a response or the database.
@@ -58,15 +63,15 @@ type exchange struct {
 
 // Verify exchanges one authorization code and reports the verified identity of
 // the configured application.
-func (c *Client) Verify(ctx context.Context, wechatCode string) (identity.WeChatIdentity, error) {
+func (c *Client) Verify(ctx context.Context, wechatCode string) (identity.Identity, error) {
 	if c.appID == "" || c.appSecret == "" {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: WeChat credentials are not configured",
+		return identity.Identity{}, fmt.Errorf("%w: WeChat credentials are not configured",
 			identity.ErrIdentityProvider)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint, nil)
 	if err != nil {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: build the provider request: %v",
+		return identity.Identity{}, fmt.Errorf("%w: build the provider request: %v",
 			identity.ErrIdentityProvider, err)
 	}
 	request.URL.RawQuery = url.Values{
@@ -84,44 +89,45 @@ func (c *Client) Verify(ctx context.Context, wechatCode string) (identity.WeChat
 		if errors.As(err, &transport) {
 			err = transport.Err
 		}
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider call failed: %v",
+		return identity.Identity{}, fmt.Errorf("%w: provider call failed: %v",
 			identity.ErrIdentityProvider, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
 	if err != nil {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: read the provider answer: %v",
+		return identity.Identity{}, fmt.Errorf("%w: read the provider answer: %v",
 			identity.ErrIdentityProvider, err)
 	}
 	if response.StatusCode != http.StatusOK {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider returned HTTP %d",
+		return identity.Identity{}, fmt.Errorf("%w: provider returned HTTP %d",
 			identity.ErrIdentityProvider, response.StatusCode)
 	}
 
 	var answer exchange
 	if err := json.Unmarshal(body, &answer); err != nil {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider answer is not JSON",
+		return identity.Identity{}, fmt.Errorf("%w: provider answer is not JSON",
 			identity.ErrIdentityProvider)
 	}
 	if answer.ErrCode == invalidCode || answer.ErrCode == usedCode {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider errcode %d",
+		return identity.Identity{}, fmt.Errorf("%w: provider errcode %d",
 			identity.ErrWeChatAuthorizationInvalid, answer.ErrCode)
 	}
 	if answer.ErrCode != 0 {
 		// The numeric code names the provider failure; its message can restate
 		// the request and stays out of every error.
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider errcode %d",
+		return identity.Identity{}, fmt.Errorf("%w: provider errcode %d",
 			identity.ErrIdentityProvider, answer.ErrCode)
 	}
 	if answer.OpenID == "" {
-		return identity.WeChatIdentity{}, fmt.Errorf("%w: provider answer has no OpenID",
+		return identity.Identity{}, fmt.Errorf("%w: provider answer has no OpenID",
 			identity.ErrIdentityProvider)
 	}
 
-	return identity.WeChatIdentity{
-		AppID:   c.appID,
-		OpenID:  answer.OpenID,
-		UnionID: answer.UnionID,
+	return identity.Identity{
+		Provider: identity.ProviderWeChat,
+		AppID:    c.appID,
+		OpenID:   answer.OpenID,
+		UnionID:  answer.UnionID,
 	}, nil
 }
