@@ -111,8 +111,15 @@ func TestQQProofsRejectForeignAndConflictingIdentities(t *testing.T) {
 	association, _ := environment.paired(t, owner, "Phone")
 
 	recovery, _ := environment.createRecovery(t, association.ReceiverID)
+	status, _, payload := environment.claim(t, recovery.SessionID, `{}`, owner.UserSession.Token)
+	if status != http.StatusForbidden {
+		t.Errorf("absent QQ recovery proof = %d, want 403: %s", status, payload)
+	} else if code := decodeProblem(t, payload).Code; code != "fresh_identity_required" {
+		t.Errorf("absent QQ recovery proof code = %q, want fresh_identity_required", code)
+	}
+
 	environment.qq.Accept("qq-foreign-proof", identity.Identity{AppID: "qq-app", OpenID: "openid-qq-proof-foreign"})
-	status, _, payload := environment.claim(t, recovery.SessionID,
+	status, _, payload = environment.claim(t, recovery.SessionID,
 		`{"qqCode":"qq-foreign-proof"}`, foreign.UserSession.Token)
 	if status != http.StatusNotFound {
 		t.Errorf("foreign QQ owner claim = %d, want 404: %s", status, payload)

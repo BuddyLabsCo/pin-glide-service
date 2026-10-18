@@ -280,6 +280,22 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment.loginFails(t, `{"wechatCode":"code-broken"}`, http.StatusBadGateway)
 }
 
+// A configured provider is independent of an absent provider pair.
+func TestWeChatLoginWorksWithoutQQConfiguration(t *testing.T) {
+	provider := wechatfake.New()
+	environment := startLoginWithProviders(t,
+		observability.NewLogger(os.Stderr, "integration"), provider)
+	environment.provider = provider
+	provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
+
+	issued := environment.loginOK(t, `{"wechatCode":"wechat-only"}`)
+	if issued.AccountID == "" || issued.SenderID == "" {
+		t.Fatalf("WeChat-only login issued an incomplete bundle: %+v", issued)
+	}
+	environment.qqLoginFails(t, `{"qqCode":"qq-missing"}`,
+		http.StatusBadGateway, "identity_provider_error")
+}
+
 // A storage failure inside the login transaction must roll the whole
 // registration back: no Account or Sender row may survive a login whose
 // credentials were never stored, and the same login must succeed once storage

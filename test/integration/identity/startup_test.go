@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
 
@@ -54,14 +55,20 @@ func TestAPIServiceStartsWithIdentityProviderMatrix(t *testing.T) {
 		wechatSecret      string
 		qqAppID           string
 		qqAppKey          string
-		unavailableProofs []string
+		unavailableProofs []identity.ProviderKind
 	}{
-		{name: "neither configured", unavailableProofs: []string{"wechat", "qq"}},
-		{name: "only wechat", wechatAppID: "wx-app", wechatSecret: "wx-secret", unavailableProofs: []string{"qq"}},
-		{name: "only qq", qqAppID: "qq-app", qqAppKey: "qq-key", unavailableProofs: []string{"wechat"}},
+		{name: "neither configured", unavailableProofs: []identity.ProviderKind{
+			identity.ProviderWeChat, identity.ProviderQQ,
+		}},
+		{name: "only wechat", wechatAppID: "wx-app", wechatSecret: "wx-secret",
+			unavailableProofs: []identity.ProviderKind{identity.ProviderQQ}},
+		{name: "only qq", qqAppID: "qq-app", qqAppKey: "qq-key",
+			unavailableProofs: []identity.ProviderKind{identity.ProviderWeChat}},
 		{name: "both configured", wechatAppID: "wx-app", wechatSecret: "wx-secret", qqAppID: "qq-app", qqAppKey: "qq-key"},
-		{name: "wechat partial", wechatAppID: "wx-app", unavailableProofs: []string{"wechat"}},
-		{name: "qq partial", qqAppKey: "qq-key", unavailableProofs: []string{"qq"}},
+		{name: "wechat partial", wechatAppID: "wx-app",
+			unavailableProofs: []identity.ProviderKind{identity.ProviderWeChat}},
+		{name: "qq partial", qqAppKey: "qq-key",
+			unavailableProofs: []identity.ProviderKind{identity.ProviderQQ}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -136,20 +143,21 @@ func waitForListeningAddress(t *testing.T, exited <-chan error, logs *lockedBuff
 	}
 }
 
-func assertUnavailableProof(t *testing.T, address string, pool *sql.DB, provider string) {
+func assertUnavailableProof(t *testing.T, address string, pool *sql.DB, provider identity.ProviderKind) {
 	t.Helper()
 
 	var path, body string
 	switch provider {
-	case "wechat":
+	case identity.ProviderWeChat:
 		path, body = "/v1/auth/wechat", `{"wechatCode":"unconfigured-provider"}`
-	case "qq":
+	case identity.ProviderQQ:
 		path, body = "/v1/auth/qq", `{"qqCode":"unconfigured-provider"}`
 	default:
 		t.Fatalf("unknown unavailable provider %q", provider)
 	}
 
-	response, err := http.Post("http://"+address+path, "application/json", strings.NewReader(body))
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Post("http://"+address+path, "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("%s login through unconfigured provider: %v", provider, err)
 	}
@@ -173,8 +181,8 @@ func assertUnavailableProof(t *testing.T, address string, pool *sql.DB, provider
 		t.Fatalf("count identity state: %v", err)
 	}
 	if accounts != 0 || senders != 0 || credentials != 0 {
-		t.Fatalf("failed QQ login wrote identity state: accounts=%d senders=%d credentials=%d",
-			accounts, senders, credentials)
+		t.Fatalf("failed %s login wrote identity state: accounts=%d senders=%d credentials=%d",
+			provider, accounts, senders, credentials)
 	}
 }
 

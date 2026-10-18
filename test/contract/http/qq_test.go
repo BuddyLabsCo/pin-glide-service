@@ -41,14 +41,14 @@ func TestPublishedHTTPDescriptionIncludesQQRecoveryProof(t *testing.T) {
 		}
 	}
 	operationDescription, _ := operation["description"].(string)
-	for _, code := range []string{
-		"wechat_authorization_invalid",
-		"qq_authorization_invalid",
-		"validation_failed",
-		"identity_provider_error",
+	for _, phrase := range []string{
+		"401 wechat_authorization_invalid or qq_authorization_invalid",
+		"403 fresh_identity_required for absent or foreign recovery proof",
+		"422 validation_failed for conflicting proof fields",
+		"502 identity_provider_error",
 	} {
-		if !strings.Contains(operationDescription, code) {
-			t.Errorf("Pairing authorization description does not document %s", code)
+		if !strings.Contains(operationDescription, phrase) {
+			t.Errorf("Pairing authorization description does not document %q", phrase)
 		}
 	}
 }
