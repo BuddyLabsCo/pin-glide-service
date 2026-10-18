@@ -3,7 +3,7 @@
 // Package delivery_test exercises Delivery admission, live WSS forwarding,
 // Receipt correlation and retained results the way clients experience them:
 // HTTP and real WSS requests against the composed service, a disposable real
-// PostgreSQL holding the shipped schema, and a fake WeChat boundary.
+// PostgreSQL holding the shipped schema, and fake WeChat and QQ boundaries.
 package delivery_test
 
 import (
@@ -21,6 +21,7 @@ import (
 	domain "github.com/BuddyLabsCo/pin-glide-service/internal/delivery"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
+	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 	"github.com/coder/websocket"
@@ -36,10 +37,11 @@ const (
 )
 
 // environment is one composed service with its disposable database, faked
-// WeChat boundary and registered Senders.
+// WeChat and QQ boundaries and registered Senders.
 type environment struct {
 	service     *harness.Service
 	provider    *wechatfake.Fake
+	qq          *qqfake.Fake
 	pool        *sql.DB
 	postgres    *harness.Postgres
 	databaseURL string
@@ -64,17 +66,18 @@ func start(t *testing.T) *environment {
 	}
 	t.Cleanup(func() { _ = pool.Close() })
 
-	provider := wechatfake.New()
+	provider, qqProvider := wechatfake.New(), qqfake.New()
 	channel := newControlledChannel()
 	return &environment{
-		service:     harness.StartService(t, postgres.DSN, provider, nil),
+		service:     harness.StartProviders(t, postgres.DSN, []identity.Provider{provider, qqProvider}, nil),
 		provider:    provider,
+		qq:          qqProvider,
 		pool:        pool,
 		postgres:    postgres,
 		databaseURL: postgres.DSN,
 		channel:     channel,
 		delivery: domain.NewService(pool, channel,
-			domain.NewAuthenticator(identity.NewService(pool, provider))),
+			domain.NewAuthenticator(identity.NewService(pool, provider, qqProvider))),
 	}
 }
 
@@ -98,7 +101,7 @@ func (e *environment) restart(t *testing.T) {
 	if err := e.service.Stop(); err != nil {
 		t.Fatalf("stop the composed service: %v", err)
 	}
-	e.service = harness.StartService(t, e.databaseURL, e.provider, nil)
+	e.service = harness.StartProviders(t, e.databaseURL, []identity.Provider{e.provider, e.qq}, nil)
 }
 
 // problem is the decoded RFC 9457 problem detail.
@@ -155,6 +158,22 @@ func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	var issued bundle
 	if err := json.Unmarshal(payload, &issued); err != nil {
 		t.Fatalf("decode credential bundle: %v: %s", err, payload)
+	}
+	return issued
+}
+
+// qqSender logs in one QQ installation and returns its credential bundle.
+func (e *environment) qqSender(t *testing.T, code, openID string) bundle {
+	t.Helper()
+	e.qq.Accept(code, identity.Identity{AppID: "qq-app", OpenID: openID})
+
+	status, payload := e.request(t, http.MethodPost, "/v1/auth/qq", `{"qqCode":"`+code+`"}`, "")
+	if status != http.StatusOK {
+		t.Fatalf("QQ login status = %d: %s", status, payload)
+	}
+	var issued bundle
+	if err := json.Unmarshal(payload, &issued); err != nil {
+		t.Fatalf("decode QQ credential bundle: %v: %s", err, payload)
 	}
 	return issued
 }

@@ -141,6 +141,12 @@ func TestVerifyRejectsUnusableProviderAnswers(t *testing.T) {
 			openIDBody: `{"client_id":"qq-app","openid":"qq-openid"}`,
 			wantErr:    identity.ErrIdentityProvider,
 		},
+		{
+			name:       "unusable OpenID authorization",
+			tokenBody:  `{"access_token":"qq-access-token"}`,
+			openIDBody: `{"error":100014,"error_description":"raw provider explanation"}`,
+			wantErr:    identity.ErrQQAuthorizationInvalid,
+		},
 	}
 
 	for _, test := range tests {
@@ -175,12 +181,16 @@ func TestVerifyMapsTransportAndHTTPFailuresWithoutLeakingRequestURL(t *testing.T
 	for _, path := range []string{"/token", "/me"} {
 		t.Run(path, func(t *testing.T) {
 			provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == path {
+					writer.WriteHeader(http.StatusInternalServerError)
+					_, _ = writer.Write([]byte("raw provider response"))
+					return
+				}
 				if request.URL.Path == "/token" {
 					_, _ = writer.Write([]byte(`{"access_token":"qq-access-token"}`))
 					return
 				}
-				writer.WriteHeader(http.StatusInternalServerError)
-				_, _ = writer.Write([]byte("raw provider response"))
+				http.NotFound(writer, request)
 			}))
 			defer provider.Close()
 

@@ -34,4 +34,7 @@ func TestPublishedHTTPDescriptionIncludesQQRecoveryProof(t *testing.T) {
 	if properties := propertyFields(t, request); !slices.Equal(properties, []string{"alias", "qqCode", "wechatCode"}) {
 		t.Errorf("request fields = %v, want [alias qqCode wechatCode]", properties)
 	}
+	if _, ok := operation["responses"].(map[string]any)["502"]; !ok {
+		t.Error("Pairing authorization has no 502 identity provider response")
+	}
 }

@@ -317,7 +317,9 @@ const cron = cp.spawnSync('docker', ${dockerQuery("SELECT (SELECT count(*) FROM 
 if (config.status !== 0 || !/^false\\|(?:local-workspace|local-edit)\\|qwen3$/.test(config.stdout.trim())) process.exit(96);
 const [active, runs] = cron.stdout.trim().split('|').map(Number);
 if (cron.status !== 0 || !(active > 0 && runs === 0)) process.exit(97);
-if (process.env.PIN_GLIDE_WECHAT_APP_ID || process.env.PIN_GLIDE_WECHAT_APP_SECRET || process.env.PIN_GLIDE_BAILIAN_API_KEY) process.exit(98);
+if (process.env.PIN_GLIDE_WECHAT_APP_ID || process.env.PIN_GLIDE_WECHAT_APP_SECRET ||
+    process.env.PIN_GLIDE_QQ_APP_ID || process.env.PIN_GLIDE_QQ_APP_KEY ||
+    process.env.PIN_GLIDE_BAILIAN_API_KEY) process.exit(98);
 console.log('MASKED_APP_START');
 console.log('APP_READY');
 setInterval(() => {}, 1000);`;
@@ -331,6 +333,8 @@ if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.s
   const providerSentinels = {
     PIN_GLIDE_WECHAT_APP_ID: 'deployed-wechat-app',
     PIN_GLIDE_WECHAT_APP_SECRET: 'deployed-wechat-secret',
+    PIN_GLIDE_QQ_APP_ID: 'deployed-qq-app',
+    PIN_GLIDE_QQ_APP_KEY: 'deployed-qq-key',
     PIN_GLIDE_BAILIAN_API_KEY: 'deployed-bailian-key',
   };
   let active;

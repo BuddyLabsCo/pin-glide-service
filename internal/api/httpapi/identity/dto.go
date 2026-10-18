@@ -67,7 +67,8 @@ type LogoutRequest struct {
 // WeChatProofRequest is the accepted POST /v1/devices/{id}/revoke body: fresh
 // identity authorization of the Account that owns the registration, which is
 // what makes this an owner action rather than an ordinary Sender one. Exactly
-// one provider field must be present.
+// one provider field must be present. Its name is retained for the published v1
+// schema even though the body now supports either provider.
 type WeChatProofRequest struct {
 	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh single-use WeChat authorization code obtained by the Account owner"`
 	QQCode     string `json:"qqCode,omitempty" maxLength:"512" doc:"Fresh single-use QQ authorization code obtained by the Account owner"`

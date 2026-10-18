@@ -2,7 +2,7 @@
 
 // Package model_test exercises temporary model credentials the way a Sender
 // experiences them: HTTP requests against the composed service, a disposable
-// real PostgreSQL holding the shipped schema, and fake WeChat and Bailian
+// real PostgreSQL holding the shipped schema, and fake WeChat, QQ and Bailian
 // boundaries.
 package model_test
 
@@ -27,6 +27,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/model"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	bailianfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/bailian"
+	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
@@ -119,10 +120,11 @@ type modelCredential struct {
 }
 
 // environment is one composed service with its disposable database and the
-// faked WeChat and Bailian boundaries.
+// faked WeChat, QQ and Bailian boundaries.
 type environment struct {
 	service  *harness.Service
 	provider *wechatfake.Fake
+	qq       *qqfake.Fake
 	mint     *bailianfake.Fake
 	pool     *sql.DB
 }
@@ -147,13 +149,14 @@ func startLogging(t *testing.T, logger *slog.Logger) *environment {
 	}
 	t.Cleanup(func() { _ = pool.Close() })
 
-	provider, mint := wechatfake.New(), bailianfake.New()
+	provider, qqProvider, mint := wechatfake.New(), qqfake.New(), bailianfake.New()
 	if logger == nil {
 		logger = observability.NewLogger(os.Stderr, "integration")
 	}
 	return &environment{
-		service:  harness.StartServiceLogging(t, postgres.DSN, provider, mint, logger),
+		service:  harness.StartProvidersLogging(t, postgres.DSN, []identity.Provider{provider, qqProvider}, mint, logger),
 		provider: provider,
+		qq:       qqProvider,
 		mint:     mint,
 		pool:     pool,
 	}
@@ -189,8 +192,13 @@ func (e *environment) sender(t *testing.T, code, openID, senderID string) sender
 	if senderID != "" {
 		body = fmt.Sprintf(`{"wechatCode":%q,"senderId":%q}`, code, senderID)
 	}
+	return e.login(t, loginPath, body)
+}
 
-	response, payload, err := e.post(loginPath, body, "")
+func (e *environment) login(t *testing.T, path, body string) senderBundle {
+	t.Helper()
+
+	response, payload, err := e.post(path, body, "")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}

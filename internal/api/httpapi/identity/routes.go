@@ -18,7 +18,7 @@ const TagIdentity = "identity"
 // returns the domain's typed outcome; the shared HTTP error model maps it to
 // the stable business code the published contract defines.
 func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
-	registerLogin(api, service)
+	registerWeChatLogin(api, service)
 	registerQQLogin(api, service)
 	registerRefresh(api, service)
 	registerLogout(api, service, devices)
@@ -34,9 +34,9 @@ type DeviceRevocation interface {
 	DeviceRevocation(ctx context.Context, managementCredential, deviceID string, proof domain.Proof, now time.Time) error
 }
 
-// registerLogin serves the fresh WeChat login that creates or restores one
+// registerWeChatLogin serves the fresh WeChat login that creates or restores one
 // Sender installation.
-func registerLogin(api huma.API, service *domain.Service) {
+func registerWeChatLogin(api huma.API, service *domain.Service) {
 	huma.Register(api, huma.Operation{
 		OperationID: "PostAuthWechat",
 		Tags:        []string{TagIdentity},
