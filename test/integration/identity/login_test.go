@@ -281,21 +281,34 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment.loginFails(t, `{"wechatCode":"code-broken"}`, http.StatusBadGateway)
 }
 
-// A configured provider is independent of an incomplete provider pair.
-func TestWeChatLoginWorksWithIncompleteQQConfiguration(t *testing.T) {
-	provider := wechatfake.New()
-	environment := startLoginWithProviders(t,
-		observability.NewLogger(os.Stderr, "integration"),
-		provider, qqadapter.New("qq-app", ""))
-	environment.provider = provider
-	provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
+// A configured provider is independent of an absent or incomplete provider pair.
+func TestWeChatLoginWorksWithoutCompleteQQConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		incomplete bool
+	}{
+		{name: "absent"},
+		{name: "incomplete", incomplete: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := wechatfake.New()
+			providers := []identity.Provider{provider}
+			if test.incomplete {
+				providers = append(providers, qqadapter.New("qq-app", ""))
+			}
+			environment := startLoginWithProviders(t,
+				observability.NewLogger(os.Stderr, "integration"), providers...)
+			environment.provider = provider
+			provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
 
-	issued := environment.loginOK(t, `{"wechatCode":"wechat-only"}`)
-	if issued.AccountID == "" || issued.SenderID == "" {
-		t.Fatalf("WeChat-only login issued an incomplete bundle: %+v", issued)
+			issued := environment.loginOK(t, `{"wechatCode":"wechat-only"}`)
+			if issued.AccountID == "" || issued.SenderID == "" {
+				t.Fatalf("WeChat-only login issued an incomplete bundle: %+v", issued)
+			}
+			environment.qqLoginFails(t, `{"qqCode":"qq-missing"}`,
+				http.StatusBadGateway, "identity_provider_error")
+		})
 	}
-	environment.qqLoginFails(t, `{"qqCode":"qq-missing"}`,
-		http.StatusBadGateway, "identity_provider_error")
 }
 
 // A storage failure inside the login transaction must roll the whole

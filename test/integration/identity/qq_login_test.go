@@ -127,21 +127,34 @@ func TestQQLoginCreatesRestoresAndSeparatesAccounts(t *testing.T) {
 	}
 }
 
-// A configured provider is independent of an incomplete provider pair.
-func TestQQLoginWorksWithIncompleteWeChatConfiguration(t *testing.T) {
-	qqProvider := qqfake.New()
-	environment := startLoginWithProviders(t,
-		observability.NewLogger(os.Stderr, "integration"),
-		qqProvider, wechatadapter.New("wx-app", ""))
-	environment.qq = qqProvider
-	qqProvider.Accept("qq-only", identity.Identity{AppID: "qq-app", OpenID: "openid-only"})
+// A configured provider is independent of an absent or incomplete provider pair.
+func TestQQLoginWorksWithoutCompleteWeChatConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		incomplete bool
+	}{
+		{name: "absent"},
+		{name: "incomplete", incomplete: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			qqProvider := qqfake.New()
+			providers := []identity.Provider{qqProvider}
+			if test.incomplete {
+				providers = append(providers, wechatadapter.New("wx-app", ""))
+			}
+			environment := startLoginWithProviders(t,
+				observability.NewLogger(os.Stderr, "integration"), providers...)
+			environment.qq = qqProvider
+			qqProvider.Accept("qq-only", identity.Identity{AppID: "qq-app", OpenID: "openid-only"})
 
-	issued := environment.qqLoginOK(t, `{"qqCode":"qq-only"}`)
-	if issued.AccountID == "" || issued.SenderID == "" {
-		t.Fatalf("QQ-only login issued an incomplete bundle: %+v", issued)
+			issued := environment.qqLoginOK(t, `{"qqCode":"qq-only"}`)
+			if issued.AccountID == "" || issued.SenderID == "" {
+				t.Fatalf("QQ-only login issued an incomplete bundle: %+v", issued)
+			}
+			environment.loginFails(t, `{"wechatCode":"wechat-missing"}`,
+				http.StatusBadGateway)
+		})
 	}
-	environment.loginFails(t, `{"wechatCode":"wechat-missing"}`,
-		http.StatusBadGateway)
 }
 
 // A rejected QQ proof cannot create an Account or Sender.
