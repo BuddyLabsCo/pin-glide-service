@@ -1,4 +1,4 @@
-.PHONY: build test generate check-contracts format format-check lint lint-sql format-sql dev
+.PHONY: build test generate check-contracts format format-check lint lint-sql format-sql dev dev-code-only dev-stop
 
 build:
 	go build ./...
@@ -30,3 +30,9 @@ format-sql:
 
 dev:
 	./scripts/dev/dev.sh
+
+dev-code-only:
+	./scripts/dev/dev.sh --code-only
+
+dev-stop:
+	./scripts/dev/dev.sh --stop

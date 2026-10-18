@@ -72,7 +72,7 @@ func Migrate(ctx context.Context, pool *sql.DB, databaseURL string, options Opti
 		return err
 	}
 
-	fmt.Println("pin-glide-release migrate: phase release migrations")
+	fmt.Println("pin-glide-db-tools migrate: phase release migrations")
 	processed, err := runScripts(ctx, conn, scripts, applied, "release", options.Initial)
 	if err != nil {
 		return err
@@ -84,7 +84,7 @@ func Migrate(ctx context.Context, pool *sql.DB, databaseURL string, options Opti
 		return fmt.Errorf("record release scripts: %w", err)
 	}
 
-	fmt.Println("pin-glide-release migrate: phase pin_glide migrations")
+	fmt.Println("pin-glide-db-tools migrate: phase pin_glide migrations")
 	if _, err := runScripts(ctx, conn, scripts, applied, "pin_glide", options.Initial); err != nil {
 		return err
 	}
@@ -94,11 +94,11 @@ func Migrate(ctx context.Context, pool *sql.DB, databaseURL string, options Opti
 	if _, err := conn.ExecContext(ctx, "INSERT INTO release.release_deploy_history (release_version) VALUES ($1)", options.Version); err != nil {
 		return fmt.Errorf("record Database Release: %w", err)
 	}
-	fmt.Println("pin-glide-release migrate: phase data scripts")
+	fmt.Println("pin-glide-db-tools migrate: phase data scripts")
 	if _, err := runScripts(ctx, conn, scripts, applied, "scripts", false); err != nil {
 		return err
 	}
-	fmt.Println("pin-glide-release migrate: complete")
+	fmt.Println("pin-glide-db-tools migrate: complete")
 	return nil
 }
 
@@ -118,7 +118,7 @@ func checkInstallMode(ctx context.Context, conn *sql.Conn, options Options) erro
 		if version != "" && (!options.InitialRetry || version != options.Version) {
 			return fmt.Errorf("initial install refused: database already deployed at %s", version)
 		}
-		fmt.Println("pin-glide-release migrate: initial database accepted")
+		fmt.Println("pin-glide-db-tools migrate: initial database accepted")
 	} else if version == "" {
 		return fmt.Errorf("upgrade requires an existing Database Release; use explicit initial install only for a fresh database")
 	}

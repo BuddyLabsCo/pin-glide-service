@@ -15,9 +15,9 @@ const descriptions = {
   'openapi.yaml': 'openapi: 3.1.0\ninfo:\n  title: Pin Glide\n  version: 1.10.0\npaths: {}\n',
   'asyncapi.yaml': 'asyncapi: 3.0.0\ninfo:\n  title: Pin Glide\n  version: 1.10.0\nchannels: {}\n',
 };
-const applicationImages = ['api', 'migrate'].map((service) => `ghcr.io/buddylabsco/pin-glide-${service}:1.10.1`);
+const applicationImages = ['api', 'db-tools'].map((service) => `ghcr.io/buddylabsco/pin-glide-${service}:1.10.1`);
 const postgresImage = 'ghcr.io/buddylabsco/pin-glide-postgres:18-1.6.8';
-const services = ['api', 'migrate', 'postgres'];
+const services = ['api', 'db-tools', 'postgres'];
 
 const githubCLI = String.raw`#!/usr/bin/env node
 const fs = require('node:fs');

@@ -77,7 +77,7 @@ function main() {
     }
   }
 
-  const temporary = mkdtempSync(join(tmpdir(), 'pin-glide-release-pr-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'pin-glide-db-tools-pr-'));
   try {
     const bodyFile = join(temporary, 'body.md');
     writeFileSync(bodyFile, body);

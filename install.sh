@@ -19,6 +19,9 @@ Without ACTION, show the numbered menu (never prepares automatically).
   --full-release     Pull, stop, back up, migrate, start
   --cancel           Restore the old environment and, if needed, database
   --initial-deploy   Pull, start PostgreSQL, migrate, start
+  --enable-auto-snapshot   Install the daily local crontab entry
+  --disable-auto-snapshot  Remove only this project's crontab entry
+  --make-snapshot          Run a snapshot with an independent lock
   --help             Show this help
 HELP
 }
@@ -35,7 +38,7 @@ not_older() {
   done
   return 0
 }
-compose() { env -u RELEASE docker compose --env-file .env -f "$compose_file" "$@"; }
+compose() { env -u RELEASE -u PIN_GLIDE_SNAPSHOT_PATH -u PIN_GLIDE_SNAPSHOT_TIME -u PIN_GLIDE_SNAPSHOT_KEEP docker compose --env-file .env -f "$compose_file" "$@"; }
 docker_cmd() { env -u RELEASE docker "$@"; }
 temps=()
 temporary() { temp=$(mktemp ./.pin-glide-tmp.XXXXXXXX); temps+=("$temp"); }
@@ -155,7 +158,7 @@ writers_stopped() {
   schedule_held
 }
 pull_images() {
-  compose pull api migrate
+  compose pull api db-tools
   update '.operations.pulled = true'
 }
 stop_api() {
@@ -191,7 +194,7 @@ reconcile_migration() {
   exit_code=$(jq -er '.[0].State.ExitCode | numbers' <<< "$details")
   if jq -e '.initial == true' "$attempt" >/dev/null; then
     logs=$(docker_cmd logs "$container" 2>&1) || fail 'cannot read migration logs to verify initial installation'
-    if grep -Fxq 'pin-glide-release migrate: initial database accepted' <<< "$logs"; then
+    if grep -Fxq 'pin-glide-db-tools migrate: initial database accepted' <<< "$logs"; then
       update '.migration.initial_verified = true'
     fi
   fi
@@ -223,7 +226,7 @@ migrate() {
   # Docker retains both successful and failed containers until JSON is durable.
   compose run --name "$container" --label "pin-glide.release=$version" --no-deps \
     -e "PIN_GLIDE_RELEASE_VERSION=$version" -e "PIN_GLIDE_RELEASE_INITIAL=$initial" \
-    -e "PIN_GLIDE_RELEASE_INITIAL_RETRY=$retry" migrate || true
+    -e "PIN_GLIDE_RELEASE_INITIAL_RETRY=$retry" db-tools migrate || true
   reconcile_migration
   [[ $(jq -r '.migration.status' "$attempt") == succeeded ]] || fail "migration failed; retained $container and its logs"
 }
@@ -295,12 +298,73 @@ start_api() {
   update '.operations.started = true'
   archive
 }
+
+snapshot_config() {
+  local configuration key value
+  configuration=$(compose config --environment) || fail 'cannot read snapshot configuration from .env'
+  snapshot_path= snapshot_time= snapshot_keep=
+  while IFS='=' read -r key value; do
+    case "$key" in
+      PIN_GLIDE_SNAPSHOT_PATH) snapshot_path=$value ;;
+      PIN_GLIDE_SNAPSHOT_TIME) snapshot_time=$value ;;
+      PIN_GLIDE_SNAPSHOT_KEEP) snapshot_keep=$value ;;
+    esac
+  done <<< "$configuration"
+  [[ -n "$snapshot_path" && -d "$snapshot_path" ]] || fail 'PIN_GLIDE_SNAPSHOT_PATH must name an existing directory'
+  snapshot_path=$(cd -- "$snapshot_path" && pwd -P)
+  [[ "$snapshot_keep" =~ ^[1-9][0-9]*$ ]] || fail 'PIN_GLIDE_SNAPSHOT_KEEP must be a positive integer'
+  temporary
+  snapshot_compose=$temp
+  # A typed bind must fail rather than create a missing directory on the daemon.
+  jq -n --arg path "$snapshot_path" --arg keep "$snapshot_keep" \
+    '{services:{"db-tools":{volumes:[{type:"bind",source:$path,target:"/snapshots",bind:{create_host_path:false}}],environment:{PIN_GLIDE_SNAPSHOT_PATH:"/snapshots",PIN_GLIDE_SNAPSHOT_KEEP:$keep}}}}' > "$snapshot_compose"
+}
+snapshot_crontab() {
+  local jobs errors status quoted script_path
+  command -v crontab >/dev/null || fail 'required command is missing: crontab'
+  if [[ "$action" == enable-auto-snapshot ]]; then
+    snapshot_config
+    [[ "$snapshot_time" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || fail 'PIN_GLIDE_SNAPSHOT_TIME must be daily HH:MM in host time'
+    compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(id -u):$(id -g)" --entrypoint /bin/sh db-tools -ec 'test -d /snapshots && test -w /snapshots'
+  fi
+  temporary; jobs=$temp
+  temporary; errors=$temp
+  if crontab -l > "$jobs" 2> "$errors"; then :; else
+    status=$?
+    [[ "$status" == 1 ]] && grep -q '^no crontab for ' "$errors" || fail 'cannot read existing crontab'
+  fi
+  temporary
+  awk -v marker="# pin-glide-snapshot:$project" 'substr($0, length($0)-length(marker)+1) != marker' "$jobs" > "$temp"
+  if [[ "$action" == enable-auto-snapshot ]]; then
+    script_path="$PWD/install.sh"
+    [[ "$script_path" != *$'\n'* ]] || fail 'installation path must not contain newlines'
+    # Quote shell metacharacters, then escape cron's percent syntax.
+    quoted=${script_path//\'/\'\\\'\'}
+    quoted=${quoted//%/\\%}
+    printf "%d %d * * * /bin/bash '%s' --make-snapshot # pin-glide-snapshot:%s\n" \
+      "$((10#${snapshot_time#*:}))" "$((10#${snapshot_time%:*}))" "$quoted" "$project" >> "$temp"
+  fi
+  crontab "$temp"
+}
+snapshot_action() {
+  exec 8> .pin-glide-snapshot.lock
+  flock -n 8 || fail 'another snapshot action is running in this directory'
+  project=$(compose config --format json | jq -er '.name')
+  [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'invalid Compose project name'
+  case "$action" in
+    enable-auto-snapshot|disable-auto-snapshot) snapshot_crontab ;;
+    make-snapshot)
+      snapshot_config
+      compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(id -u):$(id -g)" db-tools snapshot
+      ;;
+  esac
+}
 menu() {
-  printf '%s\n' '1. Prepare release' '2. Back up database' '3. Pull images' '4. Stop the api' '5. Migrate' '6. Start the api' '7. Full release' '8. Cancel release' '9. Initial deployment'
+  printf '%s\n' '1. Prepare release' '2. Back up database' '3. Pull images' '4. Stop the api' '5. Migrate' '6. Start the api' '7. Full release' '8. Cancel release' '9. Initial deployment' '10. Enable auto snapshot' '11. Disable auto snapshot'
   local choice
-  read -r -p 'Choose one action (1-9): ' choice || fail 'an explicit menu choice is required'
-  [[ "$choice" =~ ^[1-9]$ ]] || fail 'choose a number from 1 through 9'
-  local actions=(prep backup pull stop-api migrate start-api full-release cancel initial-deploy)
+  read -r -p 'Choose one action (1-11): ' choice || fail 'an explicit menu choice is required'
+  [[ "$choice" =~ ^([1-9]|10|11)$ ]] || fail 'choose a number from 1 through 11'
+  local actions=(prep backup pull stop-api migrate start-api full-release cancel initial-deploy enable-auto-snapshot disable-auto-snapshot)
   action=${actions[choice-1]}
   if [[ "$action" == prep && "$initial_install" != true ]]; then
     read -r -p 'First installation (no Database Release)? [y/N]: ' choice || choice=
@@ -318,14 +382,21 @@ while (($#)); do
     --help|-h) usage; exit 0 ;;
     --initial-install) initial_install=true ;;
     --version) (($# >= 2)) || fail '--version needs X.Y.Z'; version=$2; shift ;;
-    --prep|--backup|--pull|--stop-api|--migrate|--start-api|--full-release|--cancel|--initial-deploy)
+    --prep|--backup|--pull|--stop-api|--migrate|--start-api|--full-release|--cancel|--initial-deploy|--enable-auto-snapshot|--disable-auto-snapshot|--make-snapshot)
       [[ -z "$action" ]] || fail 'choose exactly one action'; action=${1#--} ;;
     *) fail "unknown argument: $1" ;;
   esac
   shift
 done
-[[ -n "$version" ]] || { read -r -p 'Target version (X.Y.Z): ' version || fail 'target version required'; }
-valid_version "$version" || fail 'target version must be X.Y.Z (without v)'
+[[ -n "$action" ]] || menu
+[[ "$initial_install" != true || "$action" == prep ]] || fail '--initial-install is only valid with --prep'
+case "$action" in
+  enable-auto-snapshot|disable-auto-snapshot|make-snapshot) cd -- "$(dirname -- "${BASH_SOURCE[0]}")" ;;
+  *)
+    [[ -n "$version" ]] || { read -r -p 'Target version (X.Y.Z): ' version || fail 'target version required'; }
+    valid_version "$version" || fail 'target version must be X.Y.Z (without v)'
+    ;;
+esac
 for command in docker jq flock mktemp; do command -v "$command" >/dev/null || fail "required command is missing: $command"; done
 [[ -f .env ]] || fail 'prepare .env in the current directory first'
 compose_file=
@@ -333,16 +404,17 @@ for file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
   if [[ -f "$file" ]]; then compose_file=$file; break; fi
 done
 [[ -n "$compose_file" ]] || fail 'prepare a Compose file in the current directory first'
+case "$action" in
+  enable-auto-snapshot|disable-auto-snapshot|make-snapshot) snapshot_action; exit 0 ;;
+esac
 # Lock the directory inode; child Docker clients retain the lock until they finish.
 exec 9< .
 flock -n 9 || fail 'another action is running in this directory'
-[[ -n "$action" ]] || menu
-[[ "$initial_install" != true || "$action" == prep ]] || fail '--initial-install is only valid with --prep'
 attempt="attempt-${version}.json"
 [[ "$action" == prep || -f "$attempt" ]] || fail "missing $attempt; explicitly prepare first"
 project=$(compose config --format json | jq -er '.name')
 [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'invalid Compose project name'
-container="${project}-migrate"
+container="${project}-db-tools"
 case "$action" in
   prep) prep ;;
   backup) backup_database ;;

@@ -6,8 +6,9 @@ It defines where source, generated artifacts, schema, tests, and deployment supp
 ## 1. Non-negotiable runtime shape
 
 One Go module, one long-running `api` process for HTTP and WSS. `cmd/pin-glide-api`
-wires the API server, domain services and external clients. The release CLI runs
-only during deployment.
+wires the API server, domain services and external clients. The offline
+`cmd/pin-glide-db-tools` CLI owns migration, snapshot and local preparation; it
+never serves network traffic.
 
 ## 2. Repository layout
 
@@ -15,7 +16,7 @@ only during deployment.
 pin-glide-service/
 ├── cmd/
 │   ├── pin-glide-api/         # API entrypoint and offline HTTP/WSS contract export
-│   └── pin-glide-release/     # Release CLI
+│   └── pin-glide-db-tools/   # Migration and snapshot CLI
 ├── internal/
 │   ├── identity/             # Accounts, devices and credentials
 │   ├── pairing/              # Pairings and Pairing Sessions
@@ -32,11 +33,13 @@ pin-glide-service/
 │   ├── config/               # Environment configuration
 │   ├── db/                   # Connections and Jet output
 │   ├── observability/        # Logging, correlation and redaction
-│   └── release/              # Manifest, ledgers and migration execution
+│   ├── release/              # Manifest, ledgers and migration execution
+│   └── snapshot/             # Validated PostgreSQL snapshot publication
 ├── db/
 │   ├── schema/{pin_glide,release}/
 │   ├── migrations/{pin_glide,release}/
 │   └── scripts/
+├── dev/anon/                 # Local-only Anonymizer labels
 ├── protocol/asyncapi.yaml     # Handwritten WSS definitions
 ├── generated/
 │   └── protocol/
@@ -150,6 +153,10 @@ Keep configuration, transaction and log data in separate tables with one retenti
 policy per table. Cleanup SQL and its policy table belong in desired schema; cron
 job registration belongs in Data Scripts.
 
+Local masking rules belong under `dev/anon/`, one file per table. They are not
+deployed desired schema, release scripts, generated Jet output or runtime image
+payload.
+
 ### 4.3 Jet generation and generated Go types
 
 Generate both schemas using disposable PostgreSQL. Output goes to
@@ -181,7 +188,7 @@ Schema prefixes name relations within the shared database.
 | Protocol | `internal/protocol` | Shared HTTP/WSS payload types and error definitions | Used by HTTP/WSS packages | none |
 | Observability | `internal/observability` | Structured logs, correlation, redaction and PostgreSQL log writes | API middleware and WSS connection logging | `service_` |
 | Retention | none; SQL-owned | Cleanup policy table and cleanup function | none | `retention_` |
-| Release | `internal/release` | Release manifest, migration ledgers, Schema Sync and schema audits | Release CLI only | `release_` |
+| Release and database tools | `internal/release`, `internal/snapshot` | Release manifest, migration ledgers, Schema Sync, schema audits and validated snapshots | `cmd/pin-glide-db-tools` only | `release_` |
 
 ## 6. Generated artifacts and modification boundaries
 
@@ -198,7 +205,7 @@ Schema prefixes name relations within the shared database.
 | Go unit tests | Colocated `*_test.go` |
 | Integration tests | `test/integration/` |
 | HTTP/WSS contract tests | `test/contract/{http,wss}/` |
-| Compose/release smoke tests | `test/smoke/` |
+| Compose/release/local-lifecycle smoke tests | `test/smoke/` |
 | Provider fakes | `test/fakes/{wechat,bailian}/` |
 | Wire/database fixtures | `test/fixtures/` |
 
@@ -212,22 +219,26 @@ Makefile                      # Local development and check entrypoints
 install.sh                    # Host-side Compose release orchestration
 version.json                  # Release version the auto-release pull request bumps
 deploy/compose/
-├── docker-compose.yml        # API, PostgreSQL and one-off migration service
+├── docker-compose.yml        # API, PostgreSQL and one-off db-tools service
 ├── .env.example              # Deployment configuration template
 ├── api.Dockerfile            # API image
-├── migrate.Dockerfile        # Release CLI, SQL and manifest
+├── db-tools.Dockerfile       # Migration/snapshot CLI, SQL and manifest
 ├── postgres.Dockerfile       # PostgreSQL with pg_cron
 └── README.md                 # Installation, backup, retry and restore procedures
+dev/anon/
+└── <table>.sql               # Local-only masking labels
 .github/workflows/
 └── *.yml                     # CI and GitHub Release publication
 scripts/
-├── dev/                      # Local infrastructure and development processes
+├── dev/                      # Local PostgreSQL, masking and API processes
 ├── codegen/                  # Jet, OpenAPI and AsyncAPI generation
 ├── db/                       # Disposable PostgreSQL and schema loading
 ├── quality/                  # Formatting, lint and tests
 └── release/                  # Packaging and publication
-cmd/pin-glide-release/
-└── main.go                   # Release CLI entrypoint
+cmd/pin-glide-db-tools/
+└── main.go                   # Migration and snapshot entrypoint
 internal/release/
 └── *.go                      # In-image migration implementation
+internal/snapshot/
+└── *.go                      # Snapshot export, validation and retention
 ```

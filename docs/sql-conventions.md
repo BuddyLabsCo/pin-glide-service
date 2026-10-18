@@ -82,3 +82,10 @@ Schemalint rules, and formatting together.
 requiring the native naming rules, both Schemalint rules and both SQLFluff rule
 families to report their violation. A check that silently stopped reporting
 therefore fails the command instead of passing it.
+
+## Local Anonymizer labels
+
+Name each local masking file `dev/anon/<table>.sql`, using the table name without
+its schema. Put every `SECURITY LABEL FOR anon` statement for that table in the
+file and use schema-qualified column names. These files are local development
+inputs, not desired schema or release scripts.

@@ -32,7 +32,7 @@ const s = JSON.parse(fs.readFileSync(path, 'utf8'));
 fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify({args, release: process.env.RELEASE ?? null}) + '\\n');
 const jobs = () => (s.cron ?? {}).jobs ?? {};
 if (args.includes('config')) console.log(JSON.stringify({name:'install-test'}));
-else if (args[0] === 'container' && args[1] === 'ls') { if(s.container) console.log('install-test-migrate'); }
+else if (args[0] === 'container' && args[1] === 'ls') { if(s.container) console.log('install-test-db-tools'); }
 else if(args[0] === 'container' && args[1] === 'inspect') console.log(JSON.stringify([s.container]));
 else if(args[0] === 'logs') { if(s.fail === 'logs') process.exit(42); console.log(s.container.logs ?? ''); }
 else if(args.includes('ps')) { if(s.running) console.log('api'); }
@@ -230,7 +230,7 @@ test('interrupted prep preserves its original backup and valid preparing JSON wi
 test('JSON replacement failure retains successful container; cancel reconciles success instead of restoring', t => {
   const f = installation(t);
   assert.equal(f.run(['--version', '1.10.0', '--prep', '--initial-install']).status, 0);
-  f.configure({ failJSONAfterMigrate: true, migrateLogs: 'pin-glide-release migrate: initial database accepted' });
+  f.configure({ failJSONAfterMigrate: true, migrateLogs: 'pin-glide-db-tools migrate: initial database accepted' });
   assert.notEqual(f.run(['--version', '1.10.0', '--initial-deploy']).status, 0);
   assert.equal(active(f).migration.status, 'running');
   assert.equal(JSON.parse(f.read('docker.json')).container.State.ExitCode, 0);
@@ -403,7 +403,7 @@ test('initial deployment cannot change a prepared upgrade into an initial attemp
 });
 
 test('only the exact initial acceptance log permits retry; a rejected initial claim cannot gain permission', t => {
-  const accepted = 'pin-glide-release migrate: initial database accepted';
+  const accepted = 'pin-glide-db-tools migrate: initial database accepted';
   for (const [logs, verified] of [['already deployed at this version', false], [`prefix ${accepted}`, false],
     [`${accepted} suffix`, false], [`before\n${accepted}\nafter`, true]]) {
     const f = installation(t);
@@ -429,7 +429,7 @@ test('reconciliation persists accepted initial state after interruption, before 
   for (const migrateExit of [0, 7]) {
     const f = installation(t);
     assert.equal(f.run(['--version', '1.10.0', '--prep', '--initial-install']).status, 0);
-    f.configure({ interrupt: true, migrateExit, migrateLogs: 'pin-glide-release migrate: initial database accepted' });
+    f.configure({ interrupt: true, migrateExit, migrateLogs: 'pin-glide-db-tools migrate: initial database accepted' });
     assert.notEqual(f.run(['--version', '1.10.0', '--initial-deploy']).status, 0);
     assert.equal(active(f).migration.initial_verified, undefined);
     f.configure({ interrupt: false });
@@ -453,6 +453,7 @@ test('upgrades explicitly pass their target and false initial/retry flags to mig
   const result = f.run(['--version', '1.10.0', '--full-release']);
   assert.equal(result.status, 0, result.stderr);
   const args = f.calls().find(c => c.args.includes('run')).args;
+  assert.deepEqual(args.slice(-2), ['db-tools', 'migrate']);
   assert.ok(args.includes('PIN_GLIDE_RELEASE_VERSION=1.10.0'));
   assert.ok(args.includes('PIN_GLIDE_RELEASE_INITIAL=false'));
   assert.ok(args.includes('PIN_GLIDE_RELEASE_INITIAL_RETRY=false'));
