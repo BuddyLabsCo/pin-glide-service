@@ -120,12 +120,15 @@ test('dev resets isolated infrastructure and restores the latest dump before mig
   assert.equal(result.status, 0, result.stderr);
   const events = f.events();
   const reset = events.findIndex(e => e.name === 'docker' && e.args.includes('down'));
+  const postgresUp = events.find(e => e.name === 'docker' && e.args.includes('up')
+    && e.args.includes('postgres'));
   const restore = events.findIndex(e => e.args.includes('pg_restore'));
   const migrate = events.findIndex(e => e.name === 'go' && e.args.join(' ') === 'run ./cmd/pin-glide-db-tools migrate');
   const mask = events.findIndex(e => e.input.includes('SELECT anon.anonymize_database();'));
   const app = events.findIndex(e => e.name === 'go' && e.args.includes('./cmd/pin-glide-api'));
   assert(reset >= 0 && restore > reset && migrate > restore && mask > migrate && app > mask,
     'Required reset → restore → migrate → mask → apps sequence missing');
+  assert(postgresUp?.args.includes('--build'), 'Development PostgreSQL was not rebuilt from source');
   assert.equal(events[restore].input, 'tie dump');
   assert.match(events[mask].input, /SET LOCAL anon.nosuperuser = false;/);
   assert.match(events[mask].input, /-- fixture label/);
