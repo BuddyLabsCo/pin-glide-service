@@ -11,11 +11,12 @@ import (
 	"time"
 )
 
-// Configuration Data: one Account per verified WeChat identity, no cleanup.
+// Configuration Data: one Account per provider identity, no cleanup.
 type IdentityAccounts struct {
-	ID            string    `sql:"primary_key"` // Internal opaque Account identifier issued by the service.
-	WechatAppID   string    // Configured WeChat AppID that verified this OpenID.
-	WechatOpenID  string    // WeChat OpenID verified for the configured AppID.
-	WechatUnionID *string   // Optional WeChat UnionID, recorded only; it never merges Accounts.
-	CreatedAt     time.Time // When the Account was first created.
+	ID        string    `sql:"primary_key"` // Internal opaque Account identifier issued by the service.
+	Provider  string    // Identity provider namespace: wechat or qq.
+	AppID     string    // Configured provider application that verified this OpenID.
+	OpenID    string    // Provider-verified OpenID within its provider application namespace.
+	UnionID   *string   // Optional provider UnionID, recorded only; it never merges Accounts.
+	CreatedAt time.Time // When the Account was first created.
 }

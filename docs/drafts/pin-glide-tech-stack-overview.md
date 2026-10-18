@@ -17,7 +17,7 @@ Repository: `pin-glide-android`.
 
 - Kotlin: Application and business logic.
 - Jetpack Compose + Compose Material 3 component library: UI and theming.
-- WeChat SDK: WeChat authorization and login. Android SMS APIs: SMS reception.
+- WeChat and QQ SDKs: provider authorization and login. Android SMS APIs: SMS reception.
 - Cross-platform-compatible cryptography library + Android Keystore: End-to-end encryption and local key protection. HTTPS: Direct Bailian access and service calls.
 - Gradle Wrapper + Android Gradle Plugin: Dependency management and APK builds.
 
@@ -26,7 +26,7 @@ Repository: `pin-glide-android`.
 - Android Emulator: Local emulation, accelerated by KVM on Linux or Windows Hypervisor Platform on Windows.
 - ADB: Installation, SMS injection, logs, screenshots, and background state testing.
 - JUnit, Compose Test, and UI Automator: Business logic, UI, and system interaction tests.
-- Test identities and simulated SMS in development builds: Integration testing. Physical Android devices: Acceptance testing for WeChat login, QR scanning, real SMS, background reliability, latency, and power consumption.
+- Test identities and simulated SMS in development builds: Integration testing. Physical Android devices: Acceptance testing for WeChat or QQ login, QR scanning, real SMS, background reliability, latency, and power consumption.
 
 ### Deployment
 
@@ -55,7 +55,7 @@ Repository: `pin-glide-service`.
 - psqldef: Deploy the declarative PostgreSQL schema. Keep versioned structural/data upgrade scripts distinct from target-schema application, following the reference deployment workflow.
 - Generate Jet code from the target schema using a disposable PostgreSQL instance; generation does not connect to deployed databases. Validate generated artifacts before packaging.
 - Docker: Package the Go backend and the matching SQL/deployment tools as versioned release images.
-- WeChat server APIs and Bailian temporary API key API: Identity validation and model credential requests.
+- WeChat and QQ server APIs plus the Bailian temporary API key API: identity validation and model credential requests.
 
 ### Testing
 
@@ -72,7 +72,7 @@ Repository: `pin-glide-service`.
 - Initial deployment: Prepare configuration and registry access, pull matching release images, start PostgreSQL, apply the schema with psqldef and initialize required data, then start the service and verify health.
 - Update deployment: Prepare and pull matching release images, stop application writes, back up PostgreSQL, run the ordered schema/data upgrade steps with psqldef apply/check, then restart the service and verify health. Preserve existing data and reject unsupported downgrades.
 - Separate `development` and `production` deployments: Independent Compose projects, PostgreSQL databases/volumes, endpoints, and protected secret configuration. Validate in `development` before releasing to `production`.
-- Deployment configuration supplies database credentials, WeChat credentials, and the permanent Bailian API key without putting secrets in images, source files, or logs. The operator's reverse proxy terminates HTTPS/WSS.
+- Deployment configuration supplies database credentials, optional WeChat and QQ application credentials, and the permanent Bailian API key without putting secrets in images, source files, or logs. The operator's reverse proxy terminates HTTPS/WSS.
 - Publish `openapi.yaml` and `asyncapi.yaml` as GitHub Release assets from the same service tag/source commit as the Docker release. Publish the release only after both descriptions are validated and attached.
 - Keep published description assets stable; corrections use a new release. Callers pin a service release tag and retrieve descriptions during development or builds, then select their own client generation/conversion workflow. Private-repository download credentials belong to the development/CI environment.
 - Future static product homepage: Owned by this repository and hosted on the project's own server; its UI and implementation timing are a separate effort.

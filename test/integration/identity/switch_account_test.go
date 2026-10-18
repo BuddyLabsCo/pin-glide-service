@@ -132,7 +132,7 @@ func waitForPausedConfirmation(t *testing.T, environment *loginEnvironment) {
 func TestAccountSwitchRemovesOnlyThatSendersOwnAssociations(t *testing.T) {
 	environment := startLogin(t)
 	for _, openID := range []string{"switcher", "bystander"} {
-		environment.provider.Accept("code-"+openID, identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-" + openID})
+		environment.provider.Accept("code-"+openID, identity.Identity{AppID: "wx-app", OpenID: "openid-" + openID})
 	}
 	switcher := environment.loginOK(t, `{"wechatCode":"code-switcher"}`)
 	bystander := environment.loginOK(t, `{"wechatCode":"code-bystander"}`)
@@ -167,7 +167,7 @@ func TestAccountSwitchRemovesOnlyThatSendersOwnAssociations(t *testing.T) {
 
 	// The switched installation registers again without its old ID, so it never
 	// inherits the registration the switch left behind.
-	environment.provider.Accept("code-switcher-new", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switcher"})
+	environment.provider.Accept("code-switcher-new", identity.Identity{AppID: "wx-app", OpenID: "openid-switcher"})
 	registered := environment.loginOK(t, `{"wechatCode":"code-switcher-new"}`)
 	if registered.SenderID == switcher.SenderID {
 		t.Errorf("the new registration reused the switched Sender ID %q", registered.SenderID)
@@ -179,7 +179,7 @@ func TestAccountSwitchRemovesOnlyThatSendersOwnAssociations(t *testing.T) {
 // its Sender no longer owns.
 func TestAccountSwitchCancelsUnfinishedPairingWork(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-pending", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-pending"})
+	environment.provider.Accept("code-switch-pending", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-pending"})
 	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-pending"}`)
 	environment.seedUnfinishedWork(t, "session-switch-pending", "receiver-switch-pending",
 		"pairing-switch-pending", switcher.SenderID)
@@ -200,8 +200,8 @@ func TestAccountSwitchCancelsUnfinishedPairingWork(t *testing.T) {
 // association or changes a registration.
 func TestAccountSwitchRequiresManagementAuthority(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-auth", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-auth"})
-	environment.provider.Accept("code-switch-revoked", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-revoked"})
+	environment.provider.Accept("code-switch-auth", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-auth"})
+	environment.provider.Accept("code-switch-revoked", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-revoked"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-switch-auth"}`)
 	revoked := environment.loginOK(t, `{"wechatCode":"code-switch-revoked"}`)
 	environment.seedPairing(t, "receiver-switch-auth", "pairing-switch-auth", issued.SenderID)
@@ -231,7 +231,7 @@ func TestAccountSwitchRequiresManagementAuthority(t *testing.T) {
 // mistake it for achieved local cleanup.
 func TestAccountSwitchRollsBackWhenCleanupCannotCommit(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-rollback", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-rollback"})
+	environment.provider.Accept("code-switch-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-rollback"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-switch-rollback"}`)
 	environment.seedPairing(t, "receiver-switch-rollback", "pairing-switch-rollback", issued.SenderID)
 
@@ -259,11 +259,11 @@ func TestAccountSwitchRollsBackWhenCleanupCannotCommit(t *testing.T) {
 // so it is refused and changes nothing.
 func TestDelayedAccountSwitchCannotRevokeASuccessorFamily(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-serial", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-serial"})
+	environment.provider.Accept("code-switch-serial", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-serial"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-switch-serial"}`)
 	environment.seedPairing(t, "receiver-switch-serial", "pairing-switch-serial", issued.SenderID)
 
-	environment.provider.Accept("code-switch-serial-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-serial"})
+	environment.provider.Accept("code-switch-serial-again", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-serial"})
 	restored := environment.loginOK(t, `{"wechatCode":"code-switch-serial-again","senderId":"`+issued.SenderID+`"}`)
 	status, payload, _ := environment.logout(t, issued.UserSession.Token, switchAccountBody)
 	if status != http.StatusUnauthorized || decodeProblem(t, payload).Code != "credential_invalid" {
@@ -282,12 +282,12 @@ func TestDelayedAccountSwitchCannotRevokeASuccessorFamily(t *testing.T) {
 // replacement instead would leave the restored installation without authority.
 func TestAccountSwitchCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-race", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race"})
+	environment.provider.Accept("code-switch-race", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-race"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-switch-race"}`)
 
 	for round := range 3 {
 		code := fmt.Sprintf("code-switch-race-%d", round)
-		environment.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race"})
+		environment.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: "openid-switch-race"})
 
 		var wait sync.WaitGroup
 		var switchedStatus int
@@ -340,7 +340,7 @@ func TestAccountSwitchCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 // unavailable instead of serializing them.
 func TestAccountSwitchSerializesWithAnInFlightKeyConfirmation(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-switch-race-lock", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-switch-race-lock"})
+	environment.provider.Accept("code-switch-race-lock", identity.Identity{AppID: "wx-app", OpenID: "openid-switch-race-lock"})
 	switcher := environment.loginOK(t, `{"wechatCode":"code-switch-race-lock"}`)
 	environment.seedUnfinishedWork(t, "session-switch-race-lock", "receiver-switch-race-lock",
 		"pairing-switch-race-lock", switcher.SenderID)

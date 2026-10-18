@@ -4,8 +4,8 @@
   "method": "post",
   "request": {
     "schema": "WeChatProofRequest",
-    "required": ["wechatCode"],
-    "properties": ["wechatCode"]
+    "required": [],
+    "properties": ["qqCode", "wechatCode"]
   },
   "success": {
     "status": "204"
@@ -17,6 +17,7 @@
       "credential_invalid",
       "credential_missing",
       "credential_revoked",
+      "qq_authorization_invalid",
       "wechat_authorization_invalid"
     ],
     "403": ["fresh_identity_required"],

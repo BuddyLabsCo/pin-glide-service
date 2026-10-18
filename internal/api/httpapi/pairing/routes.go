@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	domain "github.com/BuddyLabsCo/pin-glide-service/internal/pairing"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/protocol"
@@ -97,7 +98,8 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 		Summary:     "Claim a Pairing Session for one Sender",
 		Description: "Fixes the claiming Sender for a session and reserves binding capacity for a new distinct Receiver. " +
 			"A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. " +
-			"recover_receiver additionally requires fresh WeChat proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. " +
+			"recover_receiver additionally requires exactly one fresh WeChat or QQ proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. " +
+			"Sending both proof fields is rejected. " +
 			"Failures report 401 for an unusable management credential, 403 fresh_identity_required, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
@@ -113,12 +115,16 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 		if err != nil {
 			return nil, err
 		}
+		proof, err := identity.SelectProof(input.Body.WeChatCode, input.Body.QQCode)
+		if err != nil {
+			return nil, err
+		}
 
 		session, err := handlers.Sessions.Authorize(ctx, domain.AuthorizeRequest{
-			SessionID:    input.ID,
-			SenderID:     senderID,
-			Alias:        input.Body.Alias,
-			RecoveryCode: input.Body.WeChatCode,
+			SessionID: input.ID,
+			SenderID:  senderID,
+			Alias:     input.Body.Alias,
+			Proof:     proof,
 		}, time.Now().UTC())
 		if err != nil {
 			return nil, err

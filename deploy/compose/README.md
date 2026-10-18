@@ -78,10 +78,12 @@ Edit `.env` before running the installer:
   credentials are required; there is no fallback. Changing them does not change
   users or passwords in an existing volume; rotate the database credentials
   separately.
-- `WECHAT_APP_ID` and `WECHAT_APP_SECRET`: the approved WeChat Open Platform
-  mobile application whose verified OpenIDs identify Accounts. Both are
-  required for the `api` service to start in production and stay outside
-  images, source files and logs.
+- `WECHAT_APP_ID` and `WECHAT_APP_SECRET`: an approved WeChat Open Platform
+  mobile application. Set both to enable WeChat login.
+- `QQ_APP_ID` and `QQ_APP_KEY`: an approved QQ mobile application. Set both to
+  enable QQ login through the server-side authorization-code flow.
+- Neither provider pair is required for the `api` service to start. A missing
+  or partial pair fails only when that provider is used.
 - `BAILIAN_API_KEY`: the parent API key of the approved Bailian Beijing
   Workspace, which only authorizes temporary Sender keys for the enabled model
   row below. It is required for the `api` service to start in production and
@@ -473,11 +475,12 @@ Local migrations record the checkout's `version.json`, not a synthetic `0.0.0`
 Database Release. A restored deployment snapshot already carries its published
 release history, so the old synthetic target would be a downgrade.
 
-Inherited `PIN_GLIDE_WECHAT_APP_ID`, `PIN_GLIDE_WECHAT_APP_SECRET` and
-`PIN_GLIDE_BAILIAN_API_KEY` are removed before the api starts, including
-`make dev-code-only`. Provider-bound operations therefore fail their existing
-credential checks before network I/O; this workflow does not provide a real
-provider acceptance environment.
+Inherited `PIN_GLIDE_WECHAT_APP_ID`, `PIN_GLIDE_WECHAT_APP_SECRET`,
+`PIN_GLIDE_QQ_APP_ID`, `PIN_GLIDE_QQ_APP_KEY` and `PIN_GLIDE_BAILIAN_API_KEY`
+are removed before the api starts, including `make dev-code-only`.
+Provider-bound operations therefore fail their existing credential checks
+before network I/O; this workflow does not provide a real provider acceptance
+environment.
 
 Ctrl-C stops application descendants and keeps PostgreSQL and its data.
 `make dev-code-only` requires a successful prior preparation, rebuilds only the

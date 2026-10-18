@@ -23,6 +23,7 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
+	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
@@ -38,6 +39,7 @@ const (
 	refreshCanary    = "refresh-canary-token-MFRB"
 	providerCanary   = "provider-canary-secret-token"
 	wechatCodeCanary = "wechat-code-canary-9f2b"
+	qqCodeCanary     = "qq-code-canary-8e4c"
 	// canaryCode is the authorization the fake provider fails, so this test
 	// exercises a provider outage rather than a rejected code.
 	canaryCode = "wechat-code-provider-failure"
@@ -53,6 +55,7 @@ var relayedCanary = base64.StdEncoding.EncodeToString([]byte(ciphertextCanary + 
 type environment struct {
 	service     *harness.Service
 	provider    *wechatfake.Fake
+	qq          *qqfake.Fake
 	pool        *sql.DB
 	databaseURL string
 	logs        *safeLogBuffer
@@ -76,12 +79,15 @@ func start(t *testing.T) *environment {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	provider := wechatfake.New()
+	qqProvider := qqfake.New()
 	logs := &safeLogBuffer{}
 	t.Cleanup(logs.close)
 	return &environment{
-		service: harness.StartServiceLogging(t, postgres.DSN, provider, nil,
+		service: harness.StartProvidersLogging(t, postgres.DSN,
+			[]identity.Provider{provider, qqProvider}, nil,
 			observability.NewLogger(logs, "integration")),
 		provider:    provider,
+		qq:          qqProvider,
 		pool:        pool,
 		databaseURL: postgres.DSN,
 		logs:        logs,
@@ -142,7 +148,7 @@ type problem struct {
 // holder uses.
 func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	t.Helper()
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 
 	status, payload := e.request(t, http.MethodPost, "/v1/auth/wechat",
 		`{"wechatCode":"`+code+`"}`, "")
@@ -278,6 +284,7 @@ func refuseSecrets(t *testing.T, where, stored string) {
 
 	for name, secret := range map[string]string{
 		"authorization code": wechatCodeCanary,
+		"QQ authorization":   qqCodeCanary,
 		"provider secret":    providerCanary,
 		"OTP":                otpCanary,
 		"SMS text":           smsCanary,
@@ -326,8 +333,8 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 
 	// A provider that fails rather than rejects the identity. The failure cause
 	// carries no credential of its own, so the record of it can only be safe.
-	environment.provider.Fail(canaryCode, fmt.Errorf("%w: provider outage",
-		identity.ErrIdentityProvider))
+	environment.provider.Fail(canaryCode, fmt.Errorf("%w: %s provider outage",
+		identity.ErrIdentityProvider, providerCanary))
 	status, failedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
 		`{"wechatCode":"`+canaryCode+`"}`, "")
 	if status != http.StatusBadGateway {
@@ -336,6 +343,25 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	var failed problem
 	if err := json.Unmarshal(failedPayload, &failed); err != nil {
 		t.Fatalf("decode provider-failure problem: %v: %s", err, failedPayload)
+	}
+
+	// QQ uses the same safe diagnostics mapping for a rejected code and a
+	// provider failure.
+	status, rejectedQQPayload := environment.request(t, http.MethodPost, "/v1/auth/qq",
+		`{"qqCode":"`+qqCodeCanary+`"}`, "")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("rejected QQ login status = %d: %s", status, rejectedQQPayload)
+	}
+	environment.qq.Fail(canaryCode, fmt.Errorf("%w: %s QQ provider outage",
+		identity.ErrIdentityProvider, providerCanary))
+	status, failedQQPayload := environment.request(t, http.MethodPost, "/v1/auth/qq",
+		`{"qqCode":"`+canaryCode+`"}`, "")
+	if status != http.StatusBadGateway {
+		t.Fatalf("QQ provider-failure status = %d: %s", status, failedQQPayload)
+	}
+	var failedQQ problem
+	if err := json.Unmarshal(failedQQPayload, &failedQQ); err != nil {
+		t.Fatalf("decode QQ provider-failure problem: %v: %s", err, failedQQPayload)
 	}
 
 	// A credential the service rejects exercises the same surface with the
@@ -350,7 +376,9 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	// its caller sent.
 	refuseSecrets(t, "the malformed-request error", string(malformedPayload))
 	refuseSecrets(t, "the rejected-login error", string(rejectedPayload))
+	refuseSecrets(t, "the rejected-QQ-login error", string(rejectedQQPayload))
 	refuseSecrets(t, "the provider-failure error", string(failedPayload))
+	refuseSecrets(t, "the QQ provider-failure error", string(failedQQPayload))
 	refuseSecrets(t, "the rejected-credential error", string(credentialPayload))
 
 	environment.stopped(t)
@@ -382,6 +410,11 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	}
 	if len(environment.diagnostics(t, rejected.RequestID)) != 1 {
 		t.Errorf("the rejected authorization kept no record of its own")
+	}
+	if qqRecord := environment.diagnostics(t, failedQQ.RequestID); len(qqRecord) != 1 {
+		t.Errorf("the QQ provider failure kept %d records, want 1", len(qqRecord))
+	} else if !qqRecord[0].code.Valid || qqRecord[0].code.Int64 != http.StatusBadGateway {
+		t.Errorf("QQ provider-failure record = %+v, want status %d", qqRecord[0], http.StatusBadGateway)
 	}
 
 	stored := environment.storedText(t)

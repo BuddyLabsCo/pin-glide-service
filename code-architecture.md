@@ -28,6 +28,7 @@ pin-glide-service/
 │   │   └── wss/               # Upgrades, frames and connection lifecycle
 │   ├── adapters/             # Third-party system clients
 │   │   ├── wechat/           # WeChat HTTP client
+│   │   ├── qq/               # QQ Connect HTTP client
 │   │   └── bailian/          # Bailian HTTP client
 │   ├── protocol/             # Shared HTTP/WSS wire types and errors
 │   ├── config/               # Environment configuration
@@ -101,6 +102,8 @@ internal/api/
 internal/adapters/
 ├── wechat/
 │   └── client.go     # WeChat HTTP protocol
+├── qq/
+│   └── client.go     # QQ Connect HTTP protocol
 └── bailian/
     └── client.go     # Bailian HTTP protocol
 ```
@@ -187,6 +190,7 @@ Schema prefixes name relations within the shared database.
 | Model | `internal/model` | Enabled model configuration and temporary-key acquisition | `internal/api/httpapi/model/` | `model_` |
 | Delivery | `internal/delivery` | Delivery admission, deduplication, Receipt handling and terminal results | `internal/api/httpapi/delivery/`, `internal/api/wss/delivery.go` | `delivery_` |
 | WeChat adapter | `internal/adapters/wechat` | WeChat requests, responses and provider errors | Called by identity service | none |
+| QQ adapter | `internal/adapters/qq` | QQ Connect requests, responses and provider errors | Called by identity service | none |
 | Bailian adapter | `internal/adapters/bailian` | Bailian temporary-key API requests, responses and provider errors | Called by model service | none |
 | Protocol | `internal/protocol` | Shared HTTP/WSS payload types and error definitions | Used by HTTP/WSS packages | none |
 | Observability | `internal/observability` | Structured logs, correlation, redaction and PostgreSQL log writes | API middleware and WSS connection logging | `service_` |
@@ -209,7 +213,7 @@ Schema prefixes name relations within the shared database.
 | Integration tests | `test/integration/` |
 | HTTP/WSS contract tests | `test/contract/{http,wss}/` |
 | Compose/release/local-lifecycle smoke tests | `test/smoke/` |
-| Provider fakes | `test/fakes/{wechat,bailian}/` |
+| Provider fakes | `test/fakes/{wechat,qq,bailian}/` |
 | Wire/database fixtures | `test/fixtures/` |
 
 Test public behavior and domain facts. Use disposable databases and synthetic

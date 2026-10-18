@@ -19,6 +19,7 @@ const TagIdentity = "identity"
 // the stable business code the published contract defines.
 func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
 	registerLogin(api, service)
+	registerQQLogin(api, service)
 	registerRefresh(api, service)
 	registerLogout(api, service, devices)
 	registerRevokeDevice(api, devices)
@@ -30,7 +31,7 @@ func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
 // Sender or Receiver registration.
 type DeviceRevocation interface {
 	SwitchAccount(ctx context.Context, managementCredential string, now time.Time) error
-	DeviceRevocation(ctx context.Context, managementCredential, deviceID, wechatCode string, now time.Time) error
+	DeviceRevocation(ctx context.Context, managementCredential, deviceID string, proof domain.Proof, now time.Time) error
 }
 
 // registerLogin serves the fresh WeChat login that creates or restores one
@@ -59,8 +60,45 @@ func registerLogin(api huma.API, service *domain.Service) {
 		Security: []map[string][]string{},
 	}, func(ctx context.Context, input *loginInput) (*loginOutput, error) {
 		bundle, err := service.Login(ctx, domain.LoginRequest{
-			WeChatCode: input.Body.WeChatCode,
-			SenderID:   input.Body.SenderID,
+			Proof:    domain.Proof{Provider: domain.ProviderWeChat, Code: input.Body.WeChatCode},
+			SenderID: input.Body.SenderID,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		output := &loginOutput{}
+		output.Body = credentialBundle(bundle)
+		return output, nil
+	})
+}
+
+// registerQQLogin serves the fresh QQ login through the same shared Account and
+// Sender workflow as WeChat.
+func registerQQLogin(api huma.API, service *domain.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "PostAuthQQ",
+		Tags:        []string{TagIdentity},
+		Method:      http.MethodPost,
+		Path:        "/v1/auth/qq",
+		Summary:     "Verify QQ login and issue Sender credentials",
+		Description: "Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. " +
+			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration. " +
+			"Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. " +
+			"Raw M, U and F credentials are returned only to this holder and the response is never cacheable.",
+		Errors: []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+		},
+		Security: []map[string][]string{},
+	}, func(ctx context.Context, input *qqLoginInput) (*loginOutput, error) {
+		bundle, err := service.Login(ctx, domain.LoginRequest{
+			Proof:    domain.Proof{Provider: domain.ProviderQQ, Code: input.Body.QQCode},
+			SenderID: input.Body.SenderID,
 		})
 		if err != nil {
 			return nil, err
@@ -181,7 +219,7 @@ func registerLogout(api huma.API, service *domain.Service, devices DeviceRevocat
 
 // registerRevokeDevice installs POST /v1/devices/{id}/revoke: the Account
 // owner's permanent security revocation of one of its own registrations,
-// authorized by fresh WeChat proof of the same Account. The named registration
+// authorized by fresh identity proof of the same Account. The named registration
 // decides which role's lifecycle the revocation applies.
 func registerRevokeDevice(api huma.API, devices DeviceRevocation) {
 	huma.Register(api, huma.Operation{
@@ -191,13 +229,13 @@ func registerRevokeDevice(api huma.API, devices DeviceRevocation) {
 		Path:          "/v1/devices/{id}/revoke",
 		Summary:       "Permanently revoke one owned Sender or Receiver registration",
 		DefaultStatus: http.StatusNoContent,
-		Description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat proof verifies, and answers 204. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. " +
+		Description: "Permanently closes one Sender or Receiver registration that belongs to the Account the fresh WeChat or QQ proof verifies, and answers 204. Exactly one of wechatCode or qqCode must be present; sending both is rejected. Every credential of the named device is invalidated, so nothing it still holds authorizes anything afterwards. " +
 			"For a Sender registration, its unfinished reserved Pairing work is canceled and only its own associations are removed, in one commit: the Receiver's credential, its delivery connection and every other Sender's association survive, including with a Receiver the revoked Sender shared, and a later login presenting the closed registration ID is refused with 409 device_registration_revoked for as long as the registration is retained. " +
 			"For a Receiver registration, its credential generation, the issuance and recovery grants it could still redeem, its delivery connection and every Pairing that forwards to it are invalidated in the same commit: a committed delivery connection receives device_revoked and then closes with 1008 policy_violation, a handshake still committing is refused before its upgrade, that Receiver's associations are removed for every Sender that owned one, and every other Receiver keeps its registration, its credential, its Pairings and its connection, including a Receiver the same Account owns. " +
 			"Revoking a registration never reaches back into work already admitted: a Delivery the service already accepted keeps the authorization it was admitted with, a revoked Sender's Receiver keeps the delivery connection it already held, and every new request validates the current credentials again. A revoked Receiver's own retained history, and the Delivery records of the Pairings it lost, are not deleted by the revocation. " +
 			"Ordinary logout and refresh-family reuse revocation never close a registration, so this is the only permanent outcome. " +
 			"The caller's own management credential authorizes the request, so only the Account that owns the registration can revoke it. " +
-			"Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable fresh proof, 502 identity_provider_error, or 503 service_unavailable. " +
+			"Failures report 401 credential_missing for an absent management credential, 401 credential_invalid for an unknown or wrongly scoped one, 401 credential_expired for an expired one, 401 credential_revoked for one whose own registration an owner permanently closed, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for proof of another Account, 404 resource_not_found for an unknown or foreign registration, 409 device_registration_revoked for an owned registration that is already permanently closed, 422 validation_failed for a body carrying no usable or conflicting fresh proof, 502 identity_provider_error, or 503 service_unavailable. " +
 			"This response carries no credential and is never cacheable.",
 		Errors: []int{
 			http.StatusBadRequest,
@@ -210,8 +248,15 @@ func registerRevokeDevice(api huma.API, devices DeviceRevocation) {
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},
 	}, func(ctx context.Context, input *revokeDeviceInput) (*struct{}, error) {
+		proof, err := domain.SelectProof(input.Body.WeChatCode, input.Body.QQCode)
+		if err != nil {
+			return nil, err
+		}
+		if proof.Provider == "" {
+			return nil, domain.ErrIdentityProofRequired
+		}
 		if err := devices.DeviceRevocation(ctx, observability.CredentialFrom(ctx), input.ID,
-			input.Body.WeChatCode, time.Now().UTC()); err != nil {
+			proof, time.Now().UTC()); err != nil {
 			return nil, err
 		}
 		return nil, nil

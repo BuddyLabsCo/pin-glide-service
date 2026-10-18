@@ -175,7 +175,7 @@ func readLogoutFixture(t *testing.T) logoutFixture {
 func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 	environment := startLogin(t)
 	for _, openID := range []string{"managed", "uploaded", "renewed", "bystander"} {
-		environment.provider.Accept("code-"+openID, identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-" + openID})
+		environment.provider.Accept("code-"+openID, identity.Identity{AppID: "wx-app", OpenID: "openid-" + openID})
 	}
 	managed := environment.loginOK(t, `{"wechatCode":"code-managed"}`)
 	uploaded := environment.loginOK(t, `{"wechatCode":"code-uploaded"}`)
@@ -224,7 +224,7 @@ func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 	if pairings := environment.count(t, `SELECT count(*) FROM pin_glide.pairing_pairings WHERE sender_id = $1`, managed.SenderID); pairings != 1 {
 		t.Errorf("logout left the Sender %d Pairings, want its seeded one", pairings)
 	}
-	environment.provider.Accept("code-managed-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-managed"})
+	environment.provider.Accept("code-managed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-managed"})
 	restored := environment.loginOK(t, `{"wechatCode":"code-managed-again","senderId":"`+managed.SenderID+`"}`)
 	if restored.SenderID != managed.SenderID {
 		t.Errorf("login restored sender %q, want %q", restored.SenderID, managed.SenderID)
@@ -235,7 +235,7 @@ func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 // credential alone authorizes logout, and logout issues nothing.
 func TestLogoutAcceptsExpiredAccessWithAValidRefreshCredential(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-expired", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-expired"})
+	environment.provider.Accept("code-expired", identity.Identity{AppID: "wx-app", OpenID: "openid-expired"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-expired"}`)
 
 	environment.exec(t, `UPDATE pin_glide.identity_credentials
@@ -269,8 +269,8 @@ func TestLogoutAcceptsExpiredAccessWithAValidRefreshCredential(t *testing.T) {
 // with the accepted status and code and revokes nothing.
 func TestLogoutRejectsConflictingUnknownAndUnusableSources(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-sources", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-sources"})
-	environment.provider.Accept("code-late-expiry", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-late-expiry"})
+	environment.provider.Accept("code-sources", identity.Identity{AppID: "wx-app", OpenID: "openid-sources"})
+	environment.provider.Accept("code-late-expiry", identity.Identity{AppID: "wx-app", OpenID: "openid-late-expiry"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-sources"}`)
 	expiring := environment.loginOK(t, `{"wechatCode":"code-late-expiry"}`)
 
@@ -324,8 +324,8 @@ func TestLogoutRejectsConflictingUnknownAndUnusableSources(t *testing.T) {
 // revoked family that cannot renew itself.
 func TestLogoutSerializesWithRenewal(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-renewal-first", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-renewal-first"})
-	environment.provider.Accept("code-logout-first", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-logout-first"})
+	environment.provider.Accept("code-renewal-first", identity.Identity{AppID: "wx-app", OpenID: "openid-renewal-first"})
+	environment.provider.Accept("code-logout-first", identity.Identity{AppID: "wx-app", OpenID: "openid-logout-first"})
 	renewalFirst := environment.loginOK(t, `{"wechatCode":"code-renewal-first"}`)
 	logoutFirst := environment.loginOK(t, `{"wechatCode":"code-logout-first"}`)
 
@@ -358,12 +358,12 @@ func TestLogoutSerializesWithRenewal(t *testing.T) {
 // login authenticated untouched, whether it arrives after the login or races it.
 func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-delayed", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-delayed"})
-	environment.provider.Accept("code-racing", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-racing"})
+	environment.provider.Accept("code-delayed", identity.Identity{AppID: "wx-app", OpenID: "openid-delayed"})
+	environment.provider.Accept("code-racing", identity.Identity{AppID: "wx-app", OpenID: "openid-racing"})
 	delayed := environment.loginOK(t, `{"wechatCode":"code-delayed"}`)
 	racing := environment.loginOK(t, `{"wechatCode":"code-racing"}`)
 
-	environment.provider.Accept("code-delayed-again", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-delayed"})
+	environment.provider.Accept("code-delayed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-delayed"})
 	authenticated := environment.loginOK(t, `{"wechatCode":"code-delayed-again","senderId":"`+delayed.SenderID+`"}`)
 	logoutFails(t, environment, delayed.UserSession.Token, "", http.StatusUnauthorized, "credential_revoked")
 	logoutFails(t, environment, "", logoutRefreshBody(delayed.Refresh.Token),
@@ -432,7 +432,7 @@ func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 // leaves the family usable, so a client cannot mistake it for remote sign-out.
 func TestLogoutRollsBackWhenRevocationDoesNotCommit(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-rollback", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-rollback"})
+	environment.provider.Accept("code-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-rollback"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-rollback"}`)
 
 	environment.exec(t, `CREATE FUNCTION pin_glide.identity_credentials_test_reject_revocation() RETURNS trigger

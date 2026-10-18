@@ -29,9 +29,9 @@ const shutdownTimeout = 5 * time.Second
 type Dependencies struct {
 	Database *sql.DB
 	Logger   *slog.Logger
-	// WeChat verifies login authorization codes; the web adapter satisfies it
-	// and tests substitute a fake at this external boundary.
-	WeChat identity.Provider
+	// IdentityProviders verify fresh identity proofs. WeChat and QQ adapters
+	// satisfy this boundary and tests substitute fakes by provider.
+	IdentityProviders []identity.Provider
 	// Bailian mints temporary provider credentials; the HTTP adapter satisfies
 	// it and tests substitute a fake at this external boundary.
 	Bailian model.Provider
@@ -52,7 +52,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 		hub: wss.NewHub(),
 	}
 
-	identityService := identity.NewService(dependencies.Database, dependencies.WeChat)
+	identityService := identity.NewService(dependencies.Database, dependencies.IdentityProviders...)
 	modelService := model.NewService(
 		dependencies.Database,
 		dependencies.Bailian,
@@ -60,7 +60,7 @@ func Serve(ctx context.Context, listener net.Listener, dependencies Dependencies
 	)
 	pairingService := pairing.NewService(
 		dependencies.Database,
-		pairing.NewProvider(dependencies.WeChat, identityService),
+		pairing.NewProvider(identityService),
 		pairing.NewAuthenticator(identityService),
 		pairing.NewSenderMutations(identityService),
 	)

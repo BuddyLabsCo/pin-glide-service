@@ -64,7 +64,7 @@ func concurrentPost(environment *loginEnvironment, path, body, bearer string) (i
 // exactly one commits and the recorded attempt supersedes the other.
 func TestRefreshConcurrentAttemptsCommitOnce(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-concurrent", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-concurrent"})
+	environment.provider.Accept("code-concurrent", identity.Identity{AppID: "wx-app", OpenID: "openid-concurrent"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-concurrent"}`)
 
 	const attempted = 2
@@ -122,7 +122,7 @@ func TestRefreshConcurrentAttemptsCommitOnce(t *testing.T) {
 // revoke the family the login authenticated.
 func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-family", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-family"})
+	environment.provider.Accept("code-family", identity.Identity{AppID: "wx-app", OpenID: "openid-family"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-family"}`)
 	replaced := refreshOK(t, environment, issued.Refresh.Token, "operation-old", 0)
 
@@ -202,7 +202,7 @@ func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 // back: the consumed token stays current and the same attempt can commit again.
 func TestRefreshRollsBackIssuanceWhenStorageFails(t *testing.T) {
 	environment := startLogin(t)
-	environment.provider.Accept("code-storage", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-storage"})
+	environment.provider.Accept("code-storage", identity.Identity{AppID: "wx-app", OpenID: "openid-storage"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-storage"}`)
 
 	environment.exec(t, `CREATE FUNCTION pin_glide.identity_credentials_test_reject() RETURNS trigger
@@ -227,7 +227,7 @@ func TestRefreshRollsBackIssuanceWhenStorageFails(t *testing.T) {
 func TestRefreshKeepsCredentialsOutOfDiagnostics(t *testing.T) {
 	var diagnostics bytes.Buffer
 	environment := startLoginWith(t, observability.NewLogger(&diagnostics, "integration"))
-	environment.provider.Accept("code-diagnostics", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-diagnostics"})
+	environment.provider.Accept("code-diagnostics", identity.Identity{AppID: "wx-app", OpenID: "openid-diagnostics"})
 	issued := environment.loginOK(t, `{"wechatCode":"code-diagnostics"}`)
 	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-diagnostics", 0)
 

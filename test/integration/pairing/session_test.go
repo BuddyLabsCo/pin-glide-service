@@ -3,8 +3,8 @@
 // Package pairing_test exercises Pairing Session creation, Sender
 // authorization and the restricted pairing channel the way a client
 // experiences them: HTTP and real WSS requests against the composed service, a
-// disposable real PostgreSQL holding the shipped schema, and a fake WeChat
-// boundary.
+// disposable real PostgreSQL holding the shipped schema, and faked WeChat and
+// QQ boundaries.
 package pairing_test
 
 import (
@@ -19,19 +19,21 @@ import (
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
+	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
 	wechatfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 	"github.com/coder/websocket"
 )
 
 // environment is one composed service with its disposable database, faked
-// WeChat boundary and registered Senders.
+// WeChat and QQ boundaries and registered Senders.
 type environment struct {
 	service *harness.Service
 	// databaseURL is the disposable database the composed service uses, which a
 	// test restarting the service composes the next process against.
 	databaseURL string
 	provider    *wechatfake.Fake
+	qq          *qqfake.Fake
 	pool        *sql.DB
 	// postgres is the disposable instance itself, which a test stopping the
 	// database deliberately owns before harness cleanup runs.
@@ -52,10 +54,12 @@ func start(t *testing.T) *environment {
 	t.Cleanup(func() { _ = pool.Close() })
 
 	provider := wechatfake.New()
+	qqProvider := qqfake.New()
 	return &environment{
-		service:     harness.StartService(t, postgres.DSN, provider, nil),
+		service:     harness.StartProviders(t, postgres.DSN, []identity.Provider{provider, qqProvider}, nil),
 		databaseURL: postgres.DSN,
 		provider:    provider,
+		qq:          qqProvider,
 		pool:        pool,
 		postgres:    postgres,
 	}
@@ -75,7 +79,7 @@ func (e *environment) stopDatabase(t *testing.T) {
 // holder uses for management operations.
 func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	t.Helper()
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 
 	status, payload := e.post(t, "/v1/auth/wechat", `{"wechatCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
@@ -290,6 +294,7 @@ type problem struct {
 
 // bundle is the decoded login success payload.
 type bundle struct {
+	AccountID   string `json:"accountId"`
 	SenderID    string `json:"senderId"`
 	UserSession struct {
 		Token string `json:"token"`

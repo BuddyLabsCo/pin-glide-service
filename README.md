@@ -104,9 +104,13 @@ configuration from the environment:
 | `PIN_GLIDE_ENV` | `development` | `development` or `production` |
 | `PIN_GLIDE_API_ADDRESS` | `:8080` | Listen address of the API process |
 | `PIN_GLIDE_DATABASE_URL` | local development DSN | PostgreSQL connection string; required in production |
-| `PIN_GLIDE_WECHAT_APP_ID` | none | AppID of the approved WeChat mobile application; required in production |
-| `PIN_GLIDE_WECHAT_APP_SECRET` | none | AppSecret of that application; required in production, never logged |
+| `PIN_GLIDE_WECHAT_APP_ID` | none | AppID of an approved WeChat mobile application; set with the secret to enable WeChat |
+| `PIN_GLIDE_WECHAT_APP_SECRET` | none | AppSecret of that application; never logged |
+| `PIN_GLIDE_QQ_APP_ID` | none | AppID of an approved QQ mobile application; set with the AppKey to enable QQ |
+| `PIN_GLIDE_QQ_APP_KEY` | none | AppKey of that application; never logged |
 | `PIN_GLIDE_BAILIAN_API_KEY` | none | Parent API key of the approved Bailian Beijing Workspace; required in production, never logged |
+
+WeChat and QQ configuration is optional at startup. A missing or partial provider pair fails only when that provider is used. The API and database tools do not require either provider in any environment.
 
 Temporary model credentials come from that parent key plus the enabled
 non-secret `pin_glide.model_configurations` row an operator maintains; see
@@ -155,7 +159,7 @@ loopback, restores the newest regular `*.dump` by modification time, migrates,
 applies `dev/anon`, and only then starts the api. An empty directory starts a
 fresh database. Ctrl-C stops application descendants but keeps PostgreSQL for
 `make dev-code-only`; `make dev-stop` removes the local container, network and
-volume. Local provider credential variables are cleared, so provider-bound
+volume. Local WeChat, QQ and Bailian credential variables are cleared, so provider-bound
 operations fail before network I/O. A restored snapshot keeps its published
 Database Release history, so local migration records the checkout's
 `version.json` instead of a synthetic `0.0.0` target.

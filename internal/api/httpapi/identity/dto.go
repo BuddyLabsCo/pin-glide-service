@@ -32,6 +32,12 @@ type WeChatLoginRequest struct {
 	SenderID   string `json:"senderId,omitempty" maxLength:"128" doc:"Saved Sender ID to restore; omit it to register this installation as a new Sender"`
 }
 
+// QQLoginRequest is the accepted POST /v1/auth/qq body.
+type QQLoginRequest struct {
+	QQCode   string `json:"qqCode" required:"true" minLength:"1" maxLength:"512" doc:"Fresh single-use QQ authorization code obtained by the Android client"`
+	SenderID string `json:"senderId,omitempty" maxLength:"128" doc:"Saved Sender ID to restore; omit it to register this installation as a new Sender"`
+}
+
 // RefreshRequest is the accepted POST /v1/auth/refresh body.
 type RefreshRequest struct {
 	RefreshToken string `json:"refreshToken" required:"true" minLength:"1" maxLength:"512" doc:"Current renewal credential F; the client persists its operation state before sending it, and it never travels in a URL"`
@@ -59,14 +65,20 @@ type LogoutRequest struct {
 }
 
 // WeChatProofRequest is the accepted POST /v1/devices/{id}/revoke body: fresh
-// authorization of the Account that owns the registration, which is what makes
-// this an owner action rather than an ordinary Sender one.
+// identity authorization of the Account that owns the registration, which is
+// what makes this an owner action rather than an ordinary Sender one. Exactly
+// one provider field must be present.
 type WeChatProofRequest struct {
-	WeChatCode string `json:"wechatCode" required:"true" minLength:"1" maxLength:"512" doc:"Fresh single-use WeChat authorization code obtained by the Account owner"`
+	WeChatCode string `json:"wechatCode,omitempty" maxLength:"512" doc:"Fresh single-use WeChat authorization code obtained by the Account owner"`
+	QQCode     string `json:"qqCode,omitempty" maxLength:"512" doc:"Fresh single-use QQ authorization code obtained by the Account owner"`
 }
 
 type loginInput struct {
 	Body WeChatLoginRequest
+}
+
+type qqLoginInput struct {
+	Body QQLoginRequest
 }
 
 type loginOutput struct {

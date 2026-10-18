@@ -184,7 +184,7 @@ func (e *environment) disable(t *testing.T) {
 func (e *environment) sender(t *testing.T, code, openID, senderID string) senderBundle {
 	t.Helper()
 
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 	body := fmt.Sprintf(`{"wechatCode":%q}`, code)
 	if senderID != "" {
 		body = fmt.Sprintf(`{"wechatCode":%q,"senderId":%q}`, code, senderID)

@@ -199,7 +199,7 @@ func TestModelCredentialsRequireCurrentUploadAuthority(t *testing.T) {
 	// still record.
 	latest := environment.sender(t, "code-authority", "openid-authority", sender.SenderID)
 	environment.provider.Accept("code-owner-revocation",
-		identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-authority"})
+		identity.Identity{AppID: "wx-app", OpenID: "openid-authority"})
 	revocation, revoked, err := environment.post(
 		"/v1/devices/"+latest.SenderID+"/revoke", `{"wechatCode":"code-owner-revocation"}`, latest.UserSession.Token)
 	if err != nil {

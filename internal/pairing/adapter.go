@@ -9,18 +9,13 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 )
 
-// NewProvider adapts the WeChat verification boundary the identity service
-// already uses to the fresh owner proof a recovery session requires. The
-// pairing domain also needs the Account the verified identity belongs to,
-// which is what makes a recovery claim an owner action rather than an
-// anonymous one.
-func NewProvider(provider identity.Provider, accounts *identity.Service) Provider {
-	if provider == nil {
-		// No provider credentials: recovery reports a provider failure instead
-		// of calling anyone.
+// NewProvider adapts shared identity verification and Account lookup to the
+// fresh owner proof a recovery session or owner revocation requires.
+func NewProvider(accounts *identity.Service) Provider {
+	if accounts == nil {
 		return nil
 	}
-	return wechatProofProvider{provider: provider, accounts: accounts}
+	return accountProofProvider{accounts: accounts}
 }
 
 // NewAuthenticator adapts the identity service's credential resolution to the
@@ -56,25 +51,20 @@ func (m senderMutations) RevokeSender(ctx context.Context, tx *sql.Tx, senderID,
 	return senderOutcome(m.accounts.RevokeSenderTx(ctx, tx, senderID, ownerAccount, now))
 }
 
-// wechatProofProvider turns one verified WeChat code into the Account it
+// accountProofProvider turns one verified provider proof into the Account it
 // belongs to.
-type wechatProofProvider struct {
-	provider identity.Provider
+type accountProofProvider struct {
 	accounts *identity.Service
 }
 
 // VerifyIdentity verifies the code and resolves its Account. An unknown
 // identity reports the provider's own outcome.
-func (p wechatProofProvider) VerifyIdentity(ctx context.Context, wechatCode string) (WeChatProof, error) {
-	verified, err := p.provider.Verify(ctx, wechatCode)
+func (p accountProofProvider) VerifyIdentity(ctx context.Context, proof identity.Proof) (IdentityProof, error) {
+	accountID, err := p.accounts.AccountFor(ctx, proof)
 	if err != nil {
-		return WeChatProof{}, providerOutcome(err)
+		return IdentityProof{}, providerOutcome(err)
 	}
-	accountID, err := p.accounts.AccountFor(ctx, verified)
-	if err != nil {
-		return WeChatProof{}, providerOutcome(err)
-	}
-	return WeChatProof{AccountID: accountID}, nil
+	return IdentityProof{AccountID: accountID}, nil
 }
 
 // senderAuthenticator resolves one Sender management credential.
@@ -111,13 +101,15 @@ func credentialOutcome(err error) error {
 	}
 }
 
-// providerOutcome restates one WeChat verification failure. An identity the
-// provider verified but that has no Account cannot be the owner of an
-// existing Receiver, which is the same answer as proving another Account.
+// providerOutcome restates one identity verification failure. An identity the
+// provider verified but that has no Account cannot be the owner of an existing
+// Receiver, which is the same answer as proving another Account.
 func providerOutcome(err error) error {
 	switch {
 	case errors.Is(err, identity.ErrWeChatAuthorizationInvalid):
 		return ErrWeChatAuthorizationInvalid
+	case errors.Is(err, identity.ErrQQAuthorizationInvalid):
+		return ErrQQAuthorizationInvalid
 	case errors.Is(err, identity.ErrIdentityProvider):
 		return ErrIdentityProvider
 	case errors.Is(err, identity.ErrSenderNotFound):

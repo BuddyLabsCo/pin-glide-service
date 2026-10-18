@@ -29,14 +29,14 @@ func TestRecoveryRequiresTheOwningSendersFreshProof(t *testing.T) {
 	if restricted == "" {
 		t.Fatal("the anonymous recovery session returned no restricted credential")
 	}
-	environment.provider.Accept("code-foreign-fresh", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-foreign-proof"})
+	environment.provider.Accept("code-foreign-fresh", identity.Identity{AppID: "wx-app", OpenID: "openid-foreign-proof"})
 	status, _, payload := environment.claim(t, anonymous.SessionID, `{"wechatCode":"code-foreign-fresh"}`, foreign.UserSession.Token)
 	if status != http.StatusNotFound {
 		t.Errorf("foreign owner proof = %d, want 404: %s", status, payload)
 	} else if code := decodeProblem(t, payload).Code; code != "resource_not_found" {
 		t.Errorf("foreign owner proof code = %q, want resource_not_found", code)
 	}
-	environment.provider.Accept("code-owner-proxy", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owner-proof"})
+	environment.provider.Accept("code-owner-proxy", identity.Identity{AppID: "wx-app", OpenID: "openid-owner-proof"})
 	status, _, payload = environment.claim(t, anonymous.SessionID, `{"wechatCode":"code-owner-proxy"}`, foreign.UserSession.Token)
 	if status != http.StatusForbidden {
 		t.Errorf("proof of another Account's owner = %d, want 403: %s", status, payload)
@@ -46,7 +46,7 @@ func TestRecoveryRequiresTheOwningSendersFreshProof(t *testing.T) {
 
 	// The owning Sender proves another Account instead of its own, which is not
 	// the fresh same-Account approval a replacement requires.
-	environment.provider.Accept("code-other-account", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-foreign-proof"})
+	environment.provider.Accept("code-other-account", identity.Identity{AppID: "wx-app", OpenID: "openid-foreign-proof"})
 	status, _, payload = environment.claim(t, anonymous.SessionID, `{"wechatCode":"code-other-account"}`, owner.UserSession.Token)
 	if status != http.StatusForbidden {
 		t.Errorf("foreign proof of the owning Sender = %d, want 403: %s", status, payload)
@@ -57,7 +57,7 @@ func TestRecoveryRequiresTheOwningSendersFreshProof(t *testing.T) {
 	// The owning Sender proves its own Account but still learns nothing about a
 	// Receiver that Account does not own.
 	notOwned, _ := environment.createRecovery(t, foreignAssociation.ReceiverID)
-	environment.provider.Accept("code-owner-fresh", identity.WeChatIdentity{AppID: "wx-app", OpenID: "openid-owner-proof"})
+	environment.provider.Accept("code-owner-fresh", identity.Identity{AppID: "wx-app", OpenID: "openid-owner-proof"})
 	status, _, payload = environment.claim(t, notOwned.SessionID, `{"wechatCode":"code-owner-fresh"}`, owner.UserSession.Token)
 	if status != http.StatusNotFound {
 		t.Errorf("recovery of another Account's Receiver = %d, want 404: %s", status, payload)

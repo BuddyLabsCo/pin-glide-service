@@ -47,10 +47,9 @@ func TestLoadRequiresDatabaseURLInProduction(t *testing.T) {
 	}
 }
 
-// The migrate process shares Load and runs in production with only the
-// database URL, so the repository loader cannot require provider credentials;
-// the api process enforces them for itself.
-func TestLoadAllowsProductionWithoutWeChatCredentials(t *testing.T) {
+// Neither identity provider is required at startup; an operation that uses an
+// unavailable provider reports that only when invoked.
+func TestLoadAllowsProductionWithoutIdentityProviders(t *testing.T) {
 	loaded, err := config.Load(func(name string) string {
 		switch name {
 		case "PIN_GLIDE_ENV":
@@ -61,11 +60,13 @@ func TestLoadAllowsProductionWithoutWeChatCredentials(t *testing.T) {
 		return ""
 	})
 	if err != nil {
-		t.Fatalf("Load rejected production configuration without WeChat credentials: %v", err)
+		t.Fatalf("Load rejected production configuration without identity providers: %v", err)
 	}
-	if loaded.WeChatAppID != "" || loaded.WeChatAppSecret != "" || loaded.BailianAPIKey != "" {
-		t.Errorf("provider credentials = %q/%q/%q, want absent",
-			loaded.WeChatAppID, loaded.WeChatAppSecret, loaded.BailianAPIKey)
+	if loaded.WeChatAppID != "" || loaded.WeChatAppSecret != "" ||
+		loaded.QQAppID != "" || loaded.QQAppKey != "" || loaded.BailianAPIKey != "" {
+		t.Errorf("provider credentials = %q/%q/%q/%q/%q, want absent",
+			loaded.WeChatAppID, loaded.WeChatAppSecret,
+			loaded.QQAppID, loaded.QQAppKey, loaded.BailianAPIKey)
 	}
 }
 
@@ -76,6 +77,8 @@ func TestLoadKeepsExplicitValues(t *testing.T) {
 		"PIN_GLIDE_DATABASE_URL":      "postgres://example@db.internal:5432/pin_glide",
 		"PIN_GLIDE_WECHAT_APP_ID":     " wx-app ",
 		"PIN_GLIDE_WECHAT_APP_SECRET": " wx-secret ",
+		"PIN_GLIDE_QQ_APP_ID":         " qq-app ",
+		"PIN_GLIDE_QQ_APP_KEY":        " qq-key ",
 		"PIN_GLIDE_BAILIAN_API_KEY":   " sk-parent ",
 	}
 	loaded, err := config.Load(func(name string) string { return values[name] })
@@ -94,6 +97,9 @@ func TestLoadKeepsExplicitValues(t *testing.T) {
 	}
 	if loaded.WeChatAppID != "wx-app" || loaded.WeChatAppSecret != "wx-secret" {
 		t.Errorf("wechat credentials = %q/%q, want the configured values", loaded.WeChatAppID, loaded.WeChatAppSecret)
+	}
+	if loaded.QQAppID != "qq-app" || loaded.QQAppKey != "qq-key" {
+		t.Errorf("qq credentials = %q/%q, want the configured values", loaded.QQAppID, loaded.QQAppKey)
 	}
 	if loaded.BailianAPIKey != "sk-parent" {
 		t.Errorf("bailian API key = %q, want the configured value", loaded.BailianAPIKey)

@@ -1,0 +1,37 @@
+package http_test
+
+import (
+	"slices"
+	"testing"
+)
+
+// The published description must describe the QQ authorization-code login
+// through the same credential bundle and provider-neutral failure statuses.
+func TestPublishedHTTPDescriptionKeepsTheQQLoginContract(t *testing.T) {
+	fixture := readFixture[loginFixture](t, "qq_login_v1.json")
+	publishedErrors := assertOperationContract(t, published(t), fixture.operationContract)
+	assertFailureStatuses(t, publishedErrors, fixtureStatuses(fixture.Errors))
+}
+
+// Recovery accepts the legacy WeChat proof and the new QQ proof without making
+// either field mandatory for every Pairing Session mode.
+func TestPublishedHTTPDescriptionIncludesQQRecoveryProof(t *testing.T) {
+	description := published(t)
+	operation := operationOf(t, description, operationContract{
+		OperationID: "PostPairingSessionAuthorize",
+		Path:        "/v1/pairing-sessions/{id}/authorize",
+		Method:      "post",
+	})
+
+	requestBody := operation["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)
+	requestName, request := schemaOf(t, description, requestBody["schema"])
+	if requestName != "AuthorizeRequest" {
+		t.Errorf("request schema = %q, want AuthorizeRequest", requestName)
+	}
+	if required := requiredFields(t, request); len(required) != 0 {
+		t.Errorf("request required fields = %v, want none", required)
+	}
+	if properties := propertyFields(t, request); !slices.Equal(properties, []string{"alias", "qqCode", "wechatCode"}) {
+		t.Errorf("request fields = %v, want [alias qqCode wechatCode]", properties)
+	}
+}

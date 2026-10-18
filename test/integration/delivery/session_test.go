@@ -146,7 +146,7 @@ type deliveryView struct {
 // sender logs in one installation and returns its credential bundle.
 func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	t.Helper()
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 
 	status, payload := e.request(t, http.MethodPost, "/v1/auth/wechat", `{"wechatCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
@@ -247,7 +247,7 @@ func (e *environment) revoke(t *testing.T, sender bundle, receiverID, openID str
 	t.Helper()
 
 	code := "code-revoke-" + receiverID
-	e.provider.Accept(code, identity.WeChatIdentity{AppID: "wx-app", OpenID: openID})
+	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 	status, payload := e.request(t, http.MethodPost, "/v1/devices/"+receiverID+"/revoke",
 		`{"wechatCode":"`+code+`"}`, sender.UserSession.Token)
 	if status != http.StatusNoContent {

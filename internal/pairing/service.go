@@ -89,9 +89,9 @@ func (s *Service) Authorize(ctx context.Context, request AuthorizeRequest, now t
 	// The fresh owner proof of a recovery session is an external call, so it is
 	// verified before the transaction that claims the session and reserves
 	// capacity.
-	var proof WeChatProof
+	var proof IdentityProof
 	if session.Mode == ModeRecoverReceiver {
-		proof, err = s.verifyOwner(ctx, request.RecoveryCode)
+		proof, err = s.verifyOwner(ctx, request.Proof)
 		if err != nil {
 			return Session{}, err
 		}
@@ -297,22 +297,22 @@ func (s *Service) authorizeAssociation(ctx context.Context, tx *sql.Tx, session 
 	return nil
 }
 
-// verifyOwner verifies one fresh WeChat proof and reports the Account it names.
-// The provider call is an external boundary, so it stays outside every database
-// transaction.
-func (s *Service) verifyOwner(ctx context.Context, recoveryCode string) (WeChatProof, error) {
-	if recoveryCode == "" {
-		return WeChatProof{}, ErrFreshIdentityRequired
+// verifyOwner verifies one fresh provider proof and reports the Account it
+// names. The provider call is an external boundary, so it stays outside every
+// database transaction.
+func (s *Service) verifyOwner(ctx context.Context, proof identity.Proof) (IdentityProof, error) {
+	if proof.Provider == "" || proof.Code == "" {
+		return IdentityProof{}, ErrFreshIdentityRequired
 	}
 	if s.provider == nil {
-		return WeChatProof{}, ErrIdentityProvider
+		return IdentityProof{}, ErrIdentityProvider
 	}
-	return s.provider.VerifyIdentity(ctx, recoveryCode)
+	return s.provider.VerifyIdentity(ctx, proof)
 }
 
 // authorizeRecovery applies the fresh owner approval a recovery session
 // requires. Pure recovery creates no association and reserves no capacity.
-func (s *Service) authorizeRecovery(ctx context.Context, tx *sql.Tx, session Session, request AuthorizeRequest, proof WeChatProof) error {
+func (s *Service) authorizeRecovery(ctx context.Context, tx *sql.Tx, session Session, request AuthorizeRequest, proof IdentityProof) error {
 	owner, err := senderAccount(ctx, tx, request.SenderID)
 	if err != nil {
 		return err
@@ -454,6 +454,7 @@ func isOutcome(err error) bool {
 		ErrRetainedPairingsInvalid,
 		ErrFreshIdentityRequired,
 		ErrWeChatAuthorizationInvalid,
+		ErrQQAuthorizationInvalid,
 		ErrIdentityProvider,
 		ErrCredentialMissing,
 		ErrCredentialInvalid,

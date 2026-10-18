@@ -5,7 +5,7 @@ Pin Glide connects an Account's Android Senders and Windows Receivers to deliver
 ## Language
 
 **Account**:
-A WeChat-backed user identity to which Sender and Receiver devices belong. An Account may have multiple Senders and Receivers.
+A user identity verified by one configured WeChat or QQ application, to which Sender and Receiver devices belong. An Account may have multiple Senders and Receivers.
 _Avoid_: Sending account, receiving account
 
 **Sender**:
@@ -30,7 +30,7 @@ _Avoid_: Hardware identity, hardware fingerprint
 
 **User Session**:
 An Account owner's authenticated management context on one Sender.
-_Avoid_: WeChat session, upload authorization
+_Avoid_: WeChat session, QQ session, upload authorization
 
 **Refresh Operation**:
 One ordered renewal of a Sender's credential bundle, identified by the client's
