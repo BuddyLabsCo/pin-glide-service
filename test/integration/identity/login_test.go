@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	qqadapter "github.com/BuddyLabsCo/pin-glide-service/internal/adapters/qq"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
@@ -280,11 +281,12 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment.loginFails(t, `{"wechatCode":"code-broken"}`, http.StatusBadGateway)
 }
 
-// A configured provider is independent of an absent provider pair.
-func TestWeChatLoginWorksWithoutQQConfiguration(t *testing.T) {
+// A configured provider is independent of an incomplete provider pair.
+func TestWeChatLoginWorksWithIncompleteQQConfiguration(t *testing.T) {
 	provider := wechatfake.New()
 	environment := startLoginWithProviders(t,
-		observability.NewLogger(os.Stderr, "integration"), provider)
+		observability.NewLogger(os.Stderr, "integration"),
+		provider, qqadapter.New("qq-app", ""))
 	environment.provider = provider
 	provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
 

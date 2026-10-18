@@ -35,7 +35,7 @@ func TestPublishedHTTPDescriptionIncludesQQRecoveryProof(t *testing.T) {
 	if properties := propertyFields(t, request); !slices.Equal(properties, []string{"alias", "qqCode", "wechatCode"}) {
 		t.Errorf("request fields = %v, want [alias qqCode wechatCode]", properties)
 	}
-	for _, status := range []string{"401", "422", "502"} {
+	for _, status := range []string{"401", "403", "422", "502"} {
 		if _, ok := operation["responses"].(map[string]any)[status]; !ok {
 			t.Errorf("Pairing authorization has no %s failure response", status)
 		}

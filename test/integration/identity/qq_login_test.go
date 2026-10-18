@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	wechatadapter "github.com/BuddyLabsCo/pin-glide-service/internal/adapters/wechat"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/identity"
 	"github.com/BuddyLabsCo/pin-glide-service/internal/observability"
 	qqfake "github.com/BuddyLabsCo/pin-glide-service/test/fakes/qq"
@@ -126,11 +127,12 @@ func TestQQLoginCreatesRestoresAndSeparatesAccounts(t *testing.T) {
 	}
 }
 
-// A configured provider is independent of an absent provider pair.
-func TestQQLoginWorksWithoutWeChatConfiguration(t *testing.T) {
+// A configured provider is independent of an incomplete provider pair.
+func TestQQLoginWorksWithIncompleteWeChatConfiguration(t *testing.T) {
 	qqProvider := qqfake.New()
 	environment := startLoginWithProviders(t,
-		observability.NewLogger(os.Stderr, "integration"), qqProvider)
+		observability.NewLogger(os.Stderr, "integration"),
+		qqProvider, wechatadapter.New("wx-app", ""))
 	environment.qq = qqProvider
 	qqProvider.Accept("qq-only", identity.Identity{AppID: "qq-app", OpenID: "openid-only"})
 
