@@ -44,8 +44,8 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
     plan.senders.map(sender => sender.id.slice(`smoke-test-run-sender-`.length)),
     [
       'a1', 'a2', 'foreign', 'scope', 'switch', 'order', 'recover', 'window',
-      'aging', 'race', 'permanent', 'superseded', 'model', 'model-expired',
-      'model-revoked',
+      'aging', 'race', 'permanent', 'superseded', 'pair1', 'pair2', 'model',
+      'model-expired', 'model-revoked',
     ],
   );
 
