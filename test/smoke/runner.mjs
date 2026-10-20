@@ -7,7 +7,7 @@ import { validateConfiguration, validateDatabaseFacts } from './lib/database.mjs
 import { SmokeValidationError } from './lib/errors.mjs';
 import { Evidence } from './lib/evidence.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
-import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
+import { SmokeBlocked, SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { summarizeCompose } from './lib/installation.mjs';
 import { modelConfiguration } from './lib/configuration.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
@@ -18,6 +18,7 @@ import {
   verifySnapshotLocations,
 } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
+import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -36,9 +37,10 @@ function usage() {
     '--check verifies the published release, deployed Compose identity, health,',
     'schema/data ledgers, contracts and snapshot inventory without writes. It',
     'always exits 2 after prerequisites pass because it does not execute restore.',
-    '--integration-ready additionally writes and cleans up the guarded SQL fixture',
-    'and verifies its M/U/F authority through the deployed service, then creates',
-    'a stopped-writer snapshot and restores it into a disposable database.',
+    '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
+    'exercises the seeded Sender credential/session lifecycle through the deployed',
+    'service, then creates a stopped-writer snapshot and restores it into a',
+    'disposable database.',
     'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
   ].join('\n');
 }
@@ -361,6 +363,7 @@ async function integration({
   evidence,
   checkResult,
   createSession = SmokeSession.create,
+  runLifecycle = runSenderCredentialScenarios,
   plan = createFixturePlan(),
 }) {
   let session;
@@ -373,24 +376,13 @@ async function integration({
       evidence,
       plan,
     });
-    const pairing = await session.createPairing('a1');
-    await session.completePairing('a1', pairing);
-    const issued = await session.redeemReceiver(pairing);
-    if (!issued.receiverToken || issued.receiverId !== pairing.receiverID) {
-      throw new Error('First Receiver credential does not belong to the paired Receiver');
-    }
-    evidence.addSecret(issued.receiverToken);
+    const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
-      scenario: 'guarded SQL fixture bootstrap, normal M/U/F authentication and ordinary Pairing',
+      scenario: 'seeded Sender credential and session lifecycle',
       status: 'passed',
       details: {
-        accounts: plan.accounts.length,
-        senders: plan.senders.length,
-        scopesPerSender: 3,
-        refreshVerified: true,
-        pairingID: pairing.pairingID,
-        receiverID: pairing.receiverID,
-        requestIds: [...session.requestIds],
+        ...lifecycle,
+        requestCount: session.requestIds.length,
       },
     });
     await session.close();
@@ -463,7 +455,11 @@ async function main(argv = process.argv.slice(2)) {
     console.log(JSON.stringify(report, null, 2));
     return 0;
   } catch (error) {
-    if (error instanceof SmokeProblem || error instanceof SmokeValidationError) failureStatus = 'failed';
+    if (error instanceof SmokeBlocked) {
+      failureStatus = 'blocked';
+    } else if (error instanceof SmokeProblem || error instanceof SmokeValidationError) {
+      failureStatus = 'failed';
+    }
     evidence.record({
       scenario: options.mode === 'integration-ready' ? 'seeded smoke journey' : 'read-only deployment check',
       status: failureStatus,

@@ -238,10 +238,10 @@ PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev 
 ```
 
 `--check` is read-only and exits `2` after prerequisites pass because it does
-not execute restore. `--integration-ready` seeds and removes run-owned SQL
-fixtures, verifies their normal M/U/F authority, creates a stopped-writer
-container snapshot, restores it into a disposable database, and writes redacted
-evidence.
+not execute restore. `--integration-ready` creates a stopped-writer container
+snapshot and restores it into a disposable database. It then seeds and removes
+run-owned SQL fixtures, exercises the Sender credential and session lifecycle
+through the deployed HTTP and WebSocket surface, and writes redacted evidence.
 After both releases are published, this command proves fresh installation and
 the declared upgrade with disposable Compose projects and the real release
 images:

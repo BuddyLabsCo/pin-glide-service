@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createFixturePlan } from './lib/fixtures.mjs';
-import { SmokeProblem } from './lib/http.mjs';
+import { SmokeBlocked, SmokeProblem } from './lib/http.mjs';
 import { SmokeSession } from './lib/session.mjs';
+import { runScenario, verifyCheckpoints } from './lib/session_credential_support.mjs';
+import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 import { TARGET } from './lib/target.mjs';
 import { integration } from './runner.mjs';
 
-test('refresh authority is proved with the rotated management and uploader credentials', async () => {
+test('fixture authority proves scope and Account/Sender ownership through refresh', async () => {
   const plan = createFixturePlan({ runId: 'refresh-authority-run' });
   plan.senders = [plan.senders[0]];
   const sender = plan.senders[0];
@@ -24,7 +27,18 @@ test('refresh authority is proved with the rotated management and uploader crede
     async call(request) {
       if (request.path === '/v1/auth/refresh') {
         assert.equal(request.body.refreshToken, initialRefresh);
-        return { status: 200, requestId: 'request-refresh', body: { senderId: sender.id, ...rotated } };
+        return {
+          status: 200,
+          requestId: 'request-refresh',
+          cacheControl: 'no-store',
+          body: {
+            accountId: sender.accountID,
+            senderId: sender.id,
+            operationId: request.body.operationId,
+            attempt: request.body.attempt,
+            ...rotated,
+          },
+        };
       }
       authorizations.push(request.token);
       if (request.token === initialManagement || request.token === rotated.userSession.token) {
@@ -44,10 +58,200 @@ test('refresh authority is proved with the rotated management and uploader crede
   assert.deepEqual(authorizations, [
     initialManagement,
     initialUploader,
+    initialRefresh,
     rotated.userSession.token,
     rotated.uploader.token,
   ]);
   assert.equal(sender.credentials.find(item => item.scope === 'refresh').token, rotated.refresh.token);
+});
+
+test('a refresh response updates the runner checkpoint with its accepted attempt and bundle', async () => {
+  const plan = createFixturePlan({ runId: 'refresh-checkpoint-run' });
+  const sender = plan.senders.find(item => item.id.endsWith('-scope'));
+  const issuedAt = new Date('2026-10-20T04:00:00Z').toISOString();
+  const refreshExpiresAt = new Date('2026-10-27T04:00:00Z').toISOString();
+  const http = {
+    async call(request) {
+      assert.equal(request.body.operationId, 'operation-1');
+      assert.equal(request.body.attempt, 1);
+      return {
+        status: 200,
+        requestId: 'request-refresh',
+        cacheControl: 'no-store',
+        body: {
+          accountId: sender.accountID,
+          senderId: sender.id,
+          operationId: 'operation-1',
+          attempt: 1,
+          userSession: { token: 'new-management', expiresAt: issuedAt },
+          uploader: { token: 'new-uploader', expiresAt: issuedAt },
+          refresh: { token: 'new-refresh', expiresAt: refreshExpiresAt },
+        },
+      };
+    },
+  };
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http,
+    evidence: { addSecret() {} },
+    plan,
+  });
+
+  await session.refresh('scope', { operationID: 'operation-1', attempt: 1 });
+  assert.deepEqual(sender.latestRefresh, { operationID: 'operation-1', attempt: 1 });
+  assert.equal(sender.credentials.find(item => item.scope === 'user_session').token, 'new-management');
+  assert.equal(sender.credentials.find(item => item.scope === 'uploader').token, 'new-uploader');
+  assert.equal(sender.credentials.find(item => item.scope === 'refresh').token, 'new-refresh');
+  assert.equal(
+    sender.credentials.find(item => item.scope === 'refresh').digest,
+    createHash('sha256').update('new-refresh').digest('hex'),
+  );
+});
+
+test('an abandoned refresh response records an uncertain attempt without replacing the bundle', async () => {
+  const plan = createFixturePlan({ runId: 'refresh-dropped-run' });
+  const sender = plan.senders.find(item => item.id.endsWith('-recover'));
+  const original = sender.credentials.map(item => ({ ...item }));
+  const http = {
+    async callDropped(request) {
+      assert.equal(request.body.operationId, 'operation-dropped');
+      assert.equal(request.body.attempt, 0);
+      return { status: 200, requestId: 'request-dropped' };
+    },
+  };
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http,
+    evidence: { addSecret() {} },
+    plan,
+  });
+
+  const result = await session.refresh('recover', {
+    operationID: 'operation-dropped',
+    attempt: 0,
+    dropped: true,
+  });
+  assert.equal(result.requestId, 'request-dropped');
+  assert.deepEqual(sender.pendingRefresh, { operationID: 'operation-dropped', attempt: 0 });
+  assert.equal(sender.latestRefresh, undefined);
+  assert.deepEqual(sender.credentials, original);
+});
+
+test('a refresh bundle must contain independent M/U/F tokens', () => {
+  const plan = createFixturePlan({ runId: 'refresh-independence-run' });
+  const sender = plan.senders.find(item => item.label === 'scope');
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http: {},
+    evidence: { addSecret() {} },
+    plan,
+  });
+  const response = {
+    accountId: sender.accountID,
+    senderId: sender.id,
+    operationId: 'operation-1',
+    attempt: 0,
+    userSession: { token: 'same-token', expiresAt: '2026-10-20T03:00:00Z' },
+    uploader: { token: 'same-token', expiresAt: '2026-10-20T03:00:00Z' },
+    refresh: { token: 'same-token', expiresAt: '2026-10-27T00:00:00Z' },
+  };
+  assert.throws(
+    () => session.acceptRefresh('scope', response, { operationID: 'operation-1', attempt: 0 }),
+    /non-independent/,
+  );
+});
+
+test('runner refresh checkpoints must match the persisted operation and attempt', async () => {
+  const plan = createFixturePlan({ runId: 'checkpoint-proof-run' });
+  const sender = plan.senders.find(item => item.id.endsWith('-scope'));
+  sender.latestRefresh = { operationID: 'operation-1', attempt: 1 };
+  const session = {
+    plan,
+    remote: {
+      async sqlJSON(statement) {
+        if (statement.includes('token_digest')) {
+          return sender.credentials.map(item => ({ senderId: sender.id, tokenDigest: item.digest }));
+        }
+        return [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: true }];
+      },
+    },
+  };
+  assert.deepEqual(await verifyCheckpoints(session), {
+    checkpoints: [{ senderId: sender.id, operationId: 'operation-1', attempt: 1 }],
+    credentialBundles: 1,
+  });
+
+  session.remote.sqlJSON = async statement => (
+    statement.includes('token_digest')
+      ? sender.credentials.map(item => ({ senderId: 'another-sender', tokenDigest: item.digest }))
+      : [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: true }]
+  );
+  await assert.rejects(() => verifyCheckpoints(session), /credential bundle/);
+
+  session.remote.sqlJSON = async statement => (
+    statement.includes('token_digest')
+      ? sender.credentials.map(item => ({ senderId: sender.id, tokenDigest: item.digest }))
+      : [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: false }]
+  );
+  await assert.rejects(() => verifyCheckpoints(session), /checkpoint is stale/);
+});
+
+test('service diagnostics settle and scan every available run-owned record', async () => {
+  let reads = 0;
+  const session = {
+    requestIds: ['request-1', 'request-2'],
+    subjects: new Set(),
+    secretValues: () => ['raw-secret'],
+    remote: {
+      async sqlJSON() {
+        reads++;
+        const records = [{ requestId: 'request-1', subject: null, method: 'POST' }];
+        if (reads > 1) records.push({ requestId: 'request-2', subject: null, method: 'GET' });
+        return records;
+      },
+    },
+  };
+  assert.deepEqual(await verifyDiagnosticRedaction(session), {
+    records: 2,
+    scannedRequestIds: 2,
+    missingRequestIds: 0,
+  });
+  assert.equal(reads, 2);
+
+  session.requestIds = ['request-1', 'request-2'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'POST' }];
+  assert.deepEqual(await verifyDiagnosticRedaction(session, { settleMs: 0 }), {
+    records: 1,
+    scannedRequestIds: 1,
+    missingRequestIds: 1,
+  });
+
+  session.requestIds = ['request-1'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
+  await assert.rejects(() => verifyDiagnosticRedaction(session), /raw credential/);
+});
+
+test('unavailable service diagnostics are recorded as blocked evidence', async () => {
+  const recorded = [];
+  const session = {
+    requestIds: ['request-1'],
+    subjects: new Set(),
+    secretValues: () => [],
+    remote: { async sqlJSON() { return []; } },
+    evidence: { record(entry) { recorded.push(entry); } },
+  };
+  await assert.rejects(
+    () => runScenario(
+      session,
+      'diagnostic availability',
+      () => verifyDiagnosticRedaction(session, { settleMs: 0 }),
+    ),
+    error => error instanceof SmokeBlocked,
+  );
+  assert.equal(recorded[0].status, 'blocked');
 });
 
 test('ordinary Pairing creates, claims, relays through both peers and redeems only for its Receiver', async () => {
@@ -147,14 +351,12 @@ test('pairing peers are closed when the relay journey fails', async () => {
   assert.deepEqual(closed.sort(), ['receiver', 'sender']);
 });
 
-test('failed Pairing work still runs its cleanup and records that outcome', async () => {
+test('failed lifecycle work still runs its cleanup and records that outcome', async () => {
   const plan = createFixturePlan({ runId: 'pairing-failure-run' });
   const recorded = [];
   let closes = 0;
   const session = {
-    async createPairing() {
-      throw new Error('authorization failed');
-    },
+    requestIds: [],
     async close() {
       closes++;
     },
@@ -165,6 +367,9 @@ test('failed Pairing work still runs its cleanup and records that outcome', asyn
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
     createSession: async () => session,
+    runLifecycle: async () => {
+      throw new Error('authorization failed');
+    },
   }), /authorization failed/);
   assert.equal(closes, 1);
   assert.equal(recorded.at(-1).scenario, 'run-owned fixture cleanup');
@@ -176,9 +381,7 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
   const recorded = [];
   let closes = 0;
   const session = {
-    async createPairing() {
-      throw new Error('authorization failed');
-    },
+    requestIds: [],
     async close() {
       closes++;
       throw new Error('cleanup failed');
@@ -190,6 +393,9 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
     createSession: async () => session,
+    runLifecycle: async () => {
+      throw new Error('authorization failed');
+    },
   }), /authorization failed/);
   assert.equal(closes, 1);
   assert.equal(recorded.at(-1).status, 'failed');
@@ -197,9 +403,7 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
 
   let closeCount = 0;
   const successful = {
-    async createPairing() { return { receiverID: 'receiver-1', pairingID: 'pairing-1' }; },
-    async completePairing() {},
-    async redeemReceiver() { return { receiverId: 'receiver-1', receiverToken: 'secret' }; },
+    requestIds: [],
     async close() { closeCount++; },
   };
   const evidence = {
@@ -214,6 +418,7 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
     evidence,
     plan,
     createSession: async () => successful,
+    runLifecycle: async () => ({ scenarios: [] }),
   }), /evidence failed/);
   assert.equal(closeCount, 1);
 });
