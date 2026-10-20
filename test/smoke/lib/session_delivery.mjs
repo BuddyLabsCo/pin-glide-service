@@ -123,9 +123,9 @@ async function scenarioSendFailed(session, context) {
 async function scenarioBatchBudget(session, context) {
   const live = liveTarget(session, context);
   const message = messageID(session, 'batch-budget');
-  let started;
+  let elapsedMs;
   const outcome = await withDeliveryBatchLock(session.remote, async () => {
-    started = Date.now();
+    const started = Date.now();
     try {
       // The client waits past the service's own budget so it observes the
       // service's 503 rather than an HTTP peer timeout.
@@ -140,9 +140,11 @@ async function scenarioBatchBudget(session, context) {
     } catch (error) {
       if (error?.status !== 503 || error?.code !== 'delivery_status_unavailable') throw error;
       return { status: error.status, code: error.code };
+    } finally {
+      // Measure the service's answer, not the fault holder's own cleanup.
+      elapsedMs = Date.now() - started;
     }
   }, { seconds: 20 });
-  const elapsedMs = Date.now() - started;
   if (elapsedMs < 14_500 || elapsedMs > 16_500) {
     throw new Error(`A blocked Delivery batch answered in ${elapsedMs}ms, outside the fifteen-second budget`);
   }
