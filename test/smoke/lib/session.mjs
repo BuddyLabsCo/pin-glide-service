@@ -210,8 +210,7 @@ export class SmokeSession {
     return result.body;
   }
 
-  async createPairing(label, options = {}) {
-    if (typeof options === 'string') options = { mode: options };
+  async createPairingSession(options = {}) {
     const mode = options.mode || 'new_receiver';
     const receiverID = options.receiverID || '';
     const token = options.token || '';
@@ -224,26 +223,58 @@ export class SmokeSession {
       body,
     });
     if (created.status !== 201) throw new Error(`Pairing Session creation returned ${created.status}`);
-    const sessionID = created.body.session.sessionId;
+    const view = created.body?.session;
+    const sessionID = view?.sessionId;
     if (!sessionID) throw new Error('Pairing Session creation returned no session ID');
-    if (sessionID) this.subjects.add(sessionID);
-    this.trackReceiver(created.body.session.receiverId);
+    if (view.mode !== mode) throw new Error(`Pairing Session mode is ${view.mode}, expected ${mode}`);
+    if (mode !== 'new_receiver' && view.receiverId !== receiverID) {
+      throw new Error('Pairing Session did not preserve its fixed Receiver target');
+    }
+    const tokenExpiresAt = created.body.pairingTokenExpiresAt;
+    if (!created.body.pairingToken || Date.parse(tokenExpiresAt) !== Date.parse(view.expiresAt)) {
+      throw new Error('Pairing Session did not return an equally bounded restricted credential');
+    }
+    this.subjects.add(sessionID);
+    this.trackReceiver(view.receiverId);
     this.addSecret(created.body.pairingToken);
+    return {
+      sessionID,
+      receiverID: view.receiverId,
+      mode: view.mode,
+      state: view.state,
+      expiresAt: view.expiresAt,
+      tokenExpiresAt,
+      token: created.body.pairingToken,
+    };
+  }
+
+  async claimPairing(label, pairing, options = {}) {
+    const body = {};
+    if (options.alias !== undefined) body.alias = options.alias;
     const authorized = await this.request({
       method: 'POST',
-      path: `/v1/pairing-sessions/${encodeURIComponent(sessionID)}/authorize`,
+      path: `/v1/pairing-sessions/${encodeURIComponent(pairing.sessionID)}/authorize`,
       token: this.token(label, 'user_session'),
-      body: {},
+      body,
     });
     if (authorized.body.state !== 'awaiting_confirmation') {
       throw new Error(`Pairing Session state is ${authorized.body.state}, not awaiting_confirmation`);
     }
+    if (authorized.body.receiverId !== pairing.receiverID || authorized.body.mode !== pairing.mode) {
+      throw new Error('Pairing Session claim changed its fixed mode or Receiver target');
+    }
     return {
-      sessionID,
+      ...pairing,
       receiverID: authorized.body.receiverId,
       pairingID: authorized.body.pairingId,
-      token: created.body.pairingToken,
+      state: authorized.body.state,
     };
+  }
+
+  async createPairing(label, options = {}) {
+    if (typeof options === 'string') options = { mode: options };
+    const created = await this.createPairingSession(options);
+    return this.claimPairing(label, created, { alias: options.alias });
   }
 
   async completePairing(label, pairing, socket) {
@@ -291,16 +322,21 @@ export class SmokeSession {
     return result.body;
   }
 
-  async redeemReceiver(pairing) {
-    const result = await this.request({
+  async redeemReceiver(pairing, options = {}) {
+    const request = {
       method: 'POST',
       path: `/v1/pairing-sessions/${encodeURIComponent(pairing.sessionID)}/receiver-token`,
       token: pairing.token,
       body: {
-        operationId: this.newOperationID('redeem'),
-        attempt: 0,
+        operationId: options.operationID || this.newOperationID('redeem'),
+        attempt: options.attempt ?? 0,
       },
-    });
+    };
+    const result = options.dropped
+      ? await this.droppedRequest(request)
+      : await this.request(request);
+    if (options.dropped) return result;
+    if (result.cacheControl !== 'no-store') throw new Error('Receiver credential issuance was cacheable');
     this.addSecret(result.body?.receiverToken);
     return result.body;
   }

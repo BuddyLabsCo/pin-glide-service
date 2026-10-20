@@ -241,7 +241,9 @@ PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev 
 not execute restore. `--integration-ready` creates a stopped-writer container
 snapshot and restores it into a disposable database. It then seeds and removes
 run-owned SQL fixtures, exercises the Sender credential and session lifecycle
-through the deployed HTTP and WebSocket surface, and writes redacted evidence.
+through the deployed HTTP and WebSocket surface, drives Receiver enrollment,
+add-Sender, replacement, association and capacity journeys, and writes redacted
+evidence.
 After both releases are published, this command proves fresh installation and
 the declared upgrade with disposable Compose projects and the real release
 images:

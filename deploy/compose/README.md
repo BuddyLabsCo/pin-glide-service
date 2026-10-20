@@ -137,6 +137,11 @@ PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev \
 ```
 
 The integration run first uses the installer to stop the API, hold and drain pg_cron, create a root-authorized stopped snapshot, restart the API, and restore the snapshot into a disposable database through the PostgreSQL container. It verifies the release ledgers, exact model/retention/cron configuration, pg_cron extension and quiescence, then drops the disposable database. It then creates two synthetic QQ-namespace Accounts and isolated active Sender credential families, generates fresh M/U/F credentials, stores only lowercase SHA-256 digests with normal three-hour or seven-day lifetimes, and exercises scope and expiry failures, ordered refresh, lost-response recovery, reuse isolation, ordinary logout, Account-switch cleanup and unrelated access through the deployed HTTP and WebSocket surface. It verifies the runner's latest operation and rotated bundle, checks diagnostic redaction, then removes the run-owned rows. Raw credentials stay in runner memory and redacted evidence only.
+The same run drives Receiver enrollment, opaque Pairing relay, reconnect,
+first-Receiver credential issuance and expiry, add-Sender, atomic replacement,
+association scope and notifications, capacity contention and corrupt protocol
+framing. Each Pairing scenario records its HTTP operation, WebSocket message and
+source identities in the evidence.
 
 Both modes require `/mnt/share/workspace/snapshots/pin-glide` on the server and development workstation. `--check` requires both sides to expose the same completed snapshot, records the restore as blocked and exits `2`; it never reports acceptance. `--integration-ready` can start from an empty directory because it creates the stopped-writer backup used for recovery verification. The runner serializes environment-wide work with `/tmp/pin-glide-dev-smoke.lock` on `local-server`. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
 

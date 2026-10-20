@@ -284,14 +284,38 @@ test('ordinary Pairing creates, claims, relays through both peers and redeems on
       async call(request) {
         requests.push(request);
         if (request.path === '/v1/pairing-sessions') {
-          return { status: 201, body: { session: { sessionId: 'session-1', receiverId: 'receiver-1' }, pairingToken: 'restricted' } };
+          return {
+            status: 201,
+            body: {
+              session: {
+                sessionId: 'session-1',
+                mode: 'new_receiver',
+                receiverId: 'receiver-1',
+                state: 'awaiting_authorization',
+                expiresAt: '2026-10-21T00:05:00Z',
+              },
+              pairingToken: 'restricted',
+              pairingTokenExpiresAt: '2026-10-21T00:05:00Z',
+            },
+          };
         }
         if (request.path.endsWith('/authorize')) {
-          return { body: { sessionId: 'session-1', receiverId: 'receiver-1', pairingId: 'pairing-1', state: 'awaiting_confirmation' } };
+          return {
+            body: {
+              sessionId: 'session-1',
+              mode: 'new_receiver',
+              receiverId: 'receiver-1',
+              pairingId: 'pairing-1',
+              state: 'awaiting_confirmation',
+            },
+          };
         }
         if (request.path.endsWith('/complete')) return { body: { state: 'completed' } };
         if (request.path.endsWith('/receiver-token')) {
-          return { body: { receiverId: 'receiver-1', receiverToken: 'receiver-secret' } };
+          return {
+            cacheControl: 'no-store',
+            body: { receiverId: 'receiver-1', receiverToken: 'receiver-secret' },
+          };
         }
         throw new Error(`unexpected request ${request.path}`);
       },

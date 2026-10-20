@@ -42,7 +42,7 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
   ]);
   assert.deepEqual(
     plan.senders.map(sender => sender.id.slice(`smoke-test-run-sender-`.length)),
-    ['a1', 'a2', 'foreign', 'scope', 'switch', 'order', 'recover', 'window', 'aging', 'race', 'permanent', 'superseded'],
+    ['a1', 'a2', 'foreign', 'scope', 'switch', 'order', 'recover', 'window', 'aging', 'race', 'permanent', 'superseded', 'pair1', 'pair2'],
   );
 
   const bootstrap = renderBootstrapSQL(plan);
