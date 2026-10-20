@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-const credentialLifetimeHours = {
+export const credentialLifetimeHours = Object.freeze({
   user_session: 3,
   uploader: 3,
   refresh: 7 * 24,
-};
+});
 
 export const credentialScopes = Object.keys(credentialLifetimeHours);
 

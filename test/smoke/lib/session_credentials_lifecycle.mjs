@@ -237,6 +237,18 @@ export async function accountSwitch(session) {
   const survivor = await addSenderToReceiver(session, 'a2', primary);
   const switchedCredentials = snapshot(session.sender('switch'));
   const wrongAuthority = {
+    missingManagement: await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/logout',
+        body: {
+          mode: 'switch_account',
+          refreshToken: switchedCredentials.refresh.token,
+        },
+      },
+      401,
+      'credential_missing',
+    ),
     uploader: await session.expectProblem(
       {
         method: 'POST',
@@ -258,6 +270,11 @@ export async function accountSwitch(session) {
       'credential_invalid',
     ),
   };
+  const rejectedFacts = await durableFacts(session, 'switch');
+  const rejectedPairing = rejectedFacts.pairings.find(item => item.id === primary.pairingID);
+  if (rejectedFacts.registrationState !== 'active' || rejectedPairing?.state !== 'active') {
+    throw new Error('A rejected Account switch changed the Sender or its Pairing');
+  }
   const switched = await session.request({
     method: 'POST',
     path: '/v1/auth/logout',
@@ -329,6 +346,7 @@ export async function accountSwitch(session) {
     survivorPairing: retained,
     receiverState: receiver,
     wrongAuthority,
+    rejectedSwitchPreservedPairing: rejectedPairing,
     primaryRevoked,
     survivor: {
       management: survivorManagement.status,

@@ -4,7 +4,9 @@ import test from 'node:test';
 
 import {
   createFixturePlan,
+  credentialLifetimeHours,
   escapeSQLString,
+  fixtureSender,
   renderBootstrapSQL,
 } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
@@ -51,7 +53,7 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
       assert.equal(credential.digest, createHash('sha256').update(credential.token).digest('hex'));
       assert.equal(
         credential.expiresAt.getTime() - plan.now.getTime(),
-        (credential.scope === 'refresh' ? 7 * 24 : 3) * 60 * 60 * 1000,
+        credentialLifetimeHours[credential.scope] * 60 * 60 * 1000,
       );
       assert(!bootstrap.includes(credential.token), 'raw credential entered fixture SQL');
       assert(bootstrap.includes(credential.digest));
@@ -61,6 +63,11 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
   for (const credential of superseded.replacementCredentials) {
     assert(!bootstrap.includes(credential.token), 'replacement credential entered initial fixture SQL');
   }
+});
+
+test('fixture Sender lookup follows the label rather than an ID suffix', () => {
+  const sender = { label: 'scope', id: 'unrelated-sender-id' };
+  assert.equal(fixtureSender({ senders: [sender] }, 'scope'), sender);
 });
 
 test('the HTTP peer refuses cross-origin paths before issuing a request and reports stable problems', async () => {

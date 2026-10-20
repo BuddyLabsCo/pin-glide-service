@@ -199,7 +199,7 @@ test('runner refresh checkpoints must match the persisted operation and attempt'
   await assert.rejects(() => verifyCheckpoints(session), /checkpoint is stale/);
 });
 
-test('service diagnostics wait for every run-owned request before checking secrets', async () => {
+test('service diagnostics settle and scan every available run-owned record', async () => {
   let reads = 0;
   const session = {
     requestIds: ['request-1', 'request-2'],
@@ -217,8 +217,17 @@ test('service diagnostics wait for every run-owned request before checking secre
   assert.deepEqual(await verifyDiagnosticRedaction(session), {
     records: 2,
     scannedRequestIds: 2,
+    missingRequestIds: 0,
   });
   assert.equal(reads, 2);
+
+  session.requestIds = ['request-1', 'request-2'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'POST' }];
+  assert.deepEqual(await verifyDiagnosticRedaction(session, { settleMs: 0 }), {
+    records: 1,
+    scannedRequestIds: 1,
+    missingRequestIds: 1,
+  });
 
   session.requestIds = ['request-1'];
   session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
