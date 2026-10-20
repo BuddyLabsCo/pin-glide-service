@@ -18,13 +18,13 @@ test('the disposable loader applies release and pin_glide as separate target sch
   assert.deepEqual(applies.map((call) => call.config), ['target_schema: release\n', 'target_schema: pin_glide\n']);
   assert.deepEqual(applies.map((call) => call.sql), ['CREATE SCHEMA release;\n', 'CREATE SCHEMA pin_glide;\n']);
   assert.ok(applies.every((call) => call.args.includes('pin_glide')), result.stderr);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 for (const [failure, code] of [['apply', 43], ['child', 17]]) {
   test(`the disposable loader preserves ${failure} failure and removes its container`, (t) => {
     const f = fixture(t), result = f.run('bash', ['scripts/db/psqldef.sh', 'bash', '-c', 'exit 17'], { TOOL_FAIL: failure });
     assert.equal(result.status, code, result.stderr);
-    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
   });
 }

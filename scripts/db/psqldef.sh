@@ -10,7 +10,8 @@ fi
 tmp="$(mktemp -d)"
 postgres=""
 cleanup() {
-  if [[ -n "$postgres" ]]; then docker rm -f "$postgres" >/dev/null 2>&1 || true; fi
+  # Explicit removal must also remove the image-declared anonymous data volume.
+  if [[ -n "$postgres" ]]; then docker rm -f -v "$postgres" >/dev/null 2>&1 || true; fi
   rm -rf "$tmp"
 }
 trap cleanup EXIT
