@@ -97,10 +97,18 @@ export async function expectRelay(socket, pairing, side, payload) {
   return frame;
 }
 
+async function nextPairingState(socket, pairing) {
+  const frame = await socket.next().then(message => message.json);
+  if (frame?.type !== 'pairing_state' || frame.session?.sessionId !== pairing.sessionID) {
+    throw new Error('Pairing channel did not publish its own pairing_state');
+  }
+  return frame.session;
+}
+
 export async function expectCredentialReady(socket, pairing) {
-  const senderState = (await socket.next()).json?.session;
-  const receiverState = (await socket.next()).json?.session;
-  const frame = (await socket.next()).json;
+  const senderState = await nextPairingState(socket, pairing);
+  const receiverState = await nextPairingState(socket, pairing);
+  const frame = await socket.next().then(message => message.json);
   if (
     senderState?.state !== 'awaiting_confirmation'
     || !senderState.senderConfirmed
