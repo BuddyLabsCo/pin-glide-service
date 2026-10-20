@@ -13,7 +13,7 @@ function limitProblem(outcome) {
 
 export async function exerciseCapacity(session) {
   const reservations = [];
-  for (let index = 0; index < 5; index++) {
+  for (let index = 0; index < 4; index++) {
     const created = await session.createPairingSession({ mode: 'new_receiver' });
     reservations.push(await session.claimPairing('pair1', created));
   }
@@ -25,9 +25,12 @@ export async function exerciseCapacity(session) {
   const concurrentOutcomes = await Promise.all(
     concurrent.map(created => settle(session.claimPairing('pair1', created))),
   );
-  if (!concurrentOutcomes.every(limitProblem)) {
-    throw new Error('Concurrent sixth-distinct-Receiver claims were not both refused');
+  const admittedIndex = concurrentOutcomes.findIndex(outcome => outcome.value);
+  const refusedIndex = concurrentOutcomes.findIndex(limitProblem);
+  if (admittedIndex < 0 || refusedIndex < 0 || admittedIndex === refusedIndex) {
+    throw new Error('Concurrent sixth-distinct-Receiver admission did not accept exactly one claim');
   }
+  const fifth = concurrentOutcomes[admittedIndex].value;
 
   const canceled = await session.request({
     method: 'DELETE',
@@ -35,7 +38,7 @@ export async function exerciseCapacity(session) {
     token: session.token('pair1', 'user_session'),
   });
   if (canceled.status !== 204) throw new Error(`Pending reservation cancellation returned ${canceled.status}`);
-  const afterCancel = await session.claimPairing('pair1', concurrent[0]);
+  const afterCancel = await session.claimPairing('pair1', concurrent[refusedIndex]);
 
   const activated = reservations[1];
   const senderReport = await session.completePairingSide('pair1', activated);
@@ -72,13 +75,27 @@ export async function exerciseCapacity(session) {
     'receiver_limit_reached',
   );
 
+  const lapsed = await session.createPairingSession({ mode: 'new_receiver' });
   await expirePairingSession(session, reservations[2].sessionID);
   const afterExpiry = await session.claimPairing('pair1', sixth);
+  const afterExpiryFull = await session.expectProblem(
+    {
+      method: 'POST',
+      path: `/v1/pairing-sessions/${encodeURIComponent(lapsed.sessionID)}/authorize`,
+      token: session.token('pair1', 'user_session'),
+      body: {},
+    },
+    409,
+    'receiver_limit_reached',
+  );
 
   return {
     reservations: {
       initialDistinct: reservations.length,
-      concurrentSixth: concurrentOutcomes.map(outcome => outcome.error.code),
+      concurrentSixth: {
+        admitted: fifth.pairingID,
+        refused: refused[0].error.code,
+      },
       canceledReleased: afterCancel.pairingID,
       expiredReleased: afterExpiry.pairingID,
     },
@@ -88,6 +105,7 @@ export async function exerciseCapacity(session) {
       state: pendingReplacement.state,
     },
     stillFull,
+    afterExpiryFull,
     credentialIssue: { receiverId: issued.receiverId, issued: true },
   };
 }
