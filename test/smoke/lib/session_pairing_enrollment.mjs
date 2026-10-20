@@ -161,6 +161,7 @@ export async function enrollReceiver(session, context) {
       label,
       claimed,
       'credential_ready',
+      repeatedSenderReport,
     );
     if (oneReport.state !== 'awaiting_confirmation' || !oneReport.senderConfirmed || oneReport.receiverConfirmed) {
       throw new Error('One authenticated completion report activated the Pairing');
@@ -174,9 +175,9 @@ export async function enrollReceiver(session, context) {
 
     const operationID = session.newOperationID('receiver-issuance');
     const rejectedRedemptions = {};
-    for (const [name, token] of [
-      ['crossSession', other.token],
-      ['management', session.token(label, 'user_session')],
+    for (const [name, token, rejectedOperationID] of [
+      ['crossSession', other.token, session.newOperationID('cross-session-issuance')],
+      ['management', session.token(label, 'user_session'), operationID],
     ]) {
       rejectedRedemptions[name] = await session.expectProblem(
         {
@@ -184,7 +185,7 @@ export async function enrollReceiver(session, context) {
           path: `/v1/pairing-sessions/${encodeURIComponent(created.sessionID)}/receiver-token`,
           token,
           body: {
-            operationId: session.newOperationID(`${name}-issuance`),
+            operationId: rejectedOperationID,
             attempt: 0,
           },
         },

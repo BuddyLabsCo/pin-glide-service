@@ -99,15 +99,20 @@ export async function expectRelay(socket, pairing, side, payload) {
 
 export async function expectPairingStates(socket, pairing, states) {
   const received = [];
-  for (const expected of states) {
+  for (let index = 0; index < states.length;) {
     const frame = (await socket.next()).json;
     if (frame?.type !== 'pairing_state' || frame.session?.sessionId !== pairing.sessionID) {
       throw new Error('Pairing channel did not publish its own pairing_state');
     }
-    if (frame.session.state !== expected) {
-      throw new Error(`Pairing channel published ${frame.session.state}, expected ${expected}`);
+    if (frame.session.state === states[index]) {
+      received.push(frame.session);
+      index++;
+      continue;
     }
-    received.push(frame.session);
+    if (index > 0 && frame.session.state === states[index - 1]) {
+      continue;
+    }
+    throw new Error(`Pairing channel published ${frame.session.state}, expected ${states[index]}`);
   }
   return received;
 }
@@ -135,8 +140,14 @@ export async function expectCredentialReady(socket, pairing) {
   return frame;
 }
 
-export async function completePairingReports(session, label, pairing, receiverState = 'completed') {
-  const sender = await session.completePairingSide(label, pairing);
+export async function completePairingReports(
+  session,
+  label,
+  pairing,
+  receiverState = 'completed',
+  reportedSender,
+) {
+  const sender = reportedSender || await session.completePairingSide(label, pairing);
   if (sender.state !== 'awaiting_confirmation' || !sender.senderConfirmed || sender.receiverConfirmed) {
     throw new Error('One authenticated report activated the Pairing');
   }
