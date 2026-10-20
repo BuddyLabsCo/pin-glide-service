@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { summarizeCompose } from './lib/installation.mjs';
 import { TARGET } from './lib/target.mjs';
-import { parseArguments, rewriteCompose } from './published-install.mjs';
+import { cleanupInstallations, parseArguments, rewriteCompose } from './published-install.mjs';
 
 function composeFixture(version = '1.2.3') {
   return {
@@ -109,4 +112,24 @@ test('published installation Compose keeps release tags but removes host-wide re
   assert.equal(config.services['db-tools'].volumes, undefined);
   assert.deepEqual(config.services.postgres.volumes, ['database:/var/lib/postgresql']);
   assert.deepEqual(Object.keys(config.volumes), ['database']);
+});
+
+test('failed installation cleanup retains the project files needed to retry', async t => {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-glide-cleanup-test-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(work, '.env'), 'RELEASE=1.2.3\n');
+  fs.writeFileSync(path.join(work, 'compose.yaml'), '{}\n');
+  const errors = await cleanupInstallations({
+    installations: [{
+      directory: work,
+      async run() {
+        throw new Error('compose down failed');
+      },
+    }],
+    work,
+    env: {},
+  });
+  assert.equal(errors.length, 1);
+  assert.equal(fs.existsSync(path.join(work, '.env')), true);
+  assert.equal(fs.existsSync(path.join(work, 'compose.yaml')), true);
 });

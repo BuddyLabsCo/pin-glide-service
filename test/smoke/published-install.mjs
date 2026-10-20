@@ -215,9 +215,14 @@ async function publishedOrigin(version, run, env) {
     '--json',
     'tagName,isDraft,isPrerelease',
   ], { env, timeoutMs: 30_000 });
-  const metadata = JSON.parse(result.stdout);
+  let metadata;
+  try {
+    metadata = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new SmokeValidationError(new Error(`Upgrade origin v${version} metadata is invalid: ${error.message}`));
+  }
   if (metadata.tagName !== `v${version}` || metadata.isDraft || metadata.isPrerelease) {
-    throw new Error(`Upgrade origin v${version} is not a published stable release`);
+    throw new SmokeValidationError(new Error(`Upgrade origin v${version} is not a published stable release`));
   }
   const commit = (await run('gh', [
     'api',
@@ -226,6 +231,36 @@ async function publishedOrigin(version, run, env) {
     '.sha',
   ], { env, timeoutMs: 30_000 })).stdout.trim();
   return commit;
+}
+
+export async function cleanupInstallations({ installations, work, env }) {
+  const errors = [];
+  for (const installation of [...installations].reverse()) {
+    try {
+      await installation.run('docker', [
+        'compose',
+        '--env-file',
+        '.env',
+        '-f',
+        'compose.yaml',
+        'down',
+        '--volumes',
+        '--remove-orphans',
+        '--timeout',
+        '10',
+      ], { cwd: installation.directory, env, timeoutMs: 120_000 });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 0) {
+    try {
+      fs.rmSync(work, { recursive: true, force: true });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return errors;
 }
 
 async function integration({ options, release, originCommit, evidence, env, run }) {
@@ -257,30 +292,9 @@ async function integration({ options, release, originCommit, evidence, env, run 
     throw error;
   }
   const installations = [];
-  const cleanup = async () => {
-    const errors = [];
-    for (const installation of installations.reverse()) {
-      try {
-        await installation.run('docker', [
-          'compose',
-          '--env-file',
-          '.env',
-          '-f',
-          'compose.yaml',
-          'down',
-          '--volumes',
-          '--remove-orphans',
-          '--timeout',
-          '10',
-        ], { cwd: installation.directory, env, timeoutMs: 120_000 });
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    return errors;
-  };
 
   try {
+    try {
     const freshProject = `pin-glide-published-fresh-${randomBytes(6).toString('hex')}`;
     const fresh = await createInstallation({
       directory: path.join(work, freshProject),
@@ -307,7 +321,25 @@ async function integration({ options, release, originCommit, evidence, env, run 
         assets: release.assets,
       },
     });
+    } catch (error) {
+      evidence.record({
+        scenario: 'published fresh installation',
+        status: 'failed',
+        details: {
+          release: options.to,
+          sourceCommit: release.sourceCommit,
+          reason: error.message,
+        },
+      });
+      evidence.record({
+        scenario: `published declared upgrade ${options.from} to ${options.to}`,
+        status: 'blocked',
+        details: { reason: 'the fresh installation did not complete' },
+      });
+      throw error;
+    }
 
+    try {
     const upgradeProject = `pin-glide-published-upgrade-${randomBytes(6).toString('hex')}`;
     const upgrade = await createInstallation({
       directory: path.join(work, upgradeProject),
@@ -343,10 +375,24 @@ async function integration({ options, release, originCommit, evidence, env, run 
         assets: release.assets,
       },
     });
+    } catch (error) {
+      evidence.record({
+        scenario: `published declared upgrade ${options.from} to ${options.to}`,
+        status: 'failed',
+        details: {
+          origin: options.from,
+          originCommit,
+          release: options.to,
+          sourceCommit: release.sourceCommit,
+          reason: error.message,
+        },
+      });
+      throw error;
+    }
   } catch (error) {
     failure = error;
   } finally {
-    const cleanupErrors = await cleanup();
+    const cleanupErrors = await cleanupInstallations({ installations, work, env });
     if (cleanupErrors.length > 0) {
       failure = failure
         ? new AggregateError(
@@ -354,8 +400,6 @@ async function integration({ options, release, originCommit, evidence, env, run 
           `Published installation and cleanup both failed; retained ${work}`,
         )
         : new AggregateError(cleanupErrors, `Published installation cleanup failed; retained ${work}`);
-    } else {
-      fs.rmSync(work, { recursive: true, force: true });
     }
   }
   if (failure) throw failure;
@@ -382,7 +426,9 @@ async function main(argv = process.argv.slice(2)) {
       run: (command, args, runOptions = {}) => runProcess(command, args, { ...runOptions, env }),
     });
     if (!release.origins[options.to].includes(options.from)) {
-      throw new Error(`${options.from} is not a declared supported origin for ${options.to}`);
+      throw new SmokeValidationError(
+        new Error(`${options.from} is not a declared supported origin for ${options.to}`),
+      );
     }
     const originCommit = await publishedOrigin(options.from, runProcess, env);
     prerequisitesPassed = true;
