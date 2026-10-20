@@ -19,11 +19,17 @@ const wssNames = {
   pairingRelayOut: 'pairing_relay',
   credentialReady: 'credential_ready',
   pairingRemoved: 'pairing_removed',
-  deviceRevoked: 'device_revoked',
   delivery: 'delivery',
   receipt: 'receipt',
   error: 'error',
 };
+
+// The published close meanings are the authority for what a connection must
+// send, so scenarios assert against them rather than a second copy.
+export const closeMeaning = Object.fromEntries(
+  [...asyncapiText.matchAll(/- code: (\d+)\s*\n\s+description: [^\n]*\n\s+reason: ?"?([^"\n]*)"?/g)]
+    .map(match => [Number(match[1]), match[2]]),
+);
 
 function operationIdentity(name) {
   if (!openapiText.includes(`operationId: ${name}`)) {

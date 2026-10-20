@@ -1,14 +1,15 @@
-import { renderInvalidateReceiverCredentialSQL } from './fixtures.mjs';
+import { renderInvalidateReceiverCredentialSQL } from './receiver_fixtures.mjs';
 import { pairReceiver } from './session_pairing_helpers.mjs';
 import {
+  closeMeaning,
   expectNoFrame,
   openDelivery,
   receiverCredentialFacts,
   waitForPresence,
 } from './session_pairing_support.mjs';
 import {
-  closeMeaning,
   deliverOnce,
+  presenceWait,
   rejectedUpgrade,
   waitForHealth,
   withApiRestart,
@@ -30,10 +31,7 @@ export async function issuanceGeneration(session) {
 
   const socket = await openDelivery(session, current.receiverToken);
   try {
-    const online = await waitForPresence(session, 'receiver-shared', claimed.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    const online = await waitForPresence(session, 'receiver-shared', claimed.pairingID, 'online', presenceWait);
     return {
       receiverId: current.receiverId,
       operationId: operationID,
@@ -43,10 +41,7 @@ export async function issuanceGeneration(session) {
     };
   } finally {
     await socket.close();
-    await waitForPresence(session, 'receiver-shared', claimed.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-shared', claimed.pairingID, 'offline', presenceWait);
   }
 }
 
@@ -55,10 +50,7 @@ export async function invalidatedGeneration(session) {
   const unaffected = await pairReceiver(session, 'receiver-shared');
   const unaffectedSocket = await openDelivery(session, unaffected.receiverToken);
   try {
-    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'online', presenceWait);
     await session.remote.sql(
       renderInvalidateReceiverCredentialSQL(session.plan, invalidated.receiverID),
     );
@@ -70,16 +62,10 @@ export async function invalidatedGeneration(session) {
     if (facts.current !== 0) throw new Error('Receiver credential invalidation left a current generation');
     await expectNoFrame(unaffectedSocket, 'invalidating another Receiver disturbed this connection');
     await unaffectedSocket.close();
-    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'offline', presenceWait);
     const reauthorized = await openDelivery(session, unaffected.receiverToken);
     try {
-      await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'online', {
-        attempts: 50,
-        intervalMs: 200,
-      });
+      await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'online', presenceWait);
       await expectNoFrame(reauthorized, 'invalidating another Receiver revoked its credential');
     } finally {
       await reauthorized.close();
@@ -96,20 +82,14 @@ export async function invalidatedGeneration(session) {
     };
   } finally {
     await unaffectedSocket.close();
-    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-shared', unaffected.pairingID, 'offline', presenceWait);
   }
 }
 
 export async function restartAndReconnect(session, pairing) {
   const socket = await openDelivery(session, pairing.receiverToken);
   try {
-    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
     const delivered = await deliverOnce(session, 'receiver-main', pairing, socket, 'restart-replay');
     let shutdown;
     await withApiRestart(session.remote, async () => {
@@ -127,10 +107,7 @@ export async function restartAndReconnect(session, pairing) {
 
     const reconnected = await openDelivery(session, pairing.receiverToken);
     try {
-      const online = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', {
-        attempts: 50,
-        intervalMs: 200,
-      });
+      const online = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
       if (!(Date.parse(online.stateChangedAt) > Date.parse(offline.stateChangedAt))) {
         throw new Error('reconnect did not publish a later online state');
       }
@@ -138,10 +115,7 @@ export async function restartAndReconnect(session, pairing) {
     } finally {
       await reconnected.close();
     }
-    const finalOffline = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    const finalOffline = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', presenceWait);
     return {
       shutdown,
       offline: offline.stateChangedAt,
@@ -157,17 +131,16 @@ export async function restartAndReconnect(session, pairing) {
 
 export async function heartbeatLoss(session) {
   const paired = await pairReceiver(session, 'receiver-other');
-  const connectedAt = Date.now();
   const socket = await session.openSocket({
     path: '/v1/receiver/events',
     token: paired.receiverToken,
     answerPings: false,
   });
+  // The service starts its heartbeat at the committed upgrade, so the
+  // measurement begins when the 101 reaches this peer.
+  const connectedAt = Date.now();
   try {
-    await waitForPresence(session, 'receiver-other', paired.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-other', paired.pairingID, 'online', presenceWait);
     const offline = await waitForPresence(session, 'receiver-other', paired.pairingID, 'offline', {
       attempts: 180,
       intervalMs: 250,
@@ -185,10 +158,7 @@ export async function heartbeatLoss(session) {
 
     const reconnected = await openDelivery(session, paired.receiverToken);
     try {
-      const online = await waitForPresence(session, 'receiver-other', paired.pairingID, 'online', {
-        attempts: 50,
-        intervalMs: 200,
-      });
+      const online = await waitForPresence(session, 'receiver-other', paired.pairingID, 'online', presenceWait);
       if (!(Date.parse(online.stateChangedAt) > Date.parse(offline.stateChangedAt))) {
         throw new Error('heartbeat reconnect did not publish a later online state');
       }

@@ -231,7 +231,9 @@ class WebSocketPeer {
     this.socket.end();
     const timer = setTimeout(() => {
       this.socket.destroy();
-      this.finish({ code, reason });
+      // A peer that never answers the Close handshake is an abnormal end, not
+      // confirmation that it accepted our code.
+      this.finish({ code: 1006, reason: 'close handshake timed out' });
     }, 1_000);
     timer.unref();
     return this.closeEvent;

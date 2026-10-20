@@ -361,7 +361,7 @@ async function runSeededJourneys({ session, plan }) {
   return {
     credentials: await runSenderCredentialScenarios({ session, plan }),
     pairing: await runPairingScenarios(session),
-    receiver: await runReceiverScenarios(session),
+    receiver: await runReceiverScenarios(session, { root }),
   };
 }
 

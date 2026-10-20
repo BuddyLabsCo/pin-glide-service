@@ -1,12 +1,14 @@
 import { settle } from './session_credential_support.mjs';
 import {
+  closeMeaning,
   expectNoFrame,
   openDelivery,
   waitForPresence,
 } from './session_pairing_support.mjs';
 import {
-  closeMeaning,
   expectedProblem,
+  exactProblem,
+  presenceWait,
   refusal,
   rejectedUpgrade,
   sharedPresence,
@@ -40,12 +42,41 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     path: '/v1/receiver/events',
     token: session.token('receiver-main', 'refresh'),
   }, 401, 'credential_invalid');
-  const foreignTarget = await session.expectProblem(
+  const managementSurface = await exactProblem(
+    session,
+    { path: '/v1/self/receivers', token: primaryToken },
+    401,
+    'credential_invalid',
+  );
+  const uploadSurface = await exactProblem(
+    session,
+    {
+      method: 'POST',
+      path: '/v1/messages',
+      token: primaryToken,
+      body: { messageId: session.newOperationID('receiver-upload-scope'), items: [] },
+    },
+    401,
+    'credential_invalid',
+  );
+  const foreignTarget = await exactProblem(
+    session,
     {
       method: 'POST',
       path: '/v1/pairing-sessions',
       token: primaryToken,
       body: { mode: 'add_sender', receiverId: unrelated.receiverID },
+    },
+    404,
+    'resource_not_found',
+  );
+  const foreignSender = await exactProblem(
+    session,
+    {
+      method: 'POST',
+      path: '/v1/pairing-sessions',
+      token: unrelated.receiverToken,
+      body: { mode: 'add_sender', receiverId: primary.receiverID },
     },
     404,
     'resource_not_found',
@@ -56,7 +87,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     const online = await sharedPresence(session, {
       'receiver-main': primary.pairingID,
       'receiver-shared': shared.pairingID,
-    }, 'online', { attempts: 50, intervalMs: 200 });
+    }, 'online', presenceWait);
     if (online['receiver-main'].stateChangedAt !== online['receiver-shared'].stateChangedAt) {
       throw new Error('same-Account Pairings reported different presence for one Receiver');
     }
@@ -76,10 +107,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     const unrelatedSocket = await openDelivery(session, unrelated.receiverToken);
     let unrelatedOnline;
     try {
-      unrelatedOnline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'online', {
-        attempts: 50,
-        intervalMs: 200,
-      });
+      unrelatedOnline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'online', presenceWait);
       const sharedStillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online');
       if (unrelatedOnline.presence !== 'online' || sharedStillOnline.presence !== 'online') {
         throw new Error('one Receiver context failed to report its own online presence');
@@ -88,10 +116,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     } finally {
       await unrelatedSocket.close();
     }
-    const unrelatedOffline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    const unrelatedOffline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'offline', presenceWait);
     if (!(Date.parse(unrelatedOffline.stateChangedAt) > Date.parse(unrelatedOnline.stateChangedAt))) {
       throw new Error('unrelated Receiver offline stateChangedAt did not follow its online state');
     }
@@ -103,7 +128,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
   const offline = await sharedPresence(session, {
     'receiver-main': primary.pairingID,
     'receiver-shared': shared.pairingID,
-  }, 'offline', { attempts: 50, intervalMs: 200 });
+  }, 'offline', presenceWait);
   if (offline['receiver-main'].stateChangedAt !== offline['receiver-shared'].stateChangedAt) {
     throw new Error('closing the shared Receiver left inconsistent presence');
   }
@@ -116,7 +141,10 @@ export async function receiverSurface(session, primary, shared, unrelated) {
       wrongProtocol,
       wrongScopeManagement,
       wrongScopeRefresh,
+      managementSurface,
+      uploadSurface,
       foreignTarget,
+      foreignSender,
     },
     online: {
       primary: online['receiver-main'].stateChangedAt,
@@ -145,41 +173,42 @@ export async function concurrentUpgrade(session, pairing) {
     await Promise.allSettled(outcomes.map(outcome => outcome.value?.close()));
     throw new Error('concurrent Receiver upgrades did not admit exactly one connection');
   }
+  let online;
+  let duplicate;
   try {
-    const online = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
-    return {
-      admitted: 1,
-      refused: refusal(refused[0].error),
-      stateChangedAt: online.stateChangedAt,
-    };
+    online = await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
+    duplicate = refusal(refused[0].error);
   } finally {
     await admitted[0].value.close();
-    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', presenceWait);
   }
+  // The refused handshake must not have kept a reservation: once the admitted
+  // connection closes, the same credential can take the slot again.
+  const next = await openDelivery(session, pairing.receiverToken);
+  try {
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
+  } finally {
+    await next.close();
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', presenceWait);
+  }
+  return {
+    admitted: 1,
+    refused: duplicate,
+    stateChangedAt: online.stateChangedAt,
+    failedUpgradeReleasedSlot: true,
+  };
 }
 
 async function closeByFrame(session, pairing, send, code, reason) {
   const socket = await openDelivery(session, pairing.receiverToken);
   try {
-    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
     send(socket);
     const closed = await socket.waitForClose(5_000);
     if (closed.code !== code || closed.reason !== reason) {
       throw new Error(`Receiver frame closed with ${closed.code} ${closed.reason}, expected ${code} ${reason}`);
     }
-    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', presenceWait);
     return { code: closed.code, reason: closed.reason };
   } finally {
     await socket.close();
@@ -215,6 +244,13 @@ export async function frameClosures(session, pairing) {
     1002,
     closeMeaning[1002],
   );
+  const malformedJson = await closeByFrame(
+    session,
+    pairing,
+    socket => socket.sendText('{"version":1,"type":"receipt"'),
+    1002,
+    closeMeaning[1002],
+  );
   const invalidEncoding = await closeByFrame(
     session,
     pairing,
@@ -225,10 +261,7 @@ export async function frameClosures(session, pairing) {
 
   const tolerant = await openDelivery(session, pairing.receiverToken);
   try {
-    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', {
-      attempts: 50,
-      intervalMs: 200,
-    });
+    await waitForPresence(session, 'receiver-main', pairing.pairingID, 'online', presenceWait);
     tolerant.sendJSON({
       version: 1,
       type: 'receipt',
@@ -243,16 +276,14 @@ export async function frameClosures(session, pairing) {
       throw new Error(`normal Receiver close reported ${normal.code} ${normal.reason}`);
     }
   }
-  await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', {
-    attempts: 50,
-    intervalMs: 200,
-  });
+  await waitForPresence(session, 'receiver-main', pairing.pairingID, 'offline', presenceWait);
 
   return {
     missingCorrelation,
     unknownType,
     wrongVersion,
     binary,
+    malformedJson,
     invalidEncoding,
     normalClose: 1000,
     unknownFieldTolerated: true,

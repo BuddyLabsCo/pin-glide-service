@@ -1,17 +1,16 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import {
-  createFixturePlan,
-  renderInvalidateReceiverCredentialSQL,
-} from './lib/fixtures.mjs';
-import { SmokeProblem } from './lib/http.mjs';
+import { createFixturePlan } from './lib/fixtures.mjs';
+import { renderInvalidateReceiverCredentialSQL } from './lib/receiver_fixtures.mjs';
+import { SmokeBlocked, SmokeProblem } from './lib/http.mjs';
 import { runProtocolScenario } from './lib/session_pairing_support.mjs';
 import {
-  deterministicEvidence,
   deliverOnce,
+  deterministicTestReferences,
   expectedProblem,
+  parseRanTests,
+  runDeterministicTests,
   withApiRestart,
 } from './lib/session_receiver_support.mjs';
 import { TARGET } from './lib/target.mjs';
@@ -150,12 +149,50 @@ test('a live delivery is correlated and acknowledged before its replay check', a
   }]);
 });
 
-test('deterministic evidence names tests that still exist at their stated level', () => {
-  for (const item of deterministicEvidence) {
-    assert.match(item.level, /^(unit|integration)$/);
-    const source = readFileSync(new URL(`../../${item.source}`, import.meta.url), 'utf8');
-    assert(source.includes(`func ${item.test}(`), `${item.test} is missing from ${item.source}`);
-  }
+test('deterministic evidence requires every referenced test to have passed', () => {
+  const references = deterministicTestReferences.filter(item => item.level === 'unit');
+  const output = references.map(item => `--- PASS: ${item.test} (0.00s)`).join('\n');
+  assert.deepEqual(parseRanTests(output, references), references.map(item => item.test));
+  assert.throws(
+    () => parseRanTests(output.replace(references[0].test, 'TestSomethingElse'), references),
+    new RegExp(references[0].test),
+  );
+});
+
+test('deterministic tests run once over the referenced packages', async () => {
+  const references = deterministicTestReferences.filter(item => item.level === 'unit');
+  const calls = [];
+  const outcome = await runDeterministicTests('/repository', references, async (command, args, options) => {
+    calls.push({ command, args, options });
+    return { stdout: references.map(item => `--- PASS: ${item.test} (0.00s)`).join('\n') };
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'go');
+  assert.equal(calls[0].options.cwd, '/repository');
+  assert.equal(calls[0].args[calls[0].args.indexOf('-run') + 1], `^(${references.map(item => item.test).join('|')})$`);
+  assert.deepEqual(outcome.packages, ['./internal/api/wss']);
+});
+
+test('a missing Go toolchain blocks rather than fails the deterministic check', async () => {
+  const references = deterministicTestReferences.filter(item => item.level === 'unit');
+  await assert.rejects(
+    () => runDeterministicTests('/repository', references, async () => {
+      const error = new Error('spawn go ENOENT');
+      error.code = 'ENOENT';
+      throw error;
+    }),
+    error => error instanceof SmokeBlocked,
+  );
+});
+
+test('unavailable Docker blocks the deterministic integration checks', async () => {
+  const references = deterministicTestReferences.filter(item => item.level === 'integration');
+  await assert.rejects(
+    () => runDeterministicTests('/repository', references, async () => {
+      throw new Error('Cannot connect to the Docker daemon');
+    }),
+    error => error instanceof SmokeBlocked && /Docker/.test(error.message),
+  );
 });
 
 test('Receiver evidence maps published HTTP operations and WSS messages', async () => {

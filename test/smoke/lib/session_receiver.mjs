@@ -12,12 +12,13 @@ import {
   restartAndReconnect,
 } from './session_receiver_faults.mjs';
 import {
-  deterministicEvidence,
   pairingHTTP,
   receiverHTTP,
+  runDeterministicTests,
+  deterministicTestReferences,
 } from './session_receiver_support.mjs';
 
-export async function runReceiverScenarios(session) {
+export async function runReceiverScenarios(session, { root, runDeterministic = runDeterministicTests } = {}) {
   const primary = await pairReceiver(session, 'receiver-main');
   const shared = await addSenderToReceiver(session, 'receiver-shared', primary);
   const unrelated = await pairReceiver(session, 'receiver-other');
@@ -25,7 +26,7 @@ export async function runReceiverScenarios(session) {
   scenarios.push(await runProtocolScenario(
     session,
     'Receiver credential scope, one-slot exclusivity and presence isolation',
-    { http: ['PostPairingSessions', 'GetSelfReceivers'], wss: [] },
+    { http: ['PostPairingSessions', 'GetSelfReceivers', 'PostMessages'], wss: [] },
     () => receiverSurface(session, primary, shared, unrelated),
   ));
   scenarios.push(await runProtocolScenario(
@@ -36,7 +37,7 @@ export async function runReceiverScenarios(session) {
   ));
   scenarios.push(await runProtocolScenario(
     session,
-    'post-upgrade type, version, binary and encoding failures close and release the slot',
+    'post-upgrade type, version, malformed, binary and encoding failures close and release the slot',
     { http: receiverHTTP, wss: ['receipt'] },
     () => frameClosures(session, primary),
   ));
@@ -64,23 +65,28 @@ export async function runReceiverScenarios(session) {
     { http: pairingHTTP, wss: [] },
     () => heartbeatLoss(session),
   ));
+  // Deterministic evidence runs last, so a failure here cannot hide the live
+  // observations already recorded.
+  const deterministic = await runDeterministic(root, deterministicTestReferences);
   return {
     scenarios,
     requests: session.requestIds.length,
     receivers: session.receivers.size,
     policyClose: {
-      status: 'not_run',
-      reason: 'owner recovery and global Receiver revocation are explicit smoke exclusions',
-      deterministicEvidence: deterministicEvidence
+      live: 'not_run',
+      reason: 'a live 1008 needs a generation change after possession, which only excluded owner recovery or global Receiver revocation performs',
+      deterministic: 'passed',
+      tests: deterministicTestReferences
         .filter(item => /policy|generation|old close/i.test(item.observes))
         .map(item => item.test),
     },
     recoverableBusinessError: {
-      status: 'passed',
+      status: 'not_applicable',
       channel: 'pairing',
       liveScenario: 'new Receiver enrollment, opaque relay, reconnect and first credential',
       observes: 'pairing_not_ready frame with requestId and detail; the Receiver direction has no recoverable frame',
     },
-    deterministicEvidence,
+    deterministic,
+    deterministicTestReferences,
   };
 }

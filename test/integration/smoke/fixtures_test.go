@@ -220,6 +220,7 @@ func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 	script := `
 import { pathToFileURL } from 'node:url';
 const fixtures = await import(pathToFileURL(process.env.FIXTURES).href);
+const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURES).href);
 const remote = await import(pathToFileURL(process.env.REMOTE).href);
 const plan = fixtures.createFixturePlan({
   runId: 'integration-fixture',
@@ -242,7 +243,7 @@ process.stdout.write(JSON.stringify({
   expireParent: fixtures.renderExpireRefreshParentSQL(plan, 'scope', 'integration-operation'),
   revokeRegistration: fixtures.renderRevokeSenderRegistrationSQL(plan, 'permanent'),
   supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
-  invalidateReceiver: fixtures.renderInvalidateReceiverCredentialSQL(
+  invalidateReceiver: receiverFixtures.renderInvalidateReceiverCredentialSQL(
     plan, 'smoke-integration-fixture-receiver'),
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
@@ -260,6 +261,7 @@ process.stdout.write(JSON.stringify({
 	command.Dir = root
 	command.Env = append(os.Environ(),
 		"FIXTURES="+filepath.Join(root, "test/smoke/lib/fixtures.mjs"),
+		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/lib/receiver_fixtures.mjs"),
 		"REMOTE="+filepath.Join(root, "test/smoke/lib/remote.mjs"),
 	)
 	output, err := command.CombinedOutput()

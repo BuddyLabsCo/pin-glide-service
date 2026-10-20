@@ -1,5 +1,6 @@
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import { SmokeProblem } from './http.mjs';
+import { runProcess } from './commands.mjs';
+import { SmokeBlocked, SmokeProblem } from './http.mjs';
 import { settle } from './session_credential_support.mjs';
 import { waitForPresence } from './session_pairing_support.mjs';
 
@@ -11,62 +12,113 @@ export const pairingHTTP = [
   'GetSelfReceivers',
 ];
 export const receiverHTTP = ['GetSelfReceivers'];
-export const closeMeaning = {
-  1000: '',
-  1001: 'service_shutdown',
-  1002: 'protocol_error',
-  1007: 'invalid_payload',
-};
-export const deterministicEvidence = [
+// Presence settles asynchronously, so every observation waits up to ten
+// seconds; one constant keeps the receiver scenarios from drifting apart.
+export const presenceWait = { attempts: 50, intervalMs: 200 };
+// References to the Go tests that prove orderings this live path cannot
+// observe. The smoke run executes exactly these tests and records a pass only
+// when each one reports one.
+export const deterministicTestReferences = [
   {
     test: 'TestConcurrentFirstConnectionsAdmitOneReceiver',
     source: 'test/integration/pairing/possession_test.go',
+    package: './test/integration/pairing',
     level: 'integration',
     observes: 'concurrent upgrades admit exactly one 101 and one 409',
   },
   {
     test: 'TestNewerGenerationOwnsPresenceAcrossOldClose',
     source: 'internal/api/wss/receiver_test.go',
+    package: './internal/api/wss',
     level: 'unit',
     observes: 'an old close cannot remove a newer connection or its presence',
   },
   {
     test: 'TestGenerationChangeDuringUpgradePreventsTheConnection',
     source: 'internal/api/wss/receiver_test.go',
+    package: './internal/api/wss',
     level: 'unit',
     observes: 'a generation change cancelling a committing upgrade',
   },
   {
     test: 'TestShutdownEndsAnUpgradeStillCommitting',
     source: 'internal/api/wss/receiver_test.go',
+    package: './internal/api/wss',
     level: 'unit',
     observes: 'shutdown cancelling an upgrade while its final commit is in flight',
   },
   {
     test: 'TestRecoveryRedemptionAndOldUpgradeCommitOneGeneration',
     source: 'test/integration/pairing/recovery_access_test.go',
+    package: './test/integration/pairing',
     level: 'integration',
     observes: 'the excluded recovery race that ordinary smoke cannot observe',
   },
   {
     test: 'TestOwnerRevocationClosesOneReceiverForEverySender',
     source: 'test/integration/pairing/receiver_revocation_test.go',
+    package: './test/integration/pairing',
     level: 'integration',
     observes: 'the excluded owner-revocation control and policy close across shared Pairings',
   },
   {
     test: 'TestReceiverRevocationSerializesWithRedemptionAndUpgrade',
     source: 'test/integration/pairing/receiver_revocation_test.go',
+    package: './test/integration/pairing',
     level: 'integration',
     observes: 'revocation serialized with redemption and an upgrade still committing',
   },
   {
     test: 'TestDeviceRevokedReportsTheControlThenCloses',
     source: 'internal/api/wss/receiver_test.go',
+    package: './internal/api/wss',
     level: 'unit',
     observes: 'the excluded policy close that ends a revoked Receiver',
   },
 ];
+
+// parseRanTests requires a PASS line for every referenced test, so a pattern
+// that silently matched nothing cannot be reported as evidence.
+export function parseRanTests(output, references) {
+  const ran = new Set([...output.matchAll(/^\s*--- PASS: (\w+)/gm)].map(match => match[1]));
+  const missing = references.filter(item => !ran.has(item.test)).map(item => item.test);
+  if (missing.length > 0) {
+    throw new Error(`deterministic Receiver tests did not run: ${missing.join(', ')}`);
+  }
+  return references.map(item => item.test);
+}
+
+// runDeterministicTests executes the referenced Go tests and reports only what
+// actually passed, so the smoke evidence never claims an unexecuted check.
+export async function runDeterministicTests(root, references, run = runProcess) {
+  const pattern = `^(${references.map(item => item.test).join('|')})$`;
+  const packages = [...new Set(references.map(item => item.package))];
+  let result;
+  try {
+    if (references.some(item => item.level === 'integration')) {
+      // The integration harness starts a disposable PostgreSQL container, so a
+      // missing Docker is an unmet prerequisite rather than a failed test.
+      await run('docker', ['version', '--format', '{{.Server.Version}}'], {
+        cwd: root,
+        timeoutMs: 30_000,
+      });
+    }
+  } catch (error) {
+    throw new SmokeBlocked(`deterministic Receiver tests need a working Docker: ${error.message}`);
+  }
+  try {
+    result = await run('go', [
+      'test', '-tags=integration', '-count=1', '-v', '-run', pattern, ...packages,
+    ], { cwd: root, timeoutMs: 1_800_000 });
+  } catch (error) {
+    // A missing toolchain is an unmet prerequisite, not a failed assertion.
+    if (error.code === 'ENOENT') {
+      throw new SmokeBlocked(`deterministic Receiver tests need a Go toolchain: ${error.message}`);
+    }
+    throw error;
+  }
+  return { tests: parseRanTests(result.stdout, references), packages };
+}
 
 export function expectedProblem(status, code) {
   return error => {
@@ -90,6 +142,18 @@ export function refusal(problem) {
     detail: problem.detail,
     requestId: problem.requestId,
   };
+}
+
+// exactProblem requires the same published Problem fields for an ordinary HTTP
+// operation that expectedProblem requires of a refused upgrade.
+export async function exactProblem(session, options, status, code) {
+  try {
+    await session.request(options);
+  } catch (error) {
+    if (!expectedProblem(status, code)(error)) throw error;
+    return refusal(error);
+  }
+  throw new Error(`HTTP request unexpectedly succeeded, expected ${status} ${code}`);
 }
 
 export function delay(milliseconds) {
