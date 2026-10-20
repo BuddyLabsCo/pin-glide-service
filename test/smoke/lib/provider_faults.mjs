@@ -13,13 +13,19 @@ function compose(remote, envFileArgument) {
   ].join(' ');
 }
 
-function watchdogBody(remote) {
+export function watchdogBody(
+  remote,
+  {
+    attempts = watchdogAttempts,
+    intervalSeconds = watchdogIntervalSeconds,
+  } = {},
+) {
   const envFile = `${remote.target.deploymentDir}/.env`;
   return `#!/bin/sh
 guard=$1
 attempt=0
-while [ -e "$guard" ] && [ "$attempt" -lt ${watchdogAttempts} ]; do
-    sleep ${watchdogIntervalSeconds}
+while [ -e "$guard" ] && [ "$attempt" -lt ${attempts} ]; do
+    sleep ${intervalSeconds}
     attempt=$((attempt + 1))
 done
 if [ -e "$guard" ]; then
@@ -28,7 +34,7 @@ if [ -e "$guard" ]; then
     while [ "$attempt" -lt 3 ]; do
         ${compose(remote, quote(envFile))} up -d --no-deps --force-recreate --wait api && break
         attempt=$((attempt + 1))
-        sleep ${watchdogIntervalSeconds}
+        sleep ${intervalSeconds}
     done
 fi
 rm -f "$0"
@@ -54,15 +60,20 @@ umask 077
 temporary=
 guard=
 watchdog=
+fault_active=false
 cleanup() {
     status=$?
     trap - EXIT
-    [ -z "$guard" ] || rm -f -- "$guard"
-    [ -z "$temporary" ] || rm -f -- "$temporary"
-    [ -z "$watchdog" ] || rm -f -- "$watchdog"
     if [ "$status" -ne 0 ]; then
-        ${compose(remote, quote(envFile))} up -d --no-deps --force-recreate --wait api || true
+        if [ "$fault_active" = true ]; then
+            ${compose(remote, quote(envFile))} up -d --no-deps --force-recreate --wait api || true
+        fi
     fi
+    if [ "$status" -eq 0 ]; then
+        [ -z "$watchdog" ] || rm -f -- "$watchdog"
+        [ -z "$guard" ] || rm -f -- "$guard"
+    fi
+    [ -z "$temporary" ] || rm -f -- "$temporary"
     exit "$status"
 }
 trap cleanup EXIT
@@ -78,6 +89,7 @@ if grep -q '^BAILIAN_API_KEY=' "$temporary"; then
 else
     printf '%s\\n' 'BAILIAN_API_KEY=sk-smoke-invalid-parent-key' >> "$temporary"
 fi
+fault_active=true
 ${compose(remote, '"$temporary"')} up -d --no-deps --force-recreate --wait api
 rm -f -- "$temporary"
 trap - EXIT

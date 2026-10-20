@@ -432,6 +432,10 @@ test('the model smoke journey uses normal upload authority and restores every fa
   assert.equal(credentialRequests.length, 2);
   assert.equal(credentialRequests[0].token, 'model-uploader');
   assert.equal(credentialRequests[1].token, 'model-uploader');
+  assert.deepEqual(credentialRequests.map(request => request.path), [
+    '/v1/model/credentials',
+    '/v1/model/credentials',
+  ]);
   assert.equal(faultCount, 4);
   assert.equal(waitedFor, '2026-10-21T00:10:00.000Z');
   assert.deepEqual(secrets, [

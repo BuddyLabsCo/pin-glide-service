@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,7 +8,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { cronCommand, retention } from './lib/database.mjs';
-import { removeHostsLine } from './lib/provider_faults.mjs';
+import { removeHostsLine, watchdogBody } from './lib/provider_faults.mjs';
 import { acquireEnvironmentLock, RemoteEnvironment } from './lib/remote.mjs';
 import { TARGET } from './lib/target.mjs';
 import { verifyRecovery } from './runner.mjs';
@@ -141,6 +141,35 @@ test('the connectivity cleanup removes only its own marker from a hosts file', a
     '127.0.0.1 unrelated # pin-glide-smoke-fault-other',
     '',
   ].join('\n'));
+});
+
+test('the invalid-key watchdog restores the original environment after a crash', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-glide-watchdog-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const composeLog = path.join(directory, 'compose.log');
+  const fake = path.join(directory, 'docker');
+  fs.writeFileSync(fake, `#!/bin/sh
+printf '%s\\n' "$*" >> ${JSON.stringify(composeLog)}
+`, { mode: 0o700 });
+  const guard = path.join(directory, 'guard');
+  fs.writeFileSync(guard, '');
+  const body = watchdogBody(
+    { target: TARGET },
+    { attempts: 1, intervalSeconds: 0.05 },
+  ).replaceAll('docker compose', JSON.stringify(fake));
+  const script = path.join(directory, 'watchdog.sh');
+  fs.writeFileSync(script, body, { mode: 0o700 });
+  const child = spawn(script, [guard], {
+    stdio: 'ignore',
+    env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+  });
+  child.unref();
+
+  for (let attempt = 0; attempt < 20 && fs.existsSync(guard); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(fs.existsSync(guard), false);
+  assert.match(fs.readFileSync(composeLog, 'utf8'), /--env-file \/?srv\/pin-glide-dev\/\.env/);
 });
 
 test('remote SQL is sent through stdin and never embedded in the SSH command', async () => {
