@@ -242,6 +242,14 @@ not execute restore. `--integration-ready` seeds and removes run-owned SQL
 fixtures, verifies their normal M/U/F authority, creates a stopped-writer
 container snapshot, restores it into a disposable database, and writes redacted
 evidence.
+After both releases are published, this command proves fresh installation and
+the declared upgrade with disposable Compose projects and the real release
+images:
+
+```sh
+node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
+```
+
 See `deploy/compose/README.md` for the target guards,
 upgrade-origin rule, evidence and provider-proof exclusions.
 

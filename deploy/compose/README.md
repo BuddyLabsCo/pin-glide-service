@@ -148,6 +148,14 @@ node test/smoke/release-install.mjs --integration-ready
 
 The `--check` mode only verifies prerequisites; it does not run those scenarios. The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The deployed runner validates upgrade origins against GitHub releases.
 
+After both releases are published, exercise a fresh installation of the target and the declared upgrade on disposable local Compose projects with the real release images:
+
+```sh
+node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
+```
+
+This command pulls through the existing workstation Docker credential context and removes both project volumes. Its `--check` mode validates the releases and support declaration without starting containers.
+
 Real QQ/WeChat authorization, fresh-owner Sender security revocation and fresh-owner `recover_receiver` remain outside unattended smoke coverage. Provider integration tests cover those paths without labeling fixtures as real-provider login.
 
 ## Menu and CLI

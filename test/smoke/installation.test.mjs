@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { summarizeCompose } from './lib/installation.mjs';
 import { TARGET } from './lib/target.mjs';
+import { parseArguments, rewriteCompose } from './published-install.mjs';
 
 function composeFixture(version = '1.2.3') {
   return {
@@ -64,4 +65,31 @@ test('the installation summary verifies exact project, port, database and releas
   const unrelated = composeFixture();
   unrelated.services.debug = { image: 'example/debug:latest' };
   assert.throws(() => summarizeCompose(unrelated, TARGET, '1.2.3'), /unrelated service/);
+});
+
+test('published installation arguments require explicit origin and target versions', () => {
+  assert.deepEqual(parseArguments([
+    '--integration-ready',
+    '--from',
+    '0.1.5',
+    '--to',
+    '0.1.6',
+  ]), {
+    mode: 'integration-ready',
+    from: '0.1.5',
+    to: '0.1.6',
+  });
+  assert.throws(() => parseArguments(['--check', '--to', '0.1.6']), /explicit --from/);
+  assert.throws(() => parseArguments(['--check', '--from', 'latest', '--to', '0.1.6']), /X\.Y\.Z/);
+  assert.throws(() => parseArguments(['--check', '--check', '--from', '0.1.5', '--to', '0.1.6']), /exactly one/);
+});
+
+test('published installation Compose keeps release tags but removes host-wide resources', () => {
+  const config = rewriteCompose(composeFixture(), 'pin-glide-published-test');
+  assert.equal(config.name, 'pin-glide-published-test');
+  assert.equal(config.services.api.ports, undefined);
+  assert.equal(config.services.api.image, 'ghcr.io/buddylabsco/pin-glide-api:${RELEASE}');
+  assert.equal(config.services['db-tools'].container_name, 'pin-glide-published-test-db-tools');
+  assert.deepEqual(config.services.postgres.volumes, ['database:/var/lib/postgresql']);
+  assert.deepEqual(Object.keys(config.volumes), ['database']);
 });
