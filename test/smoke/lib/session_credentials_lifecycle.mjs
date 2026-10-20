@@ -214,6 +214,9 @@ export async function ordinaryLogout(session) {
   if (facts.registrationState !== 'active') {
     throw new Error('Ordinary logout permanently closed the Sender registration');
   }
+  if (facts.activeCredentials !== 0) {
+    throw new Error('Ordinary logout left Sender credentials active');
+  }
 
   return {
     pairing: { pairingId: pairing.pairingID, receiverId: pairing.receiverID, state: association.state },
@@ -221,7 +224,11 @@ export async function ordinaryLogout(session) {
     expiredManagement,
     logoutStatus: loggedOut.status,
     afterLogout,
-    durable: { registrationState: facts.registrationState, revokedCredentials: facts.revokedCredentials },
+    durable: {
+      registrationState: facts.registrationState,
+      activeCredentials: facts.activeCredentials,
+      revokedCredentials: facts.revokedCredentials,
+    },
   };
 }
 
@@ -311,6 +318,9 @@ export async function accountSwitch(session) {
   if (receiver !== 'active') throw new Error('Account switch removed the shared Receiver registration');
   if (primaryFacts.registrationState !== 'active') {
     throw new Error('Account switch permanently closed the Sender registration');
+  }
+  if (primaryFacts.activeCredentials !== 0) {
+    throw new Error('Account switch left Sender credentials active');
   }
 
   return {

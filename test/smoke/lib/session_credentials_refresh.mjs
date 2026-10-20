@@ -117,6 +117,7 @@ export async function droppedResponseRecovery(session) {
     dropped: true,
   });
   if (dropped.status !== 200) throw new Error(`Dropped refresh returned ${dropped.status}`);
+  if (dropped.cacheControl !== 'no-store') throw new Error('Dropped refresh response was cacheable');
   if (session.sender('recover').latestRefresh !== undefined) {
     throw new Error('An uncertain refresh response advanced the runner checkpoint');
   }
@@ -357,6 +358,9 @@ export async function refreshLogoutRace(session) {
   const facts = await durableFacts(session, 'race', current ? [operationID] : []);
   if (facts.registrationState !== 'active') {
     throw new Error('Refresh/logout race permanently closed the Sender registration');
+  }
+  if (facts.activeCredentials !== 0) {
+    throw new Error('Refresh/logout race left Sender credentials active');
   }
 
   return {
