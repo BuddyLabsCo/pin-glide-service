@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { runModelScenarios } from './lib/model.mjs';
@@ -189,11 +190,11 @@ test('actual expiry waits for the provider answer without changing clocks', asyn
       current += milliseconds;
     },
   });
-  assert.equal(slept, 2_000);
+  assert.equal(slept, 3_000);
   assert.deepEqual(result, {
     expiresAt: '2026-10-21T00:10:00.000Z',
-    observedAt: '2026-10-21T00:10:01.000Z',
-    waitedMs: 2_000,
+    observedAt: '2026-10-21T00:10:02.000Z',
+    waitedMs: 3_000,
   });
 });
 
@@ -240,6 +241,43 @@ test('controlled model configuration faults always restore the release row', asy
   assert.equal(applied, 2);
 });
 
+test('model configuration restoration uses the release Data Script shape', async () => {
+  const script = `
+import { pathToFileURL } from 'node:url';
+const faults = await import(pathToFileURL(process.env.FAULTS).href);
+const statements = [];
+const remote = {
+  async sql(statement) { statements.push(statement); },
+};
+const model = {
+  id: 'default',
+  workspaceId: 'ws-kea2u5v9va6wsdvh',
+  model: 'qwen3.7-flash',
+  enabled: true,
+};
+const fault = new faults.ModelFaults({ remote, model });
+await fault.withDisabled(async () => {});
+await fault.withMissing(async () => {});
+process.stdout.write(JSON.stringify(statements));
+`;
+  const result = spawnSync('node', ['--input-type=module', '--eval', script], {
+    env: {
+      ...process.env,
+      FAULTS: new URL('./lib/model_faults.mjs', import.meta.url).pathname,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const statements = JSON.parse(result.stdout);
+  assert.equal(statements.length, 4);
+  for (const statement of statements.filter(value => value.includes('INSERT INTO'))) {
+    assert.match(statement, /ON CONFLICT \(id\) DO UPDATE/);
+    assert.match(statement, /'ws-kea2u5v9va6wsdvh'/);
+    assert.match(statement, /'qwen3\.7-flash'/);
+    assert.match(statement, /true/);
+  }
+});
+
 test('the model smoke journey uses normal upload authority and restores every fault', async () => {
   const modelSender = { id: 'sender-model', label: 'model', accountID: 'account-a' };
   const plan = {
@@ -258,6 +296,7 @@ test('the model smoke journey uses normal upload authority and restores every fa
   let faultCount = 0;
   let recoveryIssued = false;
   let expiredInference = false;
+  let recoveryInferences = 0;
   let waitedFor = '';
   const peer = {
     async infer({ apiKey, configuration, sms }) {
@@ -266,6 +305,7 @@ test('the model smoke journey uses normal upload authority and restores every fa
       if (expiredInference) {
         throw new BailianProblem('expired', { status: 401, requestId: 'provider-expired' });
       }
+      if (recoveryIssued) recoveryInferences++;
       if (sms.includes('481927')) return { otp: '481927', requestId: 'provider-otp', finishReason: 'stop' };
       return { otp: null, requestId: 'provider-null', finishReason: 'stop' };
     },
@@ -394,8 +434,15 @@ test('the model smoke journey uses normal upload authority and restores every fa
   assert.equal(credentialRequests[1].token, 'model-uploader');
   assert.equal(faultCount, 4);
   assert.equal(waitedFor, '2026-10-21T00:10:00.000Z');
-  assert.deepEqual(secrets, ['st-smoke-temporary-key', 'st-smoke-temporary-key']);
+  assert.deepEqual(secrets, [
+    '481927',
+    'Pin Glide smoke: your verification code is 481927. Do not share it.',
+    'Pin Glide smoke: this reminder contains no verification code.',
+    'st-smoke-temporary-key',
+    'st-smoke-temporary-key',
+  ]);
   assert.equal(result.messagesUploaded, 0);
+  assert(recoveryInferences >= 1);
   assert.equal(result.expiry.status, 401);
   assert.equal(result.expiry.requestId, 'provider-expired');
   assert.deepEqual(

@@ -17,7 +17,7 @@ const responseFormat = Object.freeze({
 });
 
 export const requestedLifetimeSeconds = 600;
-const minimumLifetimeSeconds = 540;
+const minimumLifetimeSeconds = 590;
 const maximumLifetimeSeconds = requestedLifetimeSeconds + 5;
 
 function exactKeys(value, expected, label) {
@@ -253,7 +253,7 @@ export async function waitForProviderExpiry(
 ) {
   const expiry = Date.parse(expiresAt);
   if (!Number.isFinite(expiry)) throw new Error('Provider expiry is not a timestamp');
-  const target = expiry + 1_000;
+  const target = expiry + 2_000;
   const startedAt = now();
   const remaining = Math.max(0, target - startedAt);
   if (remaining > (maximumLifetimeSeconds + 2) * 1000) {

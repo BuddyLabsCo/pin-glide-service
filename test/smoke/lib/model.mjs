@@ -105,6 +105,7 @@ export async function runModelScenarios({
   let expiry;
   const otpSMS = `Pin Glide smoke: your verification code is ${otp}. Do not share it.`;
   const noOTPSMS = 'Pin Glide smoke: this reminder contains no verification code.';
+  for (const value of [otp, otpSMS, noOTPSMS]) session.addSecret(value);
 
   await runScenario(
     session,
@@ -238,6 +239,14 @@ export async function runModelScenarios({
       ));
       const restoredRow = await readLiveModel(session.remote, model);
       recovered = await issueModelCredential({ session, model, now });
+      const usable = await peer.infer({
+        apiKey: recovered.apiKey,
+        configuration: recovered.configuration,
+        sms: otpSMS,
+      });
+      if (usable.otp !== otp) {
+        throw new Error('The restored temporary key could not perform configured inference');
+      }
       return {
         disabled,
         missing,
@@ -246,6 +255,7 @@ export async function runModelScenarios({
         restoredConfiguration: sameJSON(restoredRow, initialRow),
         parentKeyRestored: true,
         providerReachableAfterFault: true,
+        recoveryInferenceRequestId: usable.requestId,
         recoveryRequestId: recovered.requestId,
       };
     },

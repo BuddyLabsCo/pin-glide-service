@@ -1,3 +1,4 @@
+import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { escapeSQLString } from './fixtures.mjs';
 
 function restoreModelConfiguration(remote, model) {
@@ -20,26 +21,14 @@ ON CONFLICT (id) DO UPDATE
 }
 
 async function withRestoredModelConfiguration(remote, model, apply, callback) {
-  let failure;
-  try {
-    await remote.sql(apply);
-    return await callback();
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    try {
-      await restoreModelConfiguration(remote, model);
-    } catch (cleanupError) {
-      if (failure) {
-        throw new AggregateError(
-          [failure, cleanupError],
-          'Model configuration fault and restoration both failed',
-        );
-      }
-      throw cleanupError;
-    }
-  }
+  return withFailureJoiningCleanup(
+    async () => {
+      await remote.sql(apply);
+      return callback();
+    },
+    () => restoreModelConfiguration(remote, model),
+    'Model configuration fault and restoration both failed',
+  );
 }
 
 export class ModelFaults {

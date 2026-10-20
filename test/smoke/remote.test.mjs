@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { cronCommand, retention } from './lib/database.mjs';
+import { removeHostsLine } from './lib/provider_faults.mjs';
 import { acquireEnvironmentLock, RemoteEnvironment } from './lib/remote.mjs';
 import { TARGET } from './lib/target.mjs';
 import { verifyRecovery } from './runner.mjs';
@@ -59,14 +64,26 @@ test('a timed-out lock acquisition kills the SSH child instead of leaking its lo
 
 test('controlled provider faults restore the original Compose environment and network state', async () => {
   const calls = [];
-  let temporaryEnv = '';
+  const faultPaths = {
+    environment: '/tmp/pin-glide-dev-smoke-bailian.abc123.env',
+    guard: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123',
+    watchdog: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123.sh',
+  };
   const remote = new RemoteEnvironment({
     target: TARGET,
     run: async (command, args) => {
       calls.push({ command, script: args.at(-1) });
-      if (args.at(-1).includes('mktemp') && !temporaryEnv) {
-        temporaryEnv = '/tmp/pin-glide-dev-smoke-bailian.abc123.env';
-        return { stdout: `${temporaryEnv}\n`, stderr: '' };
+      if (args.at(-1).includes('mktemp') && calls.length === 1) {
+        return {
+          stdout: `${faultPaths.environment}|${faultPaths.guard}|${faultPaths.watchdog}\n`,
+          stderr: '',
+        };
+      }
+      if (args.at(-1).includes('docker inspect')) {
+        return {
+          stdout: '["BAILIAN_API_KEY=sk-smoke-invalid-parent-key"]\n',
+          stderr: '',
+        };
       }
       return { stdout: '', stderr: '' };
     },
@@ -82,9 +99,12 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls[0].script, /force-recreate/);
   assert.match(calls[0].script, /trap cleanup EXIT/);
   assert.match(calls[0].script, /\/srv\/pin-glide-dev\/\.env/);
+  assert.match(calls[0].script, /nohup/);
+  assert.match(calls[0].script, /watchdog/);
   assert.match(calls.at(-1).script, /--env-file/);
   assert.match(calls.at(-1).script, /\.env/);
-  assert.match(calls.at(-1).script, new RegExp(temporaryEnv.replaceAll('.', '\\.')));
+  assert.match(calls.at(-1).script, new RegExp(faultPaths.guard.replaceAll('.', '\\.')));
+  assert.match(calls.at(-1).script, new RegExp(faultPaths.watchdog.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, /rm -f/);
 
   calls.length = 0;
@@ -101,6 +121,26 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, /\/etc\/hosts/);
   assert.match(calls.at(-1).script, /pin-glide-smoke-fault/);
   assert.doesNotMatch(calls.at(-1).script, /sed -i/);
+});
+
+test('the connectivity cleanup removes only its own marker from a hosts file', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-glide-hosts-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const hosts = path.join(directory, 'hosts');
+  fs.writeFileSync(hosts, [
+    '127.0.0.1 localhost',
+    '127.0.0.1 ws-kea2u5v9va6wsdvh.cn-beijing.maas.aliyuncs.com # pin-glide-smoke-fault',
+    '127.0.0.1 unrelated # pin-glide-smoke-fault-other',
+    '',
+  ].join('\n'));
+  const script = removeHostsLine('pin-glide-smoke-fault', hosts);
+  const result = spawnSync('sh', ['-ec', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(hosts, 'utf8'), [
+    '127.0.0.1 localhost',
+    '127.0.0.1 unrelated # pin-glide-smoke-fault-other',
+    '',
+  ].join('\n'));
 });
 
 test('remote SQL is sent through stdin and never embedded in the SSH command', async () => {
