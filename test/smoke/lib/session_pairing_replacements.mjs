@@ -1,6 +1,7 @@
 import { associations } from './session_pairing_helpers.mjs';
 import {
   associationRow,
+  completePairingReports,
   expirePairingSession,
   receiverCredentialFacts,
 } from './session_pairing_support.mjs';
@@ -15,15 +16,7 @@ async function replacement(session, context, alias) {
 }
 
 async function activate(session, pairing) {
-  const sender = await session.completePairingSide('pair2', pairing);
-  if (sender.state !== 'awaiting_confirmation') {
-    throw new Error('One replacement report committed the Pairing');
-  }
-  const receiver = await session.completePairingSide('pair2', pairing, pairing.token);
-  if (receiver.state !== 'completed') {
-    throw new Error('Both replacement reports did not activate the Pairing');
-  }
-  return receiver;
+  return (await completePairingReports(session, 'pair2', pairing)).receiver;
 }
 
 export async function replaceAssociation(session, context) {

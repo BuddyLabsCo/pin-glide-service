@@ -1,6 +1,7 @@
 import { pairReceiver, associations } from './session_pairing_helpers.mjs';
 import {
   associationRow,
+  completePairingReports,
   expectNoFrame,
   receiverCredentialFacts,
   waitForPresence,
@@ -47,12 +48,8 @@ export async function attachSecondSender(session, context) {
     'resource_not_found',
   );
   const claimed = await session.claimPairing('pair2', offered, { alias: 'Laptop' });
-  const senderReport = await session.completePairingSide('pair2', claimed);
-  if (senderReport.state !== 'awaiting_confirmation') {
-    throw new Error('One authenticated Sender report completed add_sender');
-  }
-  const completed = await session.completePairingSide('pair2', claimed, claimed.token);
-  if (completed.state !== 'completed' || completed.pairingId !== claimed.pairingID) {
+  const completed = await completePairingReports(session, 'pair2', claimed);
+  if (completed.receiver.pairingId !== claimed.pairingID) {
     throw new Error('Both add_sender reports did not activate the shared association');
   }
 

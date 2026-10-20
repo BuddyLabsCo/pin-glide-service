@@ -97,17 +97,27 @@ export async function expectRelay(socket, pairing, side, payload) {
   return frame;
 }
 
-async function nextPairingState(socket, pairing) {
-  const frame = await socket.next().then(message => message.json);
-  if (frame?.type !== 'pairing_state' || frame.session?.sessionId !== pairing.sessionID) {
-    throw new Error('Pairing channel did not publish its own pairing_state');
+export async function expectPairingStates(socket, pairing, states) {
+  const received = [];
+  for (const expected of states) {
+    const frame = (await socket.next()).json;
+    if (frame?.type !== 'pairing_state' || frame.session?.sessionId !== pairing.sessionID) {
+      throw new Error('Pairing channel did not publish its own pairing_state');
+    }
+    if (frame.session.state !== expected) {
+      throw new Error(`Pairing channel published ${frame.session.state}, expected ${expected}`);
+    }
+    received.push(frame.session);
   }
-  return frame.session;
+  return received;
 }
 
 export async function expectCredentialReady(socket, pairing) {
-  const senderState = await nextPairingState(socket, pairing);
-  const receiverState = await nextPairingState(socket, pairing);
+  const [senderState, receiverState] = await expectPairingStates(
+    socket,
+    pairing,
+    ['awaiting_confirmation', 'credential_ready'],
+  );
   const frame = await socket.next().then(message => message.json);
   if (
     senderState?.state !== 'awaiting_confirmation'
@@ -123,6 +133,22 @@ export async function expectCredentialReady(socket, pairing) {
     throw new Error('Pairing notifications did not report activation and credential readiness');
   }
   return frame;
+}
+
+export async function completePairingReports(session, label, pairing, receiverState = 'completed') {
+  const sender = await session.completePairingSide(label, pairing);
+  if (sender.state !== 'awaiting_confirmation' || !sender.senderConfirmed || sender.receiverConfirmed) {
+    throw new Error('One authenticated report activated the Pairing');
+  }
+  const receiver = await session.completePairingSide(label, pairing, pairing.token);
+  if (
+    receiver.state !== receiverState
+    || !receiver.senderConfirmed
+    || !receiver.receiverConfirmed
+  ) {
+    throw new Error(`Both authenticated reports did not reach ${receiverState}`);
+  }
+  return { sender, receiver };
 }
 
 export async function expectNoFrame(socket, description, timeoutMs = 300) {

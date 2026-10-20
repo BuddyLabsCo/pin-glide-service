@@ -2,6 +2,7 @@ import { SmokeProblem } from './http.mjs';
 import { settle } from './session_credential_support.mjs';
 import {
   associationRow,
+  completePairingReports,
   expirePairingSession,
 } from './session_pairing_support.mjs';
 
@@ -25,6 +26,13 @@ export async function exerciseCapacity(session) {
   const concurrentOutcomes = await Promise.all(
     concurrent.map(created => settle(session.claimPairing('pair1', created))),
   );
+  const receiverContexts = new Set([
+    ...reservations.map(item => item.receiverID),
+    ...concurrent.map(item => item.receiverID),
+  ]);
+  if (receiverContexts.size !== 6) {
+    throw new Error('Capacity scenario did not create six independent Receiver contexts');
+  }
   const admittedIndex = concurrentOutcomes.findIndex(outcome => outcome.value);
   const refusedIndex = concurrentOutcomes.findIndex(limitProblem);
   if (admittedIndex < 0 || refusedIndex < 0 || admittedIndex === refusedIndex) {
@@ -33,12 +41,7 @@ export async function exerciseCapacity(session) {
   const fifth = concurrentOutcomes[admittedIndex].value;
 
   const activated = reservations[1];
-  const senderReport = await session.completePairingSide('pair1', activated);
-  if (senderReport.state !== 'awaiting_confirmation') {
-    throw new Error('Capacity Pairing activated before its Receiver report');
-  }
-  const ready = await session.completePairingSide('pair1', activated, activated.token);
-  if (ready.state !== 'credential_ready') throw new Error('Capacity Pairing did not activate');
+  await completePairingReports(session, 'pair1', activated, 'credential_ready');
   const issued = await session.redeemReceiver(activated);
 
   const replacement = await session.createPairingSession({
@@ -102,6 +105,7 @@ export async function exerciseCapacity(session) {
   return {
     reservations: {
       initialDistinct: reservations.length,
+      independentContexts: receiverContexts.size,
       concurrentSixth: {
         admitted: fifth.pairingID,
         refused: concurrentOutcomes[refusedIndex].error.code,

@@ -4,10 +4,12 @@ import { SmokeProblem } from './http.mjs';
 import { associations } from './session_pairing_helpers.mjs';
 import {
   assertNoSecret,
+  completePairingReports,
   drainPairingUntilClosed,
   expectCredentialReady,
   expectNoFrame,
   expectPairingState,
+  expectPairingStates,
   expectRelay,
   opaqueRelayPayload,
   openDelivery,
@@ -134,6 +136,11 @@ export async function enrollReceiver(session, context) {
 
     readySocket = await session.openSocket({ path: sessionPath(created), token: created.token });
     await expectPairingState(readySocket, created);
+    senderSocket = await session.openSocket({
+      path: sessionPath(created),
+      token: session.token(label, 'user_session'),
+    });
+    await expectPairingState(senderSocket, created);
     const notReady = await session.expectProblem(
       {
         method: 'POST',
@@ -145,45 +152,46 @@ export async function enrollReceiver(session, context) {
       'pairing_not_ready',
     );
     const oneReport = await session.completePairingSide(label, claimed);
-    if (oneReport.state !== 'awaiting_confirmation' || !oneReport.senderConfirmed || oneReport.receiverConfirmed) {
-      throw new Error('One authenticated completion report activated the Pairing');
-    }
     const repeatedSenderReport = await session.completePairingSide(label, claimed);
     if (repeatedSenderReport.state !== 'awaiting_confirmation') {
       throw new Error('Repeated Sender confirmation changed the Pairing Session');
     }
-    const activated = await session.completePairingSide(label, claimed, claimed.token);
-    if (
-      activated.state !== 'credential_ready'
-      || !activated.senderConfirmed
-      || !activated.receiverConfirmed
-      || activated.pairingId !== claimed.pairingID
-    ) {
-      throw new Error('Both authenticated reports did not activate the Pairing');
+    const { receiver: activated } = await completePairingReports(
+      session,
+      label,
+      claimed,
+      'credential_ready',
+    );
+    if (oneReport.state !== 'awaiting_confirmation' || !oneReport.senderConfirmed || oneReport.receiverConfirmed) {
+      throw new Error('One authenticated completion report activated the Pairing');
+    }
+    if (activated.pairingId !== claimed.pairingID) {
+      throw new Error('Activated Pairing Session named another Pairing');
     }
     const credentialReady = await expectCredentialReady(readySocket, created);
+    await expectPairingStates(senderSocket, created, ['awaiting_confirmation', 'credential_ready']);
+    await expectNoFrame(senderSocket, 'Sender received the Receiver credential notification');
 
     const operationID = session.newOperationID('receiver-issuance');
-    const crossSessionRedemption = await session.expectProblem(
-      {
-        method: 'POST',
-        path: `/v1/pairing-sessions/${encodeURIComponent(created.sessionID)}/receiver-token`,
-        token: other.token,
-        body: { operationId: session.newOperationID('other-session-issuance'), attempt: 0 },
-      },
-      401,
-      'credential_invalid',
-    );
-    const managementRedemption = await session.expectProblem(
-      {
-        method: 'POST',
-        path: `/v1/pairing-sessions/${encodeURIComponent(created.sessionID)}/receiver-token`,
-        token: session.token(label, 'user_session'),
-        body: { operationId: operationID, attempt: 0 },
-      },
-      401,
-      'credential_invalid',
-    );
+    const rejectedRedemptions = {};
+    for (const [name, token] of [
+      ['crossSession', other.token],
+      ['management', session.token(label, 'user_session')],
+    ]) {
+      rejectedRedemptions[name] = await session.expectProblem(
+        {
+          method: 'POST',
+          path: `/v1/pairing-sessions/${encodeURIComponent(created.sessionID)}/receiver-token`,
+          token,
+          body: {
+            operationId: session.newOperationID(`${name}-issuance`),
+            attempt: 0,
+          },
+        },
+        401,
+        'credential_invalid',
+      );
+    }
     const dropped = await session.redeemReceiver(claimed, {
       operationID,
       attempt: 0,
@@ -208,6 +216,14 @@ export async function enrollReceiver(session, context) {
     const listed = await associations(session, label);
     assertNoSecret(listed, retransmitted.receiverToken, 'Sender association list');
     assertNoSecret(activated, retransmitted.receiverToken, 'Sender completion response');
+    for (const [description, value] of [
+      ['Sender completion response', activated],
+      ['Sender association list', listed],
+    ]) {
+      if (JSON.stringify(value).includes('receiverToken')) {
+        throw new Error(`${description} exposed a Receiver credential field`);
+      }
+    }
     if (!listed.some(item => item.pairingId === claimed.pairingID && item.presence === 'offline')) {
       throw new Error('Activated Pairing was absent from the Sender list before Receiver possession');
     }
@@ -254,9 +270,8 @@ export async function enrollReceiver(session, context) {
         operationId: operationID,
         droppedRequestId: dropped.requestId,
         retransmittedAttempt: 1,
-        crossSessionRedemption,
+        rejectedRedemptions,
         staleAttempt,
-        managementRedemption,
         lateRedemption,
         credentialReady: {
           sessionId: credentialReady.sessionId,
