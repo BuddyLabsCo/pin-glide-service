@@ -160,7 +160,7 @@ test('deterministic evidence requires every referenced test to have passed', () 
 });
 
 test('deterministic tests run once over the referenced packages', async () => {
-  const references = deterministicTestReferences.filter(item => item.level === 'unit');
+  const references = deterministicTestReferences.filter(item => item.package === './internal/api/wss');
   const calls = [];
   const outcome = await runDeterministicTests('/repository', references, async (command, args, options) => {
     calls.push({ command, args, options });
@@ -170,7 +170,43 @@ test('deterministic tests run once over the referenced packages', async () => {
   assert.equal(calls[0].command, 'go');
   assert.equal(calls[0].options.cwd, '/repository');
   assert.equal(calls[0].args[calls[0].args.indexOf('-run') + 1], `^(${references.map(item => item.test).join('|')})$`);
+  assert.equal(calls[0].args.at(-1), './internal/api/wss');
   assert.deepEqual(outcome.packages, ['./internal/api/wss']);
+});
+
+test('deterministic evidence binds a pass to its own package', async () => {
+  const references = [
+    { test: 'TestOnlyHere', package: './internal/api/wss', level: 'unit', covers: [], observes: '' },
+    { test: 'TestOnlyThere', package: './test/integration/pairing', level: 'integration', covers: [], observes: '' },
+  ];
+  const calls = [];
+  await assert.rejects(
+    () => runDeterministicTests('/repository', references, async (command, args) => {
+      calls.push(args);
+      if (command === 'docker') return { stdout: '29.0.0' };
+      // The second package never runs its own test.
+      return { stdout: '--- PASS: TestOnlyHere (0.00s)' };
+    }),
+    /TestOnlyThere/,
+  );
+  assert.equal(calls.filter(args => args[0] === 'test').length, 2);
+});
+
+test('a failed deterministic run names the failing test', async () => {
+  const references = deterministicTestReferences.filter(item => item.package === './internal/api/wss');
+  await assert.rejects(
+    () => runDeterministicTests('/repository', references, async () => {
+      const error = new Error('go failed with exit code 1');
+      error.result = {
+        stdout: [
+          `--- PASS: ${references[0].test} (0.00s)`,
+          `--- FAIL: ${references[1].test} (0.01s)`,
+        ].join('\n'),
+      };
+      throw error;
+    }),
+    new RegExp(`${references[1].test} failed`),
+  );
 });
 
 test('a missing Go toolchain blocks rather than fails the deterministic check', async () => {

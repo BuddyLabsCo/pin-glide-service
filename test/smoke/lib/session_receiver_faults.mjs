@@ -171,7 +171,7 @@ export async function heartbeatLoss(session) {
       if (reconnected.closeInfo) {
         throw new Error(`the responsive Receiver closed with ${reconnected.closeInfo.code}`);
       }
-      const stillOnline = await waitForPresence(session, 'receiver-other', paired.pairingID, 'online');
+      const stillOnline = await waitForPresence(session, 'receiver-other', paired.pairingID, 'online', presenceWait);
       if (stillOnline.stateChangedAt !== online.stateChangedAt) {
         throw new Error('answering a heartbeat Ping did not keep the Receiver online');
       }

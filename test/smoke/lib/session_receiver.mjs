@@ -68,6 +68,10 @@ export async function runReceiverScenarios(session, { root, runDeterministic = r
   // Deterministic evidence runs last, so a failure here cannot hide the live
   // observations already recorded.
   const deterministic = await runDeterministic(root, deterministicTestReferences);
+  const passed = new Set(deterministic.tests);
+  const covering = coverage => deterministicTestReferences
+    .filter(item => item.covers.includes(coverage) && passed.has(item.test))
+    .map(item => item.test);
   return {
     scenarios,
     requests: session.requestIds.length,
@@ -75,10 +79,8 @@ export async function runReceiverScenarios(session, { root, runDeterministic = r
     policyClose: {
       live: 'not_run',
       reason: 'a live 1008 needs a generation change after possession, which only excluded owner recovery or global Receiver revocation performs',
-      deterministic: 'passed',
-      tests: deterministicTestReferences
-        .filter(item => /policy|generation|old close/i.test(item.observes))
-        .map(item => item.test),
+      deterministic: covering('policy-close'),
+      policyViolationObserved: false,
     },
     recoverableBusinessError: {
       status: 'not_applicable',
@@ -86,7 +88,11 @@ export async function runReceiverScenarios(session, { root, runDeterministic = r
       liveScenario: 'new Receiver enrollment, opaque relay, reconnect and first credential',
       observes: 'pairing_not_ready frame with requestId and detail; the Receiver direction has no recoverable frame',
     },
-    deterministic,
+    deterministic: {
+      ...deterministic,
+      failedUpgradeCleanup: covering('failed-upgrade-cleanup'),
+      oldCloseIsolation: covering('old-close'),
+    },
     deterministicTestReferences,
   };
 }

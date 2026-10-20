@@ -16,7 +16,7 @@ import {
 
 export async function receiverSurface(session, primary, shared, unrelated) {
   const primaryToken = primary.receiverToken;
-  const initial = await waitForPresence(session, 'receiver-main', primary.pairingID, 'offline');
+  const initial = await waitForPresence(session, 'receiver-main', primary.pairingID, 'offline', presenceWait);
   const missing = await rejectedUpgrade(session, {
     path: '/v1/receiver/events',
   }, 401, 'credential_missing');
@@ -99,7 +99,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
       path: '/v1/receiver/events',
       token: primaryToken,
     }, 409, 'receiver_already_connected');
-    const stillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online');
+    const stillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online', presenceWait);
     if (stillOnline.stateChangedAt !== online['receiver-main'].stateChangedAt) {
       throw new Error('a rejected second upgrade changed the held connection presence');
     }
@@ -108,7 +108,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     let unrelatedOnline;
     try {
       unrelatedOnline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'online', presenceWait);
-      const sharedStillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online');
+      const sharedStillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online', presenceWait);
       if (unrelatedOnline.presence !== 'online' || sharedStillOnline.presence !== 'online') {
         throw new Error('one Receiver context failed to report its own online presence');
       }
@@ -195,7 +195,7 @@ export async function concurrentUpgrade(session, pairing) {
     admitted: 1,
     refused: duplicate,
     stateChangedAt: online.stateChangedAt,
-    failedUpgradeReleasedSlot: true,
+    slotReusableAfterClose: true,
   };
 }
 

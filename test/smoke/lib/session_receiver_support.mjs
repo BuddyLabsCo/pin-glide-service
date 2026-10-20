@@ -12,8 +12,8 @@ export const pairingHTTP = [
   'GetSelfReceivers',
 ];
 export const receiverHTTP = ['GetSelfReceivers'];
-// Presence settles asynchronously, so every observation waits up to ten
-// seconds; one constant keeps the receiver scenarios from drifting apart.
+// Presence settles asynchronously; the ordinary wait is ten seconds, and only
+// restart and heartbeat recovery use a longer one.
 export const presenceWait = { attempts: 50, intervalMs: 200 };
 // References to the Go tests that prove orderings this live path cannot
 // observe. The smoke run executes exactly these tests and records a pass only
@@ -21,58 +21,58 @@ export const presenceWait = { attempts: 50, intervalMs: 200 };
 export const deterministicTestReferences = [
   {
     test: 'TestConcurrentFirstConnectionsAdmitOneReceiver',
-    source: 'test/integration/pairing/possession_test.go',
     package: './test/integration/pairing',
     level: 'integration',
+    covers: ['one-slot-race'],
     observes: 'concurrent upgrades admit exactly one 101 and one 409',
   },
   {
     test: 'TestNewerGenerationOwnsPresenceAcrossOldClose',
-    source: 'internal/api/wss/receiver_test.go',
     package: './internal/api/wss',
     level: 'unit',
+    covers: ['old-close', 'presence'],
     observes: 'an old close cannot remove a newer connection or its presence',
   },
   {
     test: 'TestGenerationChangeDuringUpgradePreventsTheConnection',
-    source: 'internal/api/wss/receiver_test.go',
     package: './internal/api/wss',
     level: 'unit',
+    covers: ['failed-upgrade-cleanup'],
     observes: 'a generation change cancelling a committing upgrade',
   },
   {
     test: 'TestShutdownEndsAnUpgradeStillCommitting',
-    source: 'internal/api/wss/receiver_test.go',
     package: './internal/api/wss',
     level: 'unit',
+    covers: ['failed-upgrade-cleanup', 'shutdown'],
     observes: 'shutdown cancelling an upgrade while its final commit is in flight',
   },
   {
     test: 'TestRecoveryRedemptionAndOldUpgradeCommitOneGeneration',
-    source: 'test/integration/pairing/recovery_access_test.go',
     package: './test/integration/pairing',
     level: 'integration',
+    covers: ['excluded-recovery'],
     observes: 'the excluded recovery race that ordinary smoke cannot observe',
   },
   {
     test: 'TestOwnerRevocationClosesOneReceiverForEverySender',
-    source: 'test/integration/pairing/receiver_revocation_test.go',
     package: './test/integration/pairing',
     level: 'integration',
+    covers: ['policy-close', 'excluded-revocation'],
     observes: 'the excluded owner-revocation control and policy close across shared Pairings',
   },
   {
     test: 'TestReceiverRevocationSerializesWithRedemptionAndUpgrade',
-    source: 'test/integration/pairing/receiver_revocation_test.go',
     package: './test/integration/pairing',
     level: 'integration',
+    covers: ['policy-close', 'excluded-revocation'],
     observes: 'revocation serialized with redemption and an upgrade still committing',
   },
   {
     test: 'TestDeviceRevokedReportsTheControlThenCloses',
-    source: 'internal/api/wss/receiver_test.go',
     package: './internal/api/wss',
     level: 'unit',
+    covers: ['policy-close', 'excluded-revocation'],
     observes: 'the excluded policy close that ends a revoked Receiver',
   },
 ];
@@ -88,12 +88,17 @@ export function parseRanTests(output, references) {
   return references.map(item => item.test);
 }
 
+// failingTests reports the referenced tests a failed run named, so the
+// evidence can identify the race that failed instead of only the exit code.
+export function failingTests(output, references) {
+  const failed = new Set([...String(output).matchAll(/^\s*--- FAIL: (\w+)/gm)].map(match => match[1]));
+  return references.map(item => item.test).filter(test => failed.has(test));
+}
+
 // runDeterministicTests executes the referenced Go tests and reports only what
 // actually passed, so the smoke evidence never claims an unexecuted check.
 export async function runDeterministicTests(root, references, run = runProcess) {
-  const pattern = `^(${references.map(item => item.test).join('|')})$`;
   const packages = [...new Set(references.map(item => item.package))];
-  let result;
   try {
     if (references.some(item => item.level === 'integration')) {
       // The integration harness starts a disposable PostgreSQL container, so a
@@ -106,18 +111,30 @@ export async function runDeterministicTests(root, references, run = runProcess) 
   } catch (error) {
     throw new SmokeBlocked(`deterministic Receiver tests need a working Docker: ${error.message}`);
   }
-  try {
-    result = await run('go', [
-      'test', '-tags=integration', '-count=1', '-v', '-run', pattern, ...packages,
-    ], { cwd: root, timeoutMs: 1_800_000 });
-  } catch (error) {
-    // A missing toolchain is an unmet prerequisite, not a failed assertion.
-    if (error.code === 'ENOENT') {
-      throw new SmokeBlocked(`deterministic Receiver tests need a Go toolchain: ${error.message}`);
+  const tests = [];
+  for (const packagePath of packages) {
+    // One package per invocation keeps each PASS line bound to the package
+    // that actually ran it.
+    const inPackage = references.filter(item => item.package === packagePath);
+    const pattern = `^(${inPackage.map(item => item.test).join('|')})$`;
+    let result;
+    try {
+      result = await run('go', [
+        'test', '-tags=integration', '-count=1', '-v', '-run', pattern, packagePath,
+      ], { cwd: root, timeoutMs: 1_800_000 });
+    } catch (error) {
+      // A missing toolchain is an unmet prerequisite, not a failed assertion.
+      if (error.code === 'ENOENT') {
+        throw new SmokeBlocked(`deterministic Receiver tests need a Go toolchain: ${error.message}`);
+      }
+      const output = `${error.result?.stdout || ''}\n${error.result?.stderr || ''}`;
+      const failed = failingTests(output, inPackage);
+      const detail = failed.length > 0 ? `: ${failed.join(', ')} failed` : '';
+      throw new Error(`deterministic Receiver tests failed in ${packagePath}${detail}`, { cause: error });
     }
-    throw error;
+    tests.push(...parseRanTests(result.stdout, inPackage));
   }
-  return { tests: parseRanTests(result.stdout, references), packages };
+  return { tests, packages };
 }
 
 export function expectedProblem(status, code) {
