@@ -1,4 +1,5 @@
 import { sqlTextArray } from './fixtures.mjs';
+import { SmokeBlocked } from './http.mjs';
 
 export async function verifyDiagnosticRedaction(
   session,
@@ -27,7 +28,9 @@ WHERE request_id = ANY(${sqlTextArray(requestIds)})
     }
   }
   const missing = requestIds.filter(requestId => !seen.has(requestId));
-  if (records.length === 0) throw new Error('No run-owned service diagnostics were available to inspect');
+  if (records.length === 0) {
+    throw new SmokeBlocked('No run-owned service diagnostics were available to inspect');
+  }
   const serialized = JSON.stringify(records);
   for (const secret of session.secretValues()) {
     if (serialized.includes(secret)) throw new Error('A raw credential appeared in service diagnostics');

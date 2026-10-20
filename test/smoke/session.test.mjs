@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createFixturePlan } from './lib/fixtures.mjs';
-import { SmokeProblem } from './lib/http.mjs';
+import { SmokeBlocked, SmokeProblem } from './lib/http.mjs';
 import { SmokeSession } from './lib/session.mjs';
-import { verifyCheckpoints } from './lib/session_credential_support.mjs';
+import { runScenario, verifyCheckpoints } from './lib/session_credential_support.mjs';
 import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 import { TARGET } from './lib/target.mjs';
 import { integration } from './runner.mjs';
@@ -232,6 +232,26 @@ test('service diagnostics settle and scan every available run-owned record', asy
   session.requestIds = ['request-1'];
   session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
   await assert.rejects(() => verifyDiagnosticRedaction(session), /raw credential/);
+});
+
+test('unavailable service diagnostics are recorded as blocked evidence', async () => {
+  const recorded = [];
+  const session = {
+    requestIds: ['request-1'],
+    subjects: new Set(),
+    secretValues: () => [],
+    remote: { async sqlJSON() { return []; } },
+    evidence: { record(entry) { recorded.push(entry); } },
+  };
+  await assert.rejects(
+    () => runScenario(
+      session,
+      'diagnostic availability',
+      () => verifyDiagnosticRedaction(session, { settleMs: 0 }),
+    ),
+    error => error instanceof SmokeBlocked,
+  );
+  assert.equal(recorded[0].status, 'blocked');
 });
 
 test('ordinary Pairing creates, claims, relays through both peers and redeems only for its Receiver', async () => {

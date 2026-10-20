@@ -5,7 +5,7 @@ import {
   escapeSQLString,
   sqlTextArray,
 } from './fixtures.mjs';
-import { SmokeProblem } from './http.mjs';
+import { SmokeBlocked, SmokeProblem } from './http.mjs';
 
 export function snapshot(sender) {
   return Object.fromEntries(sender.credentials.map(item => [item.scope, { ...item }]));
@@ -28,9 +28,10 @@ export async function runScenario(session, name, callback) {
     });
     return { name, status: 'passed' };
   } catch (error) {
+    const status = error instanceof SmokeBlocked ? 'blocked' : 'failed';
     session.evidence.record({
       scenario: name,
-      status: 'failed',
+      status,
       code: error instanceof SmokeProblem ? error.code : '',
       requestId: error instanceof SmokeProblem ? error.requestId : '',
       details: {

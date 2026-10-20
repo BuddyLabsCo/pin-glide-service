@@ -275,6 +275,14 @@ export async function accountSwitch(session) {
   if (rejectedFacts.registrationState !== 'active' || rejectedPairing?.state !== 'active') {
     throw new Error('A rejected Account switch changed the Sender or its Pairing');
   }
+  for (const scope of ['user_session', 'uploader', 'refresh']) {
+    const credential = rejectedFacts.credentials.find(item => (
+      item.tokenDigest === switchedCredentials[scope].digest
+    ));
+    if (!credential || credential.revokedAt !== null) {
+      throw new Error(`A rejected Account switch revoked the ${scope} credential`);
+    }
+  }
   const switched = await session.request({
     method: 'POST',
     path: '/v1/auth/logout',

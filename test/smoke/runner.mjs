@@ -7,7 +7,7 @@ import { validateConfiguration, validateDatabaseFacts } from './lib/database.mjs
 import { SmokeValidationError } from './lib/errors.mjs';
 import { Evidence } from './lib/evidence.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
-import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
+import { SmokeBlocked, SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { summarizeCompose } from './lib/installation.mjs';
 import { modelConfiguration } from './lib/configuration.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
@@ -455,7 +455,11 @@ async function main(argv = process.argv.slice(2)) {
     console.log(JSON.stringify(report, null, 2));
     return 0;
   } catch (error) {
-    if (error instanceof SmokeProblem || error instanceof SmokeValidationError) failureStatus = 'failed';
+    if (error instanceof SmokeBlocked) {
+      failureStatus = 'blocked';
+    } else if (error instanceof SmokeProblem || error instanceof SmokeValidationError) {
+      failureStatus = 'failed';
+    }
     evidence.record({
       scenario: options.mode === 'integration-ready' ? 'seeded smoke journey' : 'read-only deployment check',
       status: failureStatus,

@@ -14,6 +14,13 @@ export class SmokeProblem extends Error {
   }
 }
 
+export class SmokeBlocked extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SmokeBlocked';
+  }
+}
+
 export class SmokeHttp {
   constructor({ origin, fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
     this.origin = assertHttpOrigin(origin);

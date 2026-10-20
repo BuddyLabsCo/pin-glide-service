@@ -65,6 +65,15 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
   }
 });
 
+test('fixture lifetimes match the adopted three-hour and seven-day contract', () => {
+  // These literals protect the published contract from fixture-only drift.
+  assert.deepEqual(credentialLifetimeHours, {
+    user_session: 3,
+    uploader: 3,
+    refresh: 7 * 24,
+  });
+});
+
 test('fixture Sender lookup follows the label rather than an ID suffix', () => {
   const sender = { label: 'scope', id: 'unrelated-sender-id' };
   assert.equal(fixtureSender({ senders: [sender] }, 'scope'), sender);
