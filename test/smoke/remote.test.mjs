@@ -57,6 +57,52 @@ test('a timed-out lock acquisition kills the SSH child instead of leaking its lo
   assert.equal(child.stdin.destroyed, true);
 });
 
+test('controlled provider faults restore the original Compose environment and network state', async () => {
+  const calls = [];
+  let temporaryEnv = '';
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args) => {
+      calls.push({ command, script: args.at(-1) });
+      if (args.at(-1).includes('mktemp') && !temporaryEnv) {
+        temporaryEnv = '/tmp/pin-glide-dev-smoke-bailian.abc123.env';
+        return { stdout: `${temporaryEnv}\n`, stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await assert.rejects(
+    () => remote.withInvalidBailianKey(async () => {
+      throw new Error('invalid parent key observed');
+    }),
+    /invalid parent key observed/,
+  );
+  assert.match(calls[0].script, /BAILIAN_API_KEY/);
+  assert.match(calls[0].script, /force-recreate/);
+  assert.match(calls[0].script, /trap cleanup EXIT/);
+  assert.match(calls[0].script, /\/srv\/pin-glide-dev\/\.env/);
+  assert.match(calls.at(-1).script, /--env-file/);
+  assert.match(calls.at(-1).script, /\.env/);
+  assert.match(calls.at(-1).script, new RegExp(temporaryEnv.replaceAll('.', '\\.')));
+  assert.match(calls.at(-1).script, /rm -f/);
+
+  calls.length = 0;
+  await assert.rejects(
+    () => remote.withBailianConnectivityFault('ws-kea2u5v9va6wsdvh', async () => {
+      throw new Error('connectivity fault observed');
+    }, { idleWaitMs: 0 }),
+    /connectivity fault observed/,
+  );
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].script, /\/etc\/hosts/);
+  assert.match(calls[0].script, /ws-kea2u5v9va6wsdvh/);
+  assert.doesNotMatch(calls[0].script, /sed -i/);
+  assert.match(calls.at(-1).script, /\/etc\/hosts/);
+  assert.match(calls.at(-1).script, /pin-glide-smoke-fault/);
+  assert.doesNotMatch(calls.at(-1).script, /sed -i/);
+});
+
 test('remote SQL is sent through stdin and never embedded in the SSH command', async () => {
   const calls = [];
   const remote = new RemoteEnvironment({

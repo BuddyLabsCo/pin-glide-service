@@ -367,6 +367,7 @@ test('failed lifecycle work still runs its cleanup and records that outcome', as
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
     createSession: async () => session,
+    runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {
       throw new Error('authorization failed');
     },
@@ -393,6 +394,7 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
     createSession: async () => session,
+    runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {
       throw new Error('authorization failed');
     },
@@ -418,6 +420,7 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
     evidence,
     plan,
     createSession: async () => successful,
+    runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => ({ scenarios: [] }),
   }), /evidence failed/);
   assert.equal(closeCount, 1);

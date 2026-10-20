@@ -240,8 +240,13 @@ PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev 
 `--check` is read-only and exits `2` after prerequisites pass because it does
 not execute restore. `--integration-ready` creates a stopped-writer container
 snapshot and restores it into a disposable database. It then seeds and removes
-run-owned SQL fixtures, exercises the Sender credential and session lifecycle
-through the deployed HTTP and WebSocket surface, and writes redacted evidence.
+run-owned SQL fixtures, exercises the Sender credential/session lifecycle
+through the deployed HTTP and WebSocket surface, calls the real service-issued
+Bailian flow directly, and writes redacted evidence. The Bailian flow verifies
+strict text-only OTP and no-OTP inference plus controlled authority,
+configuration, parent-key and connectivity failures. It waits for the
+provider-reported temporary-key expiry (about eleven minutes) and briefly
+recreates the API container for the invalid-parent-key fault.
 After both releases are published, this command proves fresh installation and
 the declared upgrade with disposable Compose projects and the real release
 images:

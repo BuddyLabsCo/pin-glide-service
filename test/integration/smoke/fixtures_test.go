@@ -51,9 +51,9 @@ func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
 	execSQL(t, pool, sql.Bootstrap)
 	assertCount(t, pool, 2, `SELECT count(*) FROM pin_glide.identity_accounts
 		WHERE id IN ($1, $2)`, sql.FirstAccountID, sql.SecondAccountID)
-	assertCount(t, pool, 12, `SELECT count(*) FROM pin_glide.identity_sender_registrations
+	assertCount(t, pool, 15, `SELECT count(*) FROM pin_glide.identity_sender_registrations
 		WHERE id LIKE 'smoke-integration-fixture-sender-%' AND state = 'active'`)
-	assertCount(t, pool, 36, `SELECT count(*) FROM pin_glide.identity_credentials
+	assertCount(t, pool, 45, `SELECT count(*) FROM pin_glide.identity_credentials
 		WHERE sender_id LIKE 'smoke-integration-fixture-sender-%'
 		  AND token_digest ~ '^[0-9a-f]{64}$'`)
 
