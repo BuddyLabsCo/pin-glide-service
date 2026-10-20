@@ -75,6 +75,7 @@ export async function runPairingScenarios(session) {
       scenarios,
       requests: session.requestIds.length,
       receivers: session.receivers.size,
+      context,
     };
   } finally {
     await context.enrollment?.delivery?.close();

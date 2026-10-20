@@ -5,7 +5,8 @@ import {
 } from './session_pairing_support.mjs';
 
 export async function manageAssociations(session, context) {
-  const { pairing: first, receiverToken, delivery } = context.shared;
+  const { pairing: first } = context.enrollment;
+  const { receiverToken, delivery } = context.shared;
   const pair1 = session.sender('pair1');
 
   const uploaderScope = await session.expectProblem(

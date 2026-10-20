@@ -211,6 +211,32 @@ class WebSocketPeer {
     timer.unref();
     return this.closeEvent;
   }
+
+  // Simulate a Receiver whose transport disappears without a WebSocket Close
+  // handshake. The service may still hold its slot for a moment, which lets a
+  // smoke run exercise a failed delivery write rather than an orderly offline
+  // release.
+  abort(reason = 'smoke transport failure') {
+    if (this.closeInfo || this.sendClosed) return;
+    this.sendClosed = true;
+    if (typeof this.socket.resetAndDestroy === 'function') {
+      this.socket.resetAndDestroy();
+    } else {
+      this.socket.destroy();
+    }
+    this.finish({ code: 1006, reason });
+  }
+
+  // Stop reading the transport without closing it. A bounded server write can
+  // then fail for backpressure, which is the reversible fault used to exercise
+  // send_failed instead of a fake delivery channel.
+  pauseReads() {
+    this.socket.pause();
+  }
+
+  resumeReads() {
+    if (!this.closeInfo && !this.sendClosed) this.socket.resume();
+  }
 }
 
 export async function openWebSocket({
