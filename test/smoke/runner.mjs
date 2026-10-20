@@ -10,6 +10,7 @@ import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeBlocked, SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { summarizeCompose } from './lib/installation.mjs';
 import { modelConfiguration } from './lib/configuration.mjs';
+import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
 import { RemoteEnvironment, acquireEnvironmentLock, repository } from './lib/remote.mjs';
 import {
@@ -39,9 +40,9 @@ function usage() {
     'schema/data ledgers, contracts and snapshot inventory without writes. It',
     'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
-    'exercises the seeded Sender, Pairing and association journeys through the',
-    'deployed service, then creates a stopped-writer snapshot and restores it into',
-    'a disposable database.',
+    'exercises seeded Sender credential/session, Pairing, association and real',
+    'Bailian model journeys through the deployed service, then creates a',
+    'stopped-writer snapshot and restores it into a disposable database.',
     'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
   ].join('\n');
 }
@@ -372,6 +373,7 @@ async function integration({
   checkResult,
   createSession = SmokeSession.create,
   runLifecycle = runSeededJourneys,
+  runModel = runModelScenarios,
   plan = createFixturePlan(),
 }) {
   let session;
@@ -384,12 +386,14 @@ async function integration({
       evidence,
       plan,
     });
+    const model = await runModel({ session, model: checkResult.model });
     const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
-      scenario: 'seeded Sender credential, session and Pairing lifecycle',
+      scenario: 'seeded Sender, Pairing and real Bailian smoke journey',
       status: 'passed',
       details: {
         ...lifecycle,
+        model,
         requestCount: session.requestIds.length,
       },
     });

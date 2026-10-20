@@ -62,6 +62,9 @@ export function createFixturePlan({ runId = `smoke-${Date.now()}-${randomBytes(6
     { label: 'superseded', accountID: accounts[0].id },
     { label: 'pair1', accountID: accounts[0].id },
     { label: 'pair2', accountID: accounts[0].id },
+    { label: 'model', accountID: accounts[0].id },
+    { label: 'model-expired', accountID: accounts[0].id },
+    { label: 'model-revoked', accountID: accounts[0].id },
   ];
   const senders = senderSpecs.map(({ label, accountID }) => {
     const id = `smoke-${runId}-sender-${label}`;

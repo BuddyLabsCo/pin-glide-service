@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 
 import { runProcess } from './commands.mjs';
+import {
+  withBailianConnectivityFault,
+  withInvalidBailianKey,
+} from './provider_faults.mjs';
+import { quote } from './shell.mjs';
 
 const repository = 'BuddyLabsCo/pin-glide-service';
 export const snapshotName = /^pin-glide-snapshot-\d{8}T\d{6}\.\d{9}Z-[0-9]+\.dump$/;
@@ -14,10 +19,6 @@ WHERE datname = current_database()
   AND backend_type = 'client backend'
   AND coalesce(application_name, '') <> 'pg_dump';
 `;
-
-function quote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
-}
 
 export class RemoteEnvironment {
   constructor({ target, run = runProcess }) {
@@ -111,6 +112,14 @@ export class RemoteEnvironment {
       `cd ${quote(this.target.deploymentDir)} && ${command} --version ${quote(version)} ${action}`,
       { timeoutMs: 600_000 },
     );
+  }
+
+  async withInvalidBailianKey(callback) {
+    return withInvalidBailianKey(this, callback);
+  }
+
+  async withBailianConnectivityFault(workspaceID, callback, options) {
+    return withBailianConnectivityFault(this, workspaceID, callback, options);
   }
 
   async createStoppedSnapshot(version) {
