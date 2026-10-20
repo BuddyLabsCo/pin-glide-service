@@ -18,16 +18,6 @@ jobs:
     name: Open or update the release pull request
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -36,6 +26,17 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: BuddyLabsCo
           repositories: pin-glide-service
+
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Open or update release PR
         env:
