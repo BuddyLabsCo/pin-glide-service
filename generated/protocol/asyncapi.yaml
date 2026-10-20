@@ -493,7 +493,7 @@ info:
     Each feature ticket adds its channels, messages, shared schemas, error
     semantics and coverage together with the code that serves them.
   title: Pin Glide Service Realtime API
-  version: 0.1.0
+  version: 1.0.0
 operations:
   acceptPairingHandshake:
     action: receive

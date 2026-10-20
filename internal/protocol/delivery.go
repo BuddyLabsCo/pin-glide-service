@@ -44,7 +44,7 @@ const (
 // the forwarding authority.
 type UploadRequest struct {
 	MessageID string       `json:"messageId" minLength:"1" maxLength:"128" example:"message-example" doc:"Random Message ID the Sender generated once for this SMS operation; all of its Receiver ciphertexts carry it"`
-	Items     []UploadItem `json:"items" doc:"One entry per selected Receiver; entries are validated and processed independently and answered in input order"`
+	Items     []UploadItem `json:"items" nullable:"false" doc:"One entry per selected Receiver; entries are validated and processed independently and answered in input order"`
 }
 
 // UploadItem is one Receiver-selected ciphertext. The service validates the
@@ -73,7 +73,7 @@ type UploadResult struct {
 type UploadResponse struct {
 	MessageID string         `json:"messageId" example:"message-example" doc:"Message ID of the request these results belong to"`
 	RequestID string         `json:"requestId" example:"req-example" doc:"Service-generated operation identifier for log correlation"`
-	Results   []UploadResult `json:"results" doc:"One result per input entry, in input order"`
+	Results   []UploadResult `json:"results" nullable:"false" doc:"One result per input entry, in input order"`
 }
 
 // DeliveryView is the retained metadata of one Delivery: its Receiver and
@@ -92,5 +92,5 @@ type DeliveryView struct {
 // only this Sender's admitted Deliveries; rejected-only input creates none.
 type MessageDeliveries struct {
 	MessageID  string         `json:"messageId" doc:"Message ID these Deliveries belong to"`
-	Deliveries []DeliveryView `json:"deliveries" doc:"Retained admitted Deliveries of this Message"`
+	Deliveries []DeliveryView `json:"deliveries" nullable:"false" doc:"Retained admitted Deliveries of this Message"`
 }
