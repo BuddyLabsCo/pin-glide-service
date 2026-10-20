@@ -35,6 +35,7 @@ func TestPublishedHTTPDescriptionKeepsTheOwnAssociationContract(t *testing.T) {
 		t.Errorf("list fields = %v, want [items]", properties)
 	}
 	items, _ := listSuccess.schema["properties"].(map[string]any)["items"].(map[string]any)
+	assertArrayType(t, "list items", items)
 	element, _ := items["items"].(map[string]any)
 	if ref, want := element["$ref"], protocol.SchemaPrefix+"ReceiverAssociation"; ref != want {
 		t.Errorf("list items reference %v, want %s", ref, want)

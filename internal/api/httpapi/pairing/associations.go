@@ -21,7 +21,7 @@ type ReceiverPresence interface {
 // ReceiverList is the accepted own-Receiver-list payload. It carries only the
 // authenticated Sender's own active associations.
 type ReceiverList struct {
-	Items []protocol.ReceiverAssociation `json:"items" doc:"The Sender's own active associations; empty when it has none"`
+	Items []protocol.ReceiverAssociation `json:"items" nullable:"false" doc:"The Sender's own active associations; empty when it has none"`
 }
 
 // PairingAlias is the accepted PATCH /v1/self/pairings/{id} body: the owning
