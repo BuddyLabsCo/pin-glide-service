@@ -33,7 +33,7 @@ test('generation installs the schemas Jet produced and publishes both offline de
 
   const jet = f.calls('go').filter((call) => call.args[1] === 'jet');
   assert.deepEqual(jet.map((call) => call.args.at(-2)), ['-schema=release', '-schema=pin_glide']);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 test('generation follows Jet between empty and populated schemas without retaining stale output', (t) => {
@@ -60,6 +60,6 @@ for (const [step, code] of [['jet', 41], ['export', 42]]) {
     const result = f.run('bash', ['scripts/codegen/generate.sh'], { TOOL_FAIL: step });
     assert.equal(result.status, code, result.stderr);
     assert.equal(existsSync(join(f.cwd, 'generated/protocol/openapi.yaml')), false, result.stderr);
-    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
   });
 }

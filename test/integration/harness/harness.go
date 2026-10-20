@@ -118,15 +118,16 @@ func StartPostgres(t *testing.T) *Postgres {
 	return postgres
 }
 
-// Stop removes the disposable container. It is safe to call more than once, so
-// a test can stop the database deliberately and still let cleanup run.
+// Stop removes the disposable container and its anonymous data volume. It is
+// safe to call more than once, so a test can stop the database deliberately and
+// still let cleanup run.
 func (p *Postgres) Stop() error {
 	if p.stopped {
 		return nil
 	}
 	p.stopped = true
 
-	command := exec.Command("docker", "rm", "--force", p.container)
+	command := exec.Command("docker", "rm", "--force", "--volumes", p.container)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("remove container %s: %w: %s", p.container, err, strings.TrimSpace(string(output)))
 	}

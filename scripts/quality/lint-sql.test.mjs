@@ -56,7 +56,7 @@ test('SQL checks pass the desired schemas before proving each rule family reject
     'test/fixtures/sql/desired_schema_violations.sql',
   ]);
 
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 test('the SQL checks stop on an installed Schemalint that does not match the pin', (t) => {
@@ -64,7 +64,7 @@ test('the SQL checks stop on an installed Schemalint that does not match the pin
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, new RegExp(`schemalint ${pinnedSchemalint} is required; found 0\\.0\\.1\\.`));
   assert.equal(f.calls('uvx').length, 0, result.stderr);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 test('the SQL checks report an uninstalled Schemalint instead of npm resolving it', (t) => {
@@ -72,7 +72,7 @@ test('the SQL checks report an uninstalled Schemalint instead of npm resolving i
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, new RegExp(`schemalint ${pinnedSchemalint} is required; found nothing\\. Run npm ci\\.`));
   assert.equal(f.calls('uvx').length, 0, result.stderr);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 for (const [failure, code, stopped] of [['catalog', 31, 'uvx'], ['schemalint', 32, 'uvx'], ['sqlfluff', 33, null]]) {
@@ -80,7 +80,7 @@ for (const [failure, code, stopped] of [['catalog', 31, 'uvx'], ['schemalint', 3
     const f = fixture(t), result = run(f, { TOOL_FAIL: failure });
     assert.equal(result.status, code, result.stderr);
     if (stopped) assert.equal(f.calls(stopped).length, 0, result.stderr);
-    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+    assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
   });
 }
 
@@ -88,12 +88,12 @@ test('the SQL checks fail when a checker accepts the violating fixture', (t) => 
   const f = fixture(t), result = run(f, { TOOL_ACCEPT_FIXTURE: '1' });
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /the catalog naming check accepted the violating fixture\./);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
 
 test('the SQL checks fail when a checker fails without reporting the violation', (t) => {
   const f = fixture(t), result = run(f, { TOOL_SILENT_FIXTURE_FAILURE: '1' });
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /the catalog naming check failed without reporting SQL lint found\|/);
-  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', 'disposable-postgres']);
+  assert.deepEqual(f.calls('docker').at(-1).args, ['rm', '-f', '-v', 'disposable-postgres']);
 });
