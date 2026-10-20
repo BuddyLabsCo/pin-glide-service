@@ -97,6 +97,26 @@ export async function expectRelay(socket, pairing, side, payload) {
   return frame;
 }
 
+export async function expectCredentialReady(socket, pairing) {
+  const senderState = (await socket.next()).json?.session;
+  const receiverState = (await socket.next()).json?.session;
+  const frame = (await socket.next()).json;
+  if (
+    senderState?.state !== 'awaiting_confirmation'
+    || !senderState.senderConfirmed
+    || receiverState?.state !== 'credential_ready'
+    || !receiverState.senderConfirmed
+    || !receiverState.receiverConfirmed
+    || frame?.type !== 'credential_ready'
+    || frame.sessionId !== pairing.sessionID
+    || frame.receiverId !== pairing.receiverID
+    || frame.expiresAt !== pairing.expiresAt
+  ) {
+    throw new Error('Pairing notifications did not report activation and credential readiness');
+  }
+  return frame;
+}
+
 export async function expectNoFrame(socket, description, timeoutMs = 300) {
   try {
     const message = await socket.next(timeoutMs);

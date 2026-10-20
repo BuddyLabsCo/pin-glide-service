@@ -32,14 +32,6 @@ export async function exerciseCapacity(session) {
   }
   const fifth = concurrentOutcomes[admittedIndex].value;
 
-  const canceled = await session.request({
-    method: 'DELETE',
-    path: `/v1/pairing-sessions/${encodeURIComponent(reservations[0].sessionID)}`,
-    token: session.token('pair1', 'user_session'),
-  });
-  if (canceled.status !== 204) throw new Error(`Pending reservation cancellation returned ${canceled.status}`);
-  const afterCancel = await session.claimPairing('pair1', concurrent[refusedIndex]);
-
   const activated = reservations[1];
   const senderReport = await session.completePairingSide('pair1', activated);
   if (senderReport.state !== 'awaiting_confirmation') {
@@ -75,7 +67,25 @@ export async function exerciseCapacity(session) {
     'receiver_limit_reached',
   );
 
+  const canceled = await session.request({
+    method: 'DELETE',
+    path: `/v1/pairing-sessions/${encodeURIComponent(reservations[0].sessionID)}`,
+    token: session.token('pair1', 'user_session'),
+  });
+  if (canceled.status !== 204) throw new Error(`Pending reservation cancellation returned ${canceled.status}`);
+  const afterCancel = await session.claimPairing('pair1', concurrent[refusedIndex]);
   const lapsed = await session.createPairingSession({ mode: 'new_receiver' });
+  const afterCancelFull = await session.expectProblem(
+    {
+      method: 'POST',
+      path: `/v1/pairing-sessions/${encodeURIComponent(lapsed.sessionID)}/authorize`,
+      token: session.token('pair1', 'user_session'),
+      body: {},
+    },
+    409,
+    'receiver_limit_reached',
+  );
+
   await expirePairingSession(session, reservations[2].sessionID);
   const afterExpiry = await session.claimPairing('pair1', sixth);
   const afterExpiryFull = await session.expectProblem(
@@ -94,7 +104,7 @@ export async function exerciseCapacity(session) {
       initialDistinct: reservations.length,
       concurrentSixth: {
         admitted: fifth.pairingID,
-        refused: refused[0].error.code,
+        refused: concurrentOutcomes[refusedIndex].error.code,
       },
       canceledReleased: afterCancel.pairingID,
       expiredReleased: afterExpiry.pairingID,
@@ -105,6 +115,7 @@ export async function exerciseCapacity(session) {
       state: pendingReplacement.state,
     },
     stillFull,
+    afterCancelFull,
     afterExpiryFull,
     credentialIssue: { receiverId: issued.receiverId, issued: true },
   };

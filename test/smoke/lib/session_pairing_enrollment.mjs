@@ -5,6 +5,7 @@ import { associations } from './session_pairing_helpers.mjs';
 import {
   assertNoSecret,
   drainPairingUntilClosed,
+  expectCredentialReady,
   expectNoFrame,
   expectPairingState,
   expectRelay,
@@ -131,6 +132,8 @@ export async function enrollReceiver(session, context) {
     receiverSocket = undefined;
     senderSocket = undefined;
 
+    readySocket = await session.openSocket({ path: sessionPath(created), token: created.token });
+    await expectPairingState(readySocket, created);
     const notReady = await session.expectProblem(
       {
         method: 'POST',
@@ -158,8 +161,19 @@ export async function enrollReceiver(session, context) {
     ) {
       throw new Error('Both authenticated reports did not activate the Pairing');
     }
+    const credentialReady = await expectCredentialReady(readySocket, created);
 
     const operationID = session.newOperationID('receiver-issuance');
+    const crossSessionRedemption = await session.expectProblem(
+      {
+        method: 'POST',
+        path: `/v1/pairing-sessions/${encodeURIComponent(created.sessionID)}/receiver-token`,
+        token: other.token,
+        body: { operationId: session.newOperationID('other-session-issuance'), attempt: 0 },
+      },
+      401,
+      'credential_invalid',
+    );
     const managementRedemption = await session.expectProblem(
       {
         method: 'POST',
@@ -196,12 +210,6 @@ export async function enrollReceiver(session, context) {
     assertNoSecret(activated, retransmitted.receiverToken, 'Sender completion response');
     if (!listed.some(item => item.pairingId === claimed.pairingID && item.presence === 'offline')) {
       throw new Error('Activated Pairing was absent from the Sender list before Receiver possession');
-    }
-
-    readySocket = await session.openSocket({ path: sessionPath(created), token: created.token });
-    const beforePossession = await expectPairingState(readySocket, created);
-    if (!['credential_ready', 'credential_issued'].includes(beforePossession.session.state)) {
-      throw new Error(`Pairing channel resumed in ${beforePossession.session.state}`);
     }
 
     delivery = await openDelivery(session, retransmitted.receiverToken);
@@ -246,9 +254,15 @@ export async function enrollReceiver(session, context) {
         operationId: operationID,
         droppedRequestId: dropped.requestId,
         retransmittedAttempt: 1,
+        crossSessionRedemption,
         staleAttempt,
         managementRedemption,
         lateRedemption,
+        credentialReady: {
+          sessionId: credentialReady.sessionId,
+          receiverId: credentialReady.receiverId,
+          expiresAt: credentialReady.expiresAt,
+        },
       },
     };
   } finally {
