@@ -81,23 +81,13 @@ export function validateConfiguration(facts, model, { cronActive = true } = {}) 
   };
 }
 
-export function validateDatabaseFacts(facts, { release, scripts, upgradeOrigin = null, model }) {
+export function validateDatabaseFacts(facts, { release, scripts, origins = null, upgradeOrigin = null, model }) {
   if (facts?.database !== 'pin_glide') throw new Error('Smoke database must be pin_glide');
-  if (facts.release !== release) throw new Error(`Database Release must be ${release}`);
-  if (
-    !Array.isArray(facts.history)
-    || facts.history.length === 0
-    || facts.history.some(version => typeof version !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version))
-    || facts.history.at(-1) !== release
-  ) {
-    throw new Error('Release deployment history does not end at the selected release');
-  }
-  const previous = [...facts.history].reverse().find(version => version !== release);
-  if (previous !== undefined && previous !== upgradeOrigin) {
-    throw new Error(
-      `Release deployment history origin ${previous || 'none'} is not supported; expected ${upgradeOrigin || 'fresh installation'}`,
-    );
-  }
+  const history = validateReleaseHistory(facts, {
+    release,
+    origins,
+    upgradeOrigin,
+  });
   const configuration = validateConfiguration(facts, model);
 
   for (const [identity, exitCode] of Object.entries({
@@ -120,13 +110,46 @@ export function validateDatabaseFacts(facts, { release, scripts, upgradeOrigin =
   return {
     database: facts.database,
     release: facts.release,
-    history: [...facts.history],
-    installation: previous === undefined ? 'fresh' : 'upgrade',
-    upgradeOrigin: previous || null,
+    history: history.versions,
+    installation: history.installation,
+    upgradeOrigin: history.upgradeOrigin,
     model: { ...facts.model },
     retentionPolicies: configuration.retentionPolicies,
     dataScripts,
     migrationScripts,
     cron: configuration.cron,
+  };
+}
+
+export function validateReleaseHistory(facts, { release, origins = null, upgradeOrigin = null }) {
+  if (facts?.release !== release) throw new Error(`Database Release must be ${release}`);
+  if (
+    !Array.isArray(facts.history)
+    || facts.history.length === 0
+    || facts.history.some(version => typeof version !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version))
+    || facts.history.at(-1) !== release
+  ) {
+    throw new Error('Release deployment history does not end at the selected release');
+  }
+  const previous = [...facts.history].reverse().find(version => version !== release);
+  if (previous !== undefined && previous !== upgradeOrigin) {
+    throw new Error(
+      `Release deployment history origin ${previous || 'none'} is not supported; expected ${upgradeOrigin || 'fresh installation'}`,
+    );
+  }
+  if (origins) {
+    for (let index = 1; index < facts.history.length; index++) {
+      const from = facts.history[index - 1];
+      const to = facts.history[index];
+      if (from === to || !Object.hasOwn(origins, to)) continue;
+      if (!origins[to].includes(from)) {
+        throw new Error(`Release deployment history transition ${from} to ${to} is not declared`);
+      }
+    }
+  }
+  return {
+    versions: [...facts.history],
+    installation: previous === undefined ? 'fresh' : 'upgrade',
+    upgradeOrigin: previous || null,
   };
 }

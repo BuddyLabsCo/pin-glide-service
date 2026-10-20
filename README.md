@@ -237,8 +237,9 @@ PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev 
   node test/smoke/runner.mjs --integration-ready
 ```
 
-`--check` is read-only. `--integration-ready` also seeds and removes run-owned
-SQL fixtures, verifies their normal M/U/F authority, creates a stopped-writer
+`--check` is read-only and exits `2` after prerequisites pass because it does
+not execute restore. `--integration-ready` seeds and removes run-owned SQL
+fixtures, verifies their normal M/U/F authority, creates a stopped-writer
 container snapshot, restores it into a disposable database, and writes redacted
 evidence.
 See `deploy/compose/README.md` for the target guards,

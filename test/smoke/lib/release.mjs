@@ -24,33 +24,30 @@ function compareVersions(left, right) {
   return 0;
 }
 
-async function files(directory) {
-  let entries;
-  try {
-    entries = await fs.promises.readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  }
-  return entries.filter(entry => entry.isFile() && entry.name.endsWith('.sql')).map(entry => entry.name).sort();
-}
-
 async function checksum(filename) {
   return createHash('sha256').update(await fs.promises.readFile(filename)).digest('hex');
 }
 
-export async function scriptDigests(root) {
-  const data = {};
-  for (const filename of await files(path.join(root, 'db/scripts'))) {
-    data[filename] = await checksum(path.join(root, 'db/scripts', filename));
+export async function scriptDigests(root, run = runProcess) {
+  const result = await run('bash', ['scripts/release/migration-order.sh'], { cwd: root });
+  const manifest = result.stdout.trim().split('\n').filter(Boolean);
+  if (manifest.length === 0 || new Set(manifest).size !== manifest.length) {
+    throw new Error('Release SQL order manifest is empty or contains duplicate paths');
   }
+  const data = {};
   const migrations = {};
-  for (const schema of ['release', 'pin_glide']) {
-    for (const filename of await files(path.join(root, 'db/migrations', schema))) {
-      migrations[`${schema}/${filename}`] = await checksum(path.join(root, 'db/migrations', schema, filename));
+  for (const relative of manifest) {
+    const match = relative.match(/^db\/(scripts\/[^/]+\.sql|migrations\/(release|pin_glide)\/[^/]+\.sql)$/);
+    if (!match) throw new Error(`Release SQL order manifest contains invalid path ${relative}`);
+    if (relative.startsWith('db/scripts/')) {
+      const filename = path.basename(relative);
+      data[filename] = await checksum(path.join(root, relative));
+    } else {
+      const schema = match[2];
+      migrations[`${schema}/${path.basename(relative)}`] = await checksum(path.join(root, relative));
     }
   }
-  return { data, migrations };
+  return { data, migrations, manifest };
 }
 
 export async function contractBytes(root) {
@@ -104,10 +101,10 @@ export async function releaseSupport(root) {
 }
 
 export async function publishedUpgradeOrigin({ version, releaseRepo, allowedOrigins, run = runProcess }) {
-  if (allowedOrigins !== undefined && !Array.isArray(allowedOrigins)) {
+  if (!Array.isArray(allowedOrigins)) {
     throw new SmokeValidationError(new Error('Declared release origins must be an array'));
   }
-  if (allowedOrigins?.length === 0) return null;
+  if (allowedOrigins.length === 0) return null;
   const result = await run('gh', [
     'release',
     'list',
@@ -131,7 +128,7 @@ export async function publishedUpgradeOrigin({ version, releaseRepo, allowedOrig
     if (!release.tagName.startsWith('v')) continue;
     const candidate = release.tagName.slice(1);
     if (!versionParts(candidate) || compareVersions(candidate, version) >= 0) continue;
-    if (allowedOrigins && !allowedOrigins.includes(candidate)) continue;
+    if (!allowedOrigins.includes(candidate)) continue;
     if (origin === null || compareVersions(candidate, origin) > 0) origin = candidate;
   }
   return origin;
@@ -182,11 +179,12 @@ export async function validatePublishedRelease({
     throw new SmokeValidationError(new Error(`Published release metadata is not valid JSON: ${error.message}`));
   }
   const support = await releaseSupport(root);
-  const declaredOrigins = Object.hasOwn(support.origins, target.release)
-    ? support.origins[target.release]
-    : null;
+  if (!Object.hasOwn(support.origins, target.release)) {
+    throw new SmokeValidationError(new Error(`Release ${target.release} has no declared upgrade support`));
+  }
+  const declaredOrigins = support.origins[target.release];
   let upgradeOrigin = null;
-  if (declaredOrigins !== null) {
+  if (declaredOrigins.length > 0) {
     upgradeOrigin = await publishedUpgradeOrigin({
       version: target.release,
       releaseRepo,
@@ -219,5 +217,6 @@ export async function validatePublishedRelease({
     tag: metadata.tagName,
     publishedAt: metadata.publishedAt || '',
     upgradeOrigin,
+    origins: support.origins,
   };
 }

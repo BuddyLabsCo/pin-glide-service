@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { validateConfiguration } from './database.mjs';
+import { validateConfiguration, validateReleaseHistory } from './database.mjs';
 import { quote, snapshotName } from './remote.mjs';
 
 const databaseName = /^[a-z][a-z0-9_]{0,62}$/;
@@ -182,22 +182,17 @@ SELECT json_build_object(
 `;
 }
 
-export function validateRestoredFacts(facts, { database: expectedDatabase, release, upgradeOrigin = null, model }) {
+export function validateRestoredFacts(facts, {
+  database: expectedDatabase,
+  release,
+  origins = null,
+  upgradeOrigin = null,
+  model,
+}) {
   if (facts?.database !== expectedDatabase) throw new Error('Restored database has the wrong name');
-  if (release && facts.release !== release) {
-    throw new Error(`Restored database Release ${facts.release || 'missing'} does not match ${release}`);
-  }
-  if (
-    !Array.isArray(facts.history)
-    || facts.history.length === 0
-    || facts.history.some(version => typeof version !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version))
-  ) {
-    throw new Error('Restored database has no release deployment history');
-  }
-  const previous = [...facts.history].reverse().find(version => version !== release);
-  if (release && previous !== undefined && previous !== upgradeOrigin) {
-    throw new Error(`Restored database origin ${previous} is not supported; expected ${upgradeOrigin || 'fresh installation'}`);
-  }
+  const history = release
+    ? validateReleaseHistory(facts, { release, origins, upgradeOrigin })
+    : { versions: facts.history, installation: 'unknown', upgradeOrigin: null };
   const configuration = validateConfiguration(facts, model, { cronActive: false });
   if (facts.pgCronVersion !== '1.6') throw new Error('Restored database did not restore pg_cron 1.6');
   if (Number(facts.runningCronJobs) !== 0 || Number(facts.otherConnections) !== 0) {
@@ -206,9 +201,9 @@ export function validateRestoredFacts(facts, { database: expectedDatabase, relea
   return {
     database: facts.database,
     release: facts.release,
-    history: facts.history,
-    installation: previous === undefined ? 'fresh' : 'upgrade',
-    upgradeOrigin: previous || null,
+    history: history.versions,
+    installation: history.installation,
+    upgradeOrigin: history.upgradeOrigin,
     model: facts.model,
     retentionPolicies: configuration.retentionPolicies,
     cron: configuration.cron,
@@ -216,7 +211,12 @@ export function validateRestoredFacts(facts, { database: expectedDatabase, relea
   };
 }
 
-export async function restoreSnapshotToDisposableDatabase(remote, snapshotPath, { release, upgradeOrigin, model } = {}) {
+export async function restoreSnapshotToDisposableDatabase(remote, snapshotPath, {
+  release,
+  origins,
+  upgradeOrigin,
+  model,
+} = {}) {
   const name = `smoke_restore_${randomBytes(8).toString('hex')}`;
   const target = database(name);
   await remote.sqlOn('postgres', `CREATE DATABASE ${target};`);
@@ -227,7 +227,13 @@ export async function restoreSnapshotToDisposableDatabase(remote, snapshotPath, 
     if (!archive.stdout.trim()) throw new Error('Restore archive has no pg_restore entries');
     await remote.restoreDump(name, snapshotPath, { timeoutMs: 600_000 });
     const facts = await remote.sqlJSONOn(name, restoreFactsQuery(), { timeoutMs: 120_000 });
-    restored = validateRestoredFacts(facts, { database: name, release, upgradeOrigin, model });
+    restored = validateRestoredFacts(facts, {
+      database: name,
+      release,
+      origins,
+      upgradeOrigin,
+      model,
+    });
   } catch (error) {
     failure = error;
   } finally {

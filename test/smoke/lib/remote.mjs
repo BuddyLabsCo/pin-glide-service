@@ -4,6 +4,16 @@ import { runProcess } from './commands.mjs';
 
 const repository = 'BuddyLabsCo/pin-glide-service';
 export const snapshotName = /^pin-glide-snapshot-\d{8}T\d{6}\.\d{9}Z-[0-9]+\.dump$/;
+export const externalWriterQuery = `
+SELECT json_build_object(
+  'connections', count(*)
+)
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND backend_type = 'client backend'
+  AND coalesce(application_name, '') <> 'pg_dump';
+`;
 
 function quote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -226,16 +236,7 @@ export class RemoteEnvironment {
   }
 
   async assertNoExternalWriters() {
-    const result = await this.sqlJSON(`
-SELECT json_build_object(
-  'connections', count(*)
-)
-FROM pg_stat_activity
-WHERE datname = current_database()
-  AND pid <> pg_backend_pid()
-  AND backend_type = 'client backend'
-  AND coalesce(application_name, '') <> 'pg_dump';
-`);
+    const result = await this.sqlJSON(externalWriterQuery);
     if (Number(result.connections) !== 0) {
       throw new Error('Another database writer is still connected; refusing the snapshot');
     }
@@ -256,6 +257,13 @@ WHERE datname = current_database();
   image(reference) {
     return this.ssh(
       `sudo -n docker image inspect ${quote(reference)} --format '{{json .Config.Labels}}|{{json .RepoDigests}}|{{.Id}}'`,
+      { timeoutMs: 30_000 },
+    );
+  }
+
+  scriptManifest(reference) {
+    return this.ssh(
+      `sudo -n docker run --rm --network none --entrypoint cat ${quote(reference)} /app/db/migrations/order.txt`,
       { timeoutMs: 30_000 },
     );
   }
@@ -360,28 +368,45 @@ export async function acquireEnvironmentLock({ target, spawnImpl = spawn, timeou
   let errorOutput = '';
   let acquired = false;
   let exited = false;
+  let settled = false;
+  const finish = (resolve, reject, error) => {
+    if (settled) return;
+    settled = true;
+    if (error) reject(error);
+    else resolve();
+  };
+  const terminate = () => {
+    if (!exited) child.kill('SIGKILL');
+    child.stdin.destroy();
+  };
+  // A failed pipe write must not surface as an unhandled error after cancellation.
+  child.stdin.on('error', () => {});
   child.stderr.on('data', chunk => {
     errorOutput += chunk.toString();
   });
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out acquiring the shared smoke environment lock')), timeoutMs);
+    const timer = setTimeout(() => {
+      terminate();
+      finish(resolve, reject, new Error('timed out acquiring the shared smoke environment lock'));
+    }, timeoutMs);
     child.stdout.on('data', chunk => {
       output += chunk.toString();
-      if (!acquired && output.includes(marker)) {
+      if (!settled && !acquired && output.includes(marker)) {
         acquired = true;
         clearTimeout(timer);
-        resolve();
+        finish(resolve, reject);
       }
     });
     child.once('error', error => {
       clearTimeout(timer);
-      reject(error);
+      terminate();
+      finish(resolve, reject, error);
     });
     child.once('exit', code => {
       exited = true;
-      if (!acquired) {
+      if (!settled && !acquired) {
         clearTimeout(timer);
-        reject(new Error(`another smoke run holds the environment lock${code ? ` (exit ${code})` : ''}${errorOutput ? `: ${errorOutput.trim()}` : ''}`));
+        finish(resolve, reject, new Error(`another smoke run holds the environment lock${code ? ` (exit ${code})` : ''}${errorOutput ? `: ${errorOutput.trim()}` : ''}`));
       }
     });
   });

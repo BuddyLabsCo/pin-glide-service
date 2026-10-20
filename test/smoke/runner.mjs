@@ -34,7 +34,8 @@ function usage() {
     '       node test/smoke/runner.mjs --integration-ready --release X.Y.Z',
     '',
     '--check verifies the published release, deployed Compose identity, health,',
-    'schema/data ledgers, contracts and snapshot inventory without writes.',
+    'schema/data ledgers, contracts and snapshot inventory without writes. It',
+    'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture',
     'and verifies its M/U/F authority through the deployed service, then creates',
     'a stopped-writer snapshot and restores it into a disposable database.',
@@ -66,8 +67,8 @@ function targetFor(options) {
   return targetFromOptions(options);
 }
 
-export function checkExitCode(mode, result) {
-  return mode === 'check' && !result.snapshot ? 2 : 0;
+export function checkExitCode(mode) {
+  return mode === 'check' ? 2 : 0;
 }
 
 function imageFacts(result, label, reference) {
@@ -209,6 +210,20 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
         postgres: running.postgres.id,
       }]])),
     });
+    const scripts = await scriptDigests(root);
+    const packagedManifest = (await remote.scriptManifest(images.dbTools.reference)).stdout;
+    if (packagedManifest !== `${scripts.manifest.join('\n')}\n`) {
+      throw new Error('Packaged SQL order manifest does not match the selected source manifest');
+    }
+    evidence.record({
+      scenario: 'packaged SQL order manifest',
+      status: 'passed',
+      details: {
+        image: images.dbTools.reference,
+        digest: createHash('sha256').update(packagedManifest).digest('hex'),
+        entries: scripts.manifest.length,
+      },
+    });
     const bindings = await verifyPort(remote, target);
     evidence.record({
       scenario: 'published LAN port',
@@ -243,9 +258,19 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     const model = await modelConfiguration(root);
     const database = validateDatabaseFacts(facts, {
       release: target.release,
-      scripts: await scriptDigests(root),
+      scripts,
+      origins: release.origins,
       upgradeOrigin: release.upgradeOrigin,
       model,
+    });
+    evidence.record({
+      scenario: database.installation === 'fresh' ? 'fresh installation' : 'declared supported upgrade',
+      status: 'passed',
+      details: {
+        installation: database.installation,
+        upgradeOrigin: database.upgradeOrigin,
+        history: database.history,
+      },
     });
     evidence.record({
       scenario: 'Database Release and converged configuration',
@@ -295,6 +320,7 @@ export async function verifyRecovery({
       artifact.remotePath,
       {
         release: checkResult.release.tag.slice(1),
+        origins: checkResult.release.origins,
         upgradeOrigin: checkResult.release.upgradeOrigin,
         model: checkResult.model,
       },
@@ -422,7 +448,7 @@ async function main(argv = process.argv.slice(2)) {
       },
       allowMissingSnapshot: options.mode === 'integration-ready',
     });
-    const exitCode = checkExitCode(options.mode, result);
+    const exitCode = checkExitCode(options.mode);
     if (exitCode !== 0) {
       const report = evidence.write(evidencePath);
       console.error(JSON.stringify(report, null, 2));

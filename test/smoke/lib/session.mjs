@@ -253,6 +253,20 @@ SELECT json_build_object(
         { scope: 'refresh', ...rotated.body.refresh },
       ];
       this.evidence.addSecret(sender.credentials.map(item => item.token));
+      const rotatedManagement = credential(sender, 'user_session').token;
+      const rotatedUploader = credential(sender, 'uploader').token;
+      const afterRefresh = await this.request({ path: '/v1/self/receivers', token: rotatedManagement });
+      if (afterRefresh.status !== 200) {
+        throw new Error('Rotated management credential did not authorize its Receiver list');
+      }
+      try {
+        await this.request({ path: `/v1/messages/${missingMessage}`, token: rotatedUploader });
+        throw new Error('Rotated upload credential unexpectedly found a missing Message');
+      } catch (error) {
+        if (!(error instanceof SmokeProblem) || error.status !== 404 || error.code !== 'resource_not_found') {
+          throw new Error(`Rotated upload credential was not accepted: ${error.message}`);
+        }
+      }
     }
     await this.verifyRows({ minimumActive: true });
   }
