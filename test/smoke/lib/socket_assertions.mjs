@@ -3,7 +3,9 @@ import { WebSocketClosedError } from './websocket.mjs';
 export async function expectNoMessage(socket, description, timeoutMs = 300) {
   try {
     const message = await socket.next(timeoutMs);
-    throw new Error(`${description}: ${message.text}`);
+    const type = message.json?.type;
+    const frame = typeof type === 'string' && /^[a-z_]{1,32}$/.test(type) ? ` ${type}` : '';
+    throw new Error(`${description}: received an unexpected WebSocket frame${frame}`);
   } catch (error) {
     if (error instanceof WebSocketClosedError) throw error;
     if (!String(error.message).includes('timed out waiting')) throw error;

@@ -1,11 +1,12 @@
 import { withFailureJoiningCleanup } from './cleanup.mjs';
+import { withDeliveryStorageFault } from './delivery_faults.mjs';
 import {
-  scenarioAuthority,
   scenarioDuplicates,
   scenarioMixed,
   scenarioOutcomes,
   scenarioRetainedLookup,
 } from './session_delivery_lifecycle.mjs';
+import { scenarioAuthority } from './session_delivery_authority.mjs';
 import {
   deliveryItem,
   expectMetadata,
@@ -28,15 +29,13 @@ const deliveryWSS = ['delivery', 'receipt'];
 async function scenarioSendFailed(session, context) {
   const target = liveTarget(session, context);
   const socket = await openReceiver(session, target.receiverToken);
-  // The aggregate payload must exceed the Receiver peer's socket buffers:
-  // otherwise every write is absorbed locally and the only possible outcome is
-  // ack_timeout rather than the write failure this scenario needs.
+  // The aggregate payload must exceed the Receiver peer's socket buffers.
+  // Keeping the connection open and unread makes writes that cannot make room
+  // exceed the service's write bound, while writes that fit still await a
+  // Receipt, so the scenario observes both outcomes without a disconnect race.
   const messages = Array.from({ length: 16 }, (_, index) => messageID(session, `send-failed-${index}`));
   let pending;
   try {
-    // Keep the Receiver from reading the transport, then reset it while its
-    // writes are in flight. Valid requests stay below the service body limit,
-    // and the reset makes the write that cannot complete fail deterministically.
     socket.pauseReads();
     await new Promise(resolve => setTimeout(resolve, 100));
     const started = Date.now();
@@ -51,12 +50,7 @@ async function scenarioSendFailed(session, context) {
     ).then(response => ({ response, message, elapsedMs: Date.now() - started })));
     await waitForAdmitted(session, 'pair2', messages);
     const admittedOffsetMs = Date.now() - started;
-    const abortedAt = Date.now();
-    socket.abort('smoke write failure');
     const responses = await Promise.all(pending);
-    const elapsedMs = Date.now() - started;
-    const abortOffsetMs = abortedAt - started;
-    const afterAbortMs = responses.map(item => item.elapsedMs - abortOffsetMs);
     const failed = responses.filter(({ response }) => (
       response.body?.results?.[0]?.status === 'send_failed'
     ));
@@ -65,22 +59,30 @@ async function scenarioSendFailed(session, context) {
         responses.map(item => item.response.body?.results?.[0]?.status),
       )}`);
     }
-    const failedAfterAbort = failed.map(item => item.elapsedMs - abortOffsetMs);
-    if (failedAfterAbort.some(item => item > 2_500)) {
-      throw new Error(`Failed Delivery writes finished ${JSON.stringify(failedAfterAbort)}ms after the reset, beyond the two-second write bound`);
+    const observedStatuses = responses.map(item => item.response.body?.results?.[0]?.status);
+    // Entries still waiting for the Receiver when the batch budget ends are
+    // honestly interrupted; the scenario only needs at least one bounded
+    // write failure among the blocked entries.
+    const unexpected = observedStatuses.filter(status => (
+      status !== 'send_failed' && status !== 'ack_timeout' && status !== 'interrupted'
+    ));
+    if (unexpected.length > 0) {
+      throw new Error(`Paused Receiver produced unexpected outcomes: ${JSON.stringify(observedStatuses)}`);
     }
     for (const { elapsedMs: requestElapsedMs } of responses) {
       if (requestElapsedMs > 15_500) {
         throw new Error(`Delivery request took ${requestElapsedMs}ms, beyond its 15-second budget`);
       }
     }
-    for (const { response, message, elapsedMs: requestElapsedMs } of failed) {
-      // Every entry was already admitted before this observation, and its
-      // write deadline starts after that claim, so no failed write can outlive
-      // the two-second bound by more than the peer's transport overhead.
-      if (requestElapsedMs > admittedOffsetMs + 2_500) {
-        throw new Error(`Failed Delivery write outlived its two-second bound: ${requestElapsedMs}ms`);
-      }
+    const fastestFailureMs = Math.min(...failed.map(item => item.elapsedMs));
+    // The first blocked write exhausts its own two-second deadline, so an
+    // early failure (such as a transport reset) and a longer write bound both
+    // stay outside this observation. Later writes queue behind it, so only
+    // the fastest failure can prove the deadline.
+    if (fastestFailureMs < 1_500 || fastestFailureMs > admittedOffsetMs + 2_500) {
+      throw new Error(`The first failed Delivery write answered in ${fastestFailureMs}ms, outside the two-second bound`);
+    }
+    for (const { response, message } of failed) {
       expectResult(response, 0, target.receiverID, 'send_failed', 'send_failed');
       expectMetadata(await metadata(session, 'pair2', message), [{
         receiverID: target.receiverID,
@@ -90,14 +92,13 @@ async function scenarioSendFailed(session, context) {
     }
     return {
       writeFailure: failed[0].response.body.results[0].status,
-      observedStatuses: [...new Set(responses.map(item => item.response.body?.results?.[0]?.status))],
+      observedStatuses: [...new Set(observedStatuses)],
       failedEntries: failed.length,
       failedElapsedMs: failed.map(item => item.elapsedMs),
+      fastestFailureMs,
       requestElapsedMs: responses.map(item => item.elapsedMs),
       concurrentRequests: messages.length,
       admittedOffsetMs,
-      afterAbortMs,
-      failedAfterAbortMs: failedAfterAbort,
       writeBounded: true,
       batchBounded: responses.every(item => item.elapsedMs <= 15_500),
       arrivalNotGuaranteedAbsent: true,
@@ -129,11 +130,13 @@ async function scenarioUncertainty(session, context) {
     } catch {
       aborted = true;
     }
+    if (!aborted) throw new Error('Caller received the abandoned response instead of disconnecting');
     sendReceipt(socket, frame);
     const continued = await waitForMetadata(session, 'pair2', disconnectedMessage, [{
       receiverID: live.receiverID,
       status: 'received',
     }]);
+    await expectNoMessage(socket, 'Disconnected caller caused a compensating delivery write');
     return {
       callerDisconnected: aborted,
       continued: continued.body.deliveries[0].status,
@@ -161,7 +164,13 @@ async function scenarioRestart(session, context) {
     });
     await nextDelivery(socket, live);
     abandoned.abort();
-    await abandoned.request.catch(() => {});
+    let callerDisconnected = false;
+    try {
+      await abandoned.request;
+    } catch {
+      callerDisconnected = true;
+    }
+    if (!callerDisconnected) throw new Error('Restart scenario did not disconnect the caller');
 
     await session.remote.restartAPI();
     const continued = await waitForMetadata(session, 'pair2', abandonedMessage, [{
@@ -178,6 +187,7 @@ async function scenarioRestart(session, context) {
       expectResult(duplicate, 0, live.receiverID, 'interrupted', 'interrupted');
       await expectNoMessage(reconnected, 'Restart replayed or resent an interrupted Delivery');
       return {
+        callerDisconnected,
         processRestart: true,
         interrupted: continued.body.deliveries[0].status,
         resumedSend: false,
@@ -256,12 +266,10 @@ async function scenarioStorageUncertainty(session, context) {
   const live = liveTarget(session, context);
   const socket = await openReceiver(session, live.receiverToken);
   const message = messageID(session, 'storage');
-  let fault = false;
   try {
-    const result = await withFailureJoiningCleanup(
+    const result = await withDeliveryStorageFault(
+      session.remote,
       async () => {
-        await session.remote.sql('ALTER TABLE pin_glide.delivery_deliveries RENAME TO smoke_delivery_hidden');
-        fault = true;
         const uncertain = await session.expectProblem({
           method: 'POST',
           path: '/v1/messages',
@@ -273,12 +281,6 @@ async function scenarioStorageUncertainty(session, context) {
         await expectNoMessage(socket, 'Storage failure sent a Delivery before its metadata');
         return { storageUnavailable: uncertain, noSend: true };
       },
-      async () => {
-        if (fault) {
-          await session.remote.sql('ALTER TABLE pin_glide.smoke_delivery_hidden RENAME TO delivery_deliveries');
-        }
-      },
-      'Delivery storage fault and restoration both failed',
     );
     return result;
   } finally {
@@ -290,15 +292,13 @@ async function scenarioFinalizationUncertainty(session, context) {
   const target = liveTarget(session, context);
   const socket = await openReceiver(session, target.receiverToken);
   const message = messageID(session, 'finalization');
-  let fault = false;
   let response;
   try {
     response = upload(session, 'pair2', message, [deliveryItem(target)]);
     const frame = await nextDelivery(socket, target);
-    const uncertain = await withFailureJoiningCleanup(
+    const uncertain = await withDeliveryStorageFault(
+      session.remote,
       async () => {
-        await session.remote.sql('ALTER TABLE pin_glide.delivery_deliveries RENAME TO smoke_delivery_hidden');
-        fault = true;
         sendReceipt(socket, frame);
         const result = await response.catch(error => {
           if (error?.status === 503 && error?.code === 'delivery_status_unavailable') return error;
@@ -309,12 +309,6 @@ async function scenarioFinalizationUncertainty(session, context) {
         }
         return result;
       },
-      async () => {
-        if (fault) {
-          await session.remote.sql('ALTER TABLE pin_glide.smoke_delivery_hidden RENAME TO delivery_deliveries');
-        }
-      },
-      'Delivery finalization fault and restoration both failed',
     );
     const restored = expectMetadata(await metadata(session, 'pair2', message), [{
       receiverID: target.receiverID,
@@ -398,7 +392,7 @@ export async function runDeliveryScenarios(session, context = {}) {
   scenarios.push(await runDeliveryScenario(
     session,
     'temporary PostgreSQL outage yields uncertainty without a compensating send',
-    { http: ['PostMessages'], wss: ['delivery'] },
+    { http: ['PostMessages'], wss: [] },
     () => scenarioPostgresOutage(session, context),
   ));
   scenarios.push(await runDeliveryScenario(

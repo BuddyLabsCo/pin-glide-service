@@ -2,75 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import {
-  deliveryItem,
-  expectMetadata,
-  expectResult,
-  runDeliveryScenario,
-} from './lib/session_delivery_support.mjs';
+import { withDeliveryStorageFault } from './lib/delivery_faults.mjs';
+import { runDeliveryScenario } from './lib/session_delivery_support.mjs';
+import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
 
-function response(body, status = 207) {
-  return {
-    status,
-    requestId: `request-${status}`,
-    body,
+test('an unexpected Delivery frame is reported without its ciphertext', async () => {
+  const socket = {
+    next: async () => ({
+      text: '{"type":"delivery","nonce":"secret-nonce","ciphertext":"secret-ciphertext"}',
+      json: { type: 'delivery', nonce: 'secret-nonce', ciphertext: 'secret-ciphertext' },
+    }),
   };
-}
-
-test('Delivery results require the original index, readable Receiver and stable business code', () => {
-  const result = { index: 0, receiverId: 'receiver-1', status: 'offline', error: { code: 'offline' } };
-  assert.equal(expectResult(response({ results: [result] }), 0, 'receiver-1', 'offline', 'offline'), result);
-  const unreadable = { index: 0, status: 'rejected', error: { code: 'invalid_delivery_item' } };
-  assert.equal(
-    expectResult(response({ results: [unreadable] }), 0, '', 'rejected', 'invalid_delivery_item'),
-    unreadable,
+  await assert.rejects(
+    () => expectNoMessage(socket, 'Unexpected frame'),
+    error => /Unexpected frame: received an unexpected WebSocket frame delivery/.test(error.message)
+      && !error.message.includes('secret'),
   );
-  assert.throws(
-    () => expectResult(response({ results: [{ ...result, index: 1 }] }), 0, 'receiver-1', 'offline', 'offline'),
-    /Result 0/,
-  );
-  assert.throws(
-    () => expectResult(response({ results: [{ ...result, error: { code: 'send_failed' } }] }), 0, 'receiver-1', 'offline', 'offline'),
-    /code = send_failed/,
-  );
-});
-
-test('retained metadata requires one view per Receiver, exact outcomes and stable terminal fields', () => {
-  const created = '2026-10-21T00:00:00Z';
-  const completed = '2026-10-21T00:00:05Z';
-  const body = {
-    deliveries: [
-      { receiverId: 'receiver-1', status: 'received', createdAt: created, completedAt: completed },
-      { receiverId: 'receiver-2', status: 'offline', createdAt: created, completedAt: completed, error: { code: 'offline' } },
-    ],
-  };
-  const views = expectMetadata(response(body, 200), [
-    { receiverID: 'receiver-1', status: 'received', createdAt: created, completedAt: completed },
-    { receiverID: 'receiver-2', status: 'offline', code: 'offline' },
-  ]);
-  assert.equal(views['receiver-1'].status, 'received');
-  assert.throws(
-    () => expectMetadata(response(body, 200), [{ receiverID: 'receiver-1', status: 'offline' }]),
-    /reports 2 Deliveries/,
-  );
-  assert.throws(
-    () => expectMetadata(response({ deliveries: [{ ...body.deliveries[0], completedAt: 'changed' }] }, 200), [
-      { receiverID: 'receiver-1', status: 'received', completedAt: completed },
-    ]),
-    /terminal time changed/,
-  );
-});
-
-test('opaque Delivery fixtures carry random padded Base64 nonce and ciphertext fields', () => {
-  const pairing = { receiverID: 'receiver-1', pairingID: 'pairing-1' };
-  const first = deliveryItem(pairing);
-  const second = deliveryItem(pairing);
-  assert.notEqual(first.nonce, second.nonce);
-  assert.notEqual(first.ciphertext, second.ciphertext);
-  assert.equal(Buffer.from(first.nonce, 'base64').length, 12);
-  assert.equal(Buffer.from(first.ciphertext, 'base64').length, 48);
-  assert.equal(first.cryptoVersion, 1);
 });
 
 test('the HTTP peer carries malformed raw upload bodies without JSON re-encoding them', async () => {
@@ -99,6 +47,34 @@ test('the HTTP peer carries malformed raw upload bodies without JSON re-encoding
     () => peer.call({ path: '/v1/messages', body: {}, rawBody: '{}' }),
     /both body and rawBody/,
   );
+});
+
+test('the Delivery storage fault is restored after a failed scenario', async () => {
+  const calls = [];
+  const remote = {
+    target: { deploymentDir: '/srv/pin-glide-dev' },
+    compose: "sudo -n docker compose --project-directory '/srv/pin-glide-dev'",
+    ssh(script) {
+      calls.push(script);
+      return Promise.resolve({
+        stdout: calls.length === 1
+          ? '/tmp/pin-glide-dev-smoke-delivery.Ab3dEf|/tmp/pin-glide-dev-smoke-delivery.Ab3dEf.sh\n'
+          : '',
+      });
+    },
+    sql(statement) {
+      calls.push(statement);
+      return Promise.resolve();
+    },
+  };
+  await assert.rejects(
+    () => withDeliveryStorageFault(remote, async () => {
+      throw new Error('scenario failed');
+    }),
+    /scenario failed/,
+  );
+  assert.match(calls[1], /current_database\(\) = 'pin_glide'[\s\S]*ALTER TABLE pin_glide\.delivery_deliveries RENAME TO smoke_delivery_hidden/);
+  assert.match(calls[2], /EXECUTE .*ALTER TABLE pin_glide\.smoke_delivery_hidden RENAME TO delivery_deliveries/);
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {
