@@ -341,8 +341,8 @@ export class SmokeSession {
     return result.body;
   }
 
-  openSocket({ path, token }) {
-    return openWebSocket({ origin: this.target.wsOrigin, path, token, target: this.target });
+  openSocket(options) {
+    return openWebSocket({ origin: this.target.wsOrigin, target: this.target, ...options });
   }
 
   async verifyRows() {

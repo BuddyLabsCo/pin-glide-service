@@ -28,6 +28,7 @@ type generatedSmokeSQL struct {
 	ExpireParent       string `json:"expireParent"`
 	RevokeRegistration string `json:"revokeRegistration"`
 	SupersedeFamily    string `json:"supersedeFamily"`
+	InvalidateReceiver string `json:"invalidateReceiver"`
 	FirstSenderID      string `json:"firstSenderId"`
 	FirstAccountID     string `json:"firstAccountId"`
 	SecondAccountID    string `json:"secondAccountId"`
@@ -36,6 +37,8 @@ type generatedSmokeSQL struct {
 	RefreshLifetime    string `json:"refreshLifetime"`
 	PermanentSenderID  string `json:"permanentSenderId"`
 	SupersededSenderID string `json:"supersededSenderId"`
+	SenderCount        int    `json:"senderCount"`
+	CredentialCount    int    `json:"credentialCount"`
 }
 
 func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
@@ -51,9 +54,9 @@ func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
 	execSQL(t, pool, sql.Bootstrap)
 	assertCount(t, pool, 2, `SELECT count(*) FROM pin_glide.identity_accounts
 		WHERE id IN ($1, $2)`, sql.FirstAccountID, sql.SecondAccountID)
-	assertCount(t, pool, 17, `SELECT count(*) FROM pin_glide.identity_sender_registrations
+	assertCount(t, pool, sql.SenderCount, `SELECT count(*) FROM pin_glide.identity_sender_registrations
 		WHERE id LIKE 'smoke-integration-fixture-sender-%' AND state = 'active'`)
-	assertCount(t, pool, 51, `SELECT count(*) FROM pin_glide.identity_credentials
+	assertCount(t, pool, sql.CredentialCount, `SELECT count(*) FROM pin_glide.identity_credentials
 		WHERE sender_id LIKE 'smoke-integration-fixture-sender-%'
 		  AND token_digest ~ '^[0-9a-f]{64}$'`)
 
@@ -114,6 +117,20 @@ INSERT INTO pin_glide.identity_receiver_credentials
     (receiver_id, generation, token_digest)
 VALUES ('smoke-integration-fixture-receiver', 1, repeat('a', 64))`)
 	execSQL(t, pool, `
+INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
+VALUES ('smoke-integration-unaffected-receiver', $1, 'active')`, sql.FirstAccountID)
+	execSQL(t, pool, `
+INSERT INTO pin_glide.identity_receiver_credentials
+    (receiver_id, generation, token_digest)
+VALUES ('smoke-integration-unaffected-receiver', 1, repeat('c', 64))`)
+	execSQL(t, pool, sql.InvalidateReceiver)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_receiver_credentials
+		WHERE receiver_id = 'smoke-integration-fixture-receiver'
+		  AND revoked_at IS NOT NULL`)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_receiver_credentials
+		WHERE receiver_id = 'smoke-integration-unaffected-receiver'
+		  AND revoked_at IS NULL`)
+	execSQL(t, pool, `
 INSERT INTO pin_glide.pairing_pairings
     (id, sender_id, receiver_id, alias, state, activated_at)
 VALUES ('smoke-integration-fixture-pairing', $1,
@@ -153,6 +170,10 @@ VALUES ('unrelated-integration-sender', 'unrelated-integration-account', 'active
 		 WHERE id = 'smoke-integration-fixture-receiver'`,
 		`SELECT count(*) FROM pin_glide.identity_receiver_credentials
 		 WHERE receiver_id = 'smoke-integration-fixture-receiver'`,
+		`SELECT count(*) FROM pin_glide.identity_receiver_registrations
+		 WHERE id = 'smoke-integration-unaffected-receiver'`,
+		`SELECT count(*) FROM pin_glide.identity_receiver_credentials
+		 WHERE receiver_id = 'smoke-integration-unaffected-receiver'`,
 		`SELECT count(*) FROM pin_glide.pairing_pairings
 		 WHERE id = 'smoke-integration-fixture-pairing'`,
 		`SELECT count(*) FROM pin_glide.pairing_sessions
@@ -221,6 +242,8 @@ process.stdout.write(JSON.stringify({
   expireParent: fixtures.renderExpireRefreshParentSQL(plan, 'scope', 'integration-operation'),
   revokeRegistration: fixtures.renderRevokeSenderRegistrationSQL(plan, 'permanent'),
   supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
+  invalidateReceiver: fixtures.renderInvalidateReceiverCredentialSQL(
+    plan, 'smoke-integration-fixture-receiver'),
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
   secondAccountId: plan.accounts[1].id,
@@ -229,6 +252,8 @@ process.stdout.write(JSON.stringify({
   refreshLifetime: fixtures.credentialLifetimeInterval('refresh'),
   permanentSenderId: permanent.id,
   supersededSenderId: superseded.id,
+  senderCount: plan.senders.length,
+  credentialCount: plan.senders.length * fixtures.credentialScopes.length,
 }));
 `
 	command := exec.Command("node", "--input-type=module", "--eval", script)

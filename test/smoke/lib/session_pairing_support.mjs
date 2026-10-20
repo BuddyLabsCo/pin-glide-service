@@ -19,6 +19,9 @@ const wssNames = {
   pairingRelayOut: 'pairing_relay',
   credentialReady: 'credential_ready',
   pairingRemoved: 'pairing_removed',
+  deviceRevoked: 'device_revoked',
+  delivery: 'delivery',
+  receipt: 'receipt',
   error: 'error',
 };
 
@@ -37,7 +40,7 @@ function messageIdentity(name) {
   return { name: wireName, source: asyncAPI };
 }
 
-export async function runPairingScenario(session, name, exercised, callback) {
+export async function runProtocolScenario(session, name, exercised, callback) {
   return runScenario(session, name, async () => ({
     contract: {
       openapi: { source: openAPI, digest: openapiDigest },
@@ -48,6 +51,10 @@ export async function runPairingScenario(session, name, exercised, callback) {
     },
     ...(await callback()),
   }));
+}
+
+export async function runPairingScenario(session, name, exercised, callback) {
+  return runProtocolScenario(session, name, exercised, callback);
 }
 
 export function sessionPath(pairing) {
@@ -240,13 +247,16 @@ export async function expirePairingSession(session, sessionID) {
   await session.remote.sql(renderExpirePairingSessionSQL(sessionID));
 }
 
-export async function waitForPresence(session, label, pairingID, wanted) {
+export async function waitForPresence(session, label, pairingID, wanted, {
+  attempts = 30,
+  intervalMs = 100,
+} = {}) {
   let last;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const listed = await associations(session, label);
     last = listed.find(item => item.pairingId === pairingID);
     if (last?.presence === wanted) return last;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Pairing ${pairingID} never reported presence ${wanted}`);
 }

@@ -13,14 +13,11 @@ import { modelConfiguration } from './lib/configuration.mjs';
 import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
 import { RemoteEnvironment, acquireEnvironmentLock, repository } from './lib/remote.mjs';
-import {
-  recoverySnapshot,
-  restoreSnapshotToDisposableDatabase,
-  verifySnapshotLocations,
-} from './lib/restore.mjs';
+import { recoverySnapshot, restoreSnapshotToDisposableDatabase, verifySnapshotLocations } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
+import { runReceiverScenarios } from './lib/session_receiver.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -364,6 +361,7 @@ async function runSeededJourneys({ session, plan }) {
   return {
     credentials: await runSenderCredentialScenarios({ session, plan }),
     pairing: await runPairingScenarios(session),
+    receiver: await runReceiverScenarios(session),
   };
 }
 

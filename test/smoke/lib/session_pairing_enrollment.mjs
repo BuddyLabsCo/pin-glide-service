@@ -111,8 +111,14 @@ export async function enrollReceiver(session, context) {
       payload: opaqueRelayPayload('key_confirmation', 31),
     });
     const absentPeer = await senderSocket.next();
-    if (absentPeer.json?.type !== 'error' || absentPeer.json?.error?.code !== 'pairing_not_ready') {
-      throw new Error('Relay without a connected peer did not report pairing_not_ready');
+    if (
+      absentPeer.json?.type !== 'error'
+      || absentPeer.json?.error?.code !== 'pairing_not_ready'
+      || !absentPeer.json.requestId
+      || !absentPeer.json.error.detail
+      || absentPeer.json.sessionId !== created.sessionID
+    ) {
+      throw new Error('Relay without a connected peer did not report correlated pairing_not_ready');
     }
 
     receiverSocket = await session.openSocket({ path: sessionPath(created), token: created.token });

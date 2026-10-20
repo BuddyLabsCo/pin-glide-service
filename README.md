@@ -243,11 +243,18 @@ snapshot and restores it into a disposable database. It then seeds and removes
 run-owned SQL fixtures, exercises the Sender credential/session lifecycle
 through the deployed HTTP and WebSocket surface, calls the real service-issued
 Bailian flow directly, drives Receiver enrollment, add-Sender, replacement,
-association and capacity journeys, and writes redacted evidence. The Bailian
-flow verifies strict text-only OTP and no-OTP inference plus controlled
-authority, configuration, parent-key and connectivity failures. It waits for
-the provider-reported temporary-key expiry (about eleven minutes) and briefly
-recreates the API container for the invalid-parent-key fault.
+association and capacity journeys, and checks Receiver credential scope,
+exclusive delivery connections, presence, protocol failures, issuance
+supersession, heartbeat recovery, restart offline state and reconnect without
+replay. It writes redacted evidence, and records deterministic unit and
+integration test references for race orderings and excluded recovery or
+global-revocation policy closes that the live smoke path cannot observe,
+without claiming those
+referenced tests ran in this smoke invocation. The Bailian flow verifies strict
+text-only OTP and no-OTP inference plus controlled authority, configuration,
+parent-key and connectivity failures. It waits for the provider-reported
+temporary-key expiry (about eleven minutes) and briefly recreates the API
+container for the invalid-parent-key fault.
 After both releases are published, this command proves fresh installation and
 the declared upgrade with disposable Compose projects and the real release
 images:
