@@ -201,6 +201,8 @@ try {
       }
       main.config.services[service].image = `${registry}/${project}/pin-glide-${service}:\${RELEASE}`;
     }
+    // These 63.x tags are synthetic installer-fault identities, not supported
+    // historical releases; the deployed runner derives the real origin above.
     const fixture = path.join(work, 'migration-fixture');
     fs.mkdirSync(path.join(fixture, 'migrations/pin_glide'), { recursive: true });
     fs.mkdirSync(path.join(fixture, 'scripts'));

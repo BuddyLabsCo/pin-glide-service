@@ -53,13 +53,13 @@ Place `docker-compose.yml`, `.env`, and a copy of the repository-root
 `install.sh` in the same directory on the server:
 
 ```sh
-mkdir -p /srv/pin-glide
-cp deploy/compose/docker-compose.yml /srv/pin-glide/docker-compose.yml
-cp deploy/compose/.env.example /srv/pin-glide/.env
-cp install.sh /srv/pin-glide/install.sh
-chmod 700 /srv/pin-glide/install.sh
-chmod 600 /srv/pin-glide/.env
-cd /srv/pin-glide
+mkdir -p /srv/pin-glide-dev
+cp deploy/compose/docker-compose.yml /srv/pin-glide-dev/docker-compose.yml
+cp deploy/compose/.env.example /srv/pin-glide-dev/.env
+cp install.sh /srv/pin-glide-dev/install.sh
+chmod 700 /srv/pin-glide-dev/install.sh
+chmod 600 /srv/pin-glide-dev/.env
+cd /srv/pin-glide-dev
 ```
 
 Edit `.env` before running the installer:
@@ -95,24 +95,15 @@ Edit `.env` before running the installer:
 - `PIN_GLIDE_SNAPSHOT_KEEP`: positive number of completed tool-owned snapshots
   to retain.
 
-Temporary model credentials additionally need the enabled, non-secret model
-configuration row in PostgreSQL: the service never invents a Workspace ID, and
-reports `503 model_configuration_unavailable` until an operator supplies one.
-The stored ID is one lowercase Workspace label such as `llm-abc123`, never the
-endpoint host or a URL, so the parent key can only reach that Workspace.
-After a successful migration, set or replace it in place:
+Temporary model credentials additionally need the enabled, non-secret model configuration row in PostgreSQL. The release Data Script `issue_33_1_model_configuration.sql` installs the approved Bailian Beijing Workspace and `qwen3.7-flash` model. The service reports `503 model_configuration_unavailable` when that row is missing or disabled. The stored ID is one lowercase Workspace label, never the endpoint host or a URL, so the parent key can only reach that Workspace. Verify the deployed row without printing the parent key:
 
 ```sh
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d pin_glide -c \
-  "INSERT INTO pin_glide.model_configurations (id, workspace_id, model)
-    VALUES ('default', '<workspace-id>', 'qwen3.7-flash')
-    ON CONFLICT (id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id,
-      model = EXCLUDED.model, enabled = true, updated_at = now()"
+  "SELECT workspace_id, model, enabled
+   FROM pin_glide.model_configurations WHERE id = 'default'"
 ```
 
-Setting `enabled = false` on that row stops new issuance while the row stays
-for the record; keys the provider already issued cannot be revoked through the
-service.
+To change this configuration in a later release, add a new immutable Data Script. Do not edit a processed script. Setting `enabled = false` stops new issuance while the row stays for the record. The service cannot revoke keys the provider already issued.
 
 The script must be run **from this prepared directory**. It does not download
 itself, install dependencies, generate templates, or upgrade Compose files, and
@@ -120,9 +111,52 @@ it never executes `.env` with `source` or `eval`. Every Docker/Compose call from
 the installer unsets inherited `RELEASE`, so the version in local `.env` wins
 even if the invoking shell exports a different value.
 
-The `api` publishes `8080` on the host. Put your own HTTPS/WSS reverse proxy in
-front of it; the service terminates TLS nowhere and exposes no other port.
-Multiple installations need distinct project names and host ports.
+The prepared development-acceptance Compose file publishes host port `33489`
+and keeps the API listening on container port `8080`. The adopted LAN origins
+are `http://192.168.10.17:33489` and `ws://192.168.10.17:33489`. Put your own
+HTTPS/WSS reverse proxy in front of a production installation; the service
+terminates TLS nowhere and exposes no other port. Multiple installations need
+distinct project names and host ports.
+
+## Smoke-test the development installation
+
+`test/smoke/runner.mjs` checks the pinned release, immutable image IDs and digests, Compose project, database release, schema/data ledgers, packaged SQL order, model configuration, cleanup schedule, LAN port and health. `test/smoke/release-support.json` is the authority for upgrade origins. The runner rejects a target release without a declaration and any history transition the declaration does not allow. It refuses any target other than `local-server`, `/srv/pin-glide-dev`, Compose project `pin-glide-dev`, database `pin_glide`, and the adopted origins.
+
+Run the read-only checks after a published release:
+
+```sh
+PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
+```
+
+Run the guarded SQL bootstrap and cleanup only when you authorize writes to the development database:
+
+```sh
+PIN_GLIDE_SMOKE_RELEASE=0.1.6 \
+PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev \
+  node test/smoke/runner.mjs --integration-ready
+```
+
+The integration run creates two synthetic QQ-namespace Accounts, two active Senders in the first Account and one foreign Sender in the second. It generates fresh M/U/F credentials, stores only lowercase SHA-256 digests with normal three-hour or seven-day lifetimes, verifies their authority through the deployed HTTP surface and refresh operation, then removes the run-owned rows. Raw credentials stay in runner memory and redacted evidence only. It then uses the installer to stop the API, hold and drain pg_cron, create a root-authorized stopped snapshot, and restart the API. The stopped snapshot is restored into a disposable database through the PostgreSQL container; the runner verifies the release ledgers, exact model/retention/cron configuration, pg_cron extension and quiescence, then drops the disposable database.
+
+Both modes require `/mnt/share/workspace/snapshots/pin-glide` on the server and development workstation. `--check` requires both sides to expose the same completed snapshot, records the restore as blocked and exits `2`; it never reports acceptance. `--integration-ready` can start from an empty directory because it creates the stopped-writer backup used for recovery verification. The runner serializes environment-wide work with `/tmp/pin-glide-dev-smoke.lock` on `local-server`. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
+
+The explicit integration run covers successful fresh install, same-version retry, failed migration, retained-container reconciliation, cancel/restore and scheduler fault injection on a disposable real PostgreSQL/Compose stack:
+
+```sh
+node test/smoke/release-install.mjs --integration-ready
+```
+
+The `--check` mode only verifies prerequisites; it does not run those scenarios. The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The deployed runner validates upgrade origins against GitHub releases.
+
+After both releases are published, exercise a fresh installation of the target and the declared upgrade on disposable local Compose projects with the real release images:
+
+```sh
+node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
+```
+
+This command pulls through the existing workstation Docker credential context and removes both project volumes. Its `--check` mode validates the releases and support declaration without starting containers.
+
+Real QQ/WeChat authorization, fresh-owner Sender security revocation and fresh-owner `recover_receiver` remain outside unattended smoke coverage. Provider integration tests cover those paths without labeling fixtures as real-provider login.
 
 ## Menu and CLI
 
