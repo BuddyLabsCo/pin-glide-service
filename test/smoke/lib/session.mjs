@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { renderBootstrapSQL, renderCleanupSQL } from './fixtures.mjs';
+import {
+  fixtureSender,
+  renderBootstrapSQL,
+  renderCleanupSQL,
+  sqlTextArray,
+} from './fixtures.mjs';
 import { SmokeProblem } from './http.mjs';
 import { openWebSocket } from './websocket.mjs';
 
@@ -20,15 +25,30 @@ export class SmokeSession {
     this.receivers = new Set();
     this.requestIds = [];
     this.subjects = new Set();
+    this.secrets = new Set();
   }
 
   static async create({ target, remote, http, evidence, plan }) {
-    evidence.addSecret(plan.senders.flatMap(sender => sender.credentials.map(item => item.token)));
     await remote.sql(renderBootstrapSQL(plan));
     const session = new SmokeSession({ target, remote, http, evidence, plan });
+    session.addSecret(plan.senders.flatMap(sender => [
+      ...sender.credentials.map(item => item.token),
+      ...(sender.replacementCredentials || []).map(item => item.token),
+    ]));
     try {
-      await session.verifyRows();
-      await session.verifyAuthority();
+      const rows = await session.verifyRows();
+      const ownership = await session.verifyAuthority();
+      evidence.record({
+        scenario: 'guarded SQL fixture bootstrap and Account/Sender ownership',
+        status: 'passed',
+        details: {
+          accounts: rows.accounts,
+          senders: rows.senders,
+          activeCredentials: rows.active,
+          ownership,
+          requestIds: [...session.requestIds],
+        },
+      });
       return session;
     } catch (error) {
       try {
@@ -41,9 +61,7 @@ export class SmokeSession {
   }
 
   sender(label) {
-    const sender = this.plan.senders.find(item => item.id.endsWith(`-${label}`));
-    if (!sender) throw new Error(`Unknown smoke Sender ${label}`);
-    return sender;
+    return fixtureSender(this.plan, label);
   }
 
   token(label, scope) {
@@ -60,6 +78,18 @@ export class SmokeSession {
     return `smoke-${this.plan.runId}-${label}-${randomUUID()}`;
   }
 
+  addSecret(value) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (!item) continue;
+      this.secrets.add(item);
+      this.evidence.addSecret(item);
+    }
+  }
+
+  secretValues() {
+    return [...this.secrets];
+  }
+
   async request(options) {
     try {
       const result = await this.http.call(options);
@@ -71,19 +101,130 @@ export class SmokeSession {
     }
   }
 
-  async createPairing(label, mode = 'new_receiver', receiverID = '') {
+  async droppedRequest(options) {
+    try {
+      const result = await this.http.callDropped(options);
+      if (result.requestId) this.requestIds.push(result.requestId);
+      return result;
+    } catch (error) {
+      if (error.requestId) this.requestIds.push(error.requestId);
+      throw error;
+    }
+  }
+
+  async expectProblem(options, status, code) {
+    try {
+      await this.request(options);
+    } catch (error) {
+      if (!(error instanceof SmokeProblem)) throw error;
+      if (error.status !== status || error.code !== code) {
+        throw new Error(
+          `Expected HTTP ${status} ${code}, received ${error.status} ${error.code || '(no code)'}`,
+        );
+      }
+      return { status: error.status, code: error.code, requestId: error.requestId };
+    }
+    throw new Error(`Expected HTTP ${status} ${code}, but the request succeeded`);
+  }
+
+  async verifyManagement(token) {
+    const result = await this.request({ path: '/v1/self/receivers', token });
+    if (result.status !== 200) throw new Error(`Management credential returned ${result.status}`);
+    return result;
+  }
+
+  async verifyUploader(token) {
+    return this.expectProblem(
+      { path: `/v1/messages/smoke-missing-${this.plan.runId}`, token },
+      404,
+      'resource_not_found',
+    );
+  }
+
+  async refreshAttempt(label, { operationID, attempt = 0, token } = {}) {
+    const sender = this.sender(label);
+    return this.request({
+      method: 'POST',
+      path: '/v1/auth/refresh',
+      body: {
+        refreshToken: token || credential(sender, 'refresh').token,
+        operationId: operationID,
+        attempt,
+      },
+    });
+  }
+
+  acceptRefresh(label, body, { operationID, attempt }) {
+    const sender = this.sender(label);
+    if (body?.accountId !== sender.accountID || body?.senderId !== sender.id) {
+      throw new Error(`Refresh returned the wrong Sender ownership for ${label}`);
+    }
+    if (body.operationId !== operationID || body.attempt !== attempt) {
+      throw new Error(
+        `Refresh returned ${body.operationId}/${body.attempt}, expected ${operationID}/${attempt}`,
+      );
+    }
+    const credentials = [
+      { scope: 'user_session', ...body.userSession },
+      { scope: 'uploader', ...body.uploader },
+      { scope: 'refresh', ...body.refresh },
+    ];
+    for (const item of credentials) {
+      if (!item.token || !Number.isFinite(Date.parse(item.expiresAt))) {
+        throw new Error(`Refresh returned an incomplete ${item.scope} credential`);
+      }
+    }
+    sender.credentials = credentials;
+    sender.latestRefresh = { operationID, attempt };
+    sender.pendingRefresh = undefined;
+    this.addSecret(credentials.map(item => item.token));
+    return body;
+  }
+
+  async refresh(label, options = {}) {
+    const operationID = options.operationID || this.newOperationID(`refresh-${label}`);
+    const attempt = options.attempt ?? 0;
+    const request = {
+      method: 'POST',
+      path: '/v1/auth/refresh',
+      body: {
+        refreshToken: options.token || this.token(label, 'refresh'),
+        operationId: operationID,
+        attempt,
+      },
+    };
+    if (options.dropped) {
+      const result = await this.droppedRequest(request);
+      this.sender(label).pendingRefresh = { operationID, attempt };
+      return result;
+    }
+    const result = await this.request(request);
+    if (result.cacheControl !== 'no-store') {
+      throw new Error('Refresh success was cacheable');
+    }
+    this.acceptRefresh(label, result.body, { operationID, attempt });
+    return result.body;
+  }
+
+  async createPairing(label, options = {}) {
+    if (typeof options === 'string') options = { mode: options };
+    const mode = options.mode || 'new_receiver';
+    const receiverID = options.receiverID || '';
+    const token = options.token || '';
     const body = { mode };
     if (receiverID) body.receiverId = receiverID;
     const created = await this.request({
       method: 'POST',
       path: '/v1/pairing-sessions',
+      token,
       body,
     });
     if (created.status !== 201) throw new Error(`Pairing Session creation returned ${created.status}`);
     const sessionID = created.body.session.sessionId;
+    if (!sessionID) throw new Error('Pairing Session creation returned no session ID');
     if (sessionID) this.subjects.add(sessionID);
     this.trackReceiver(created.body.session.receiverId);
-    if (created.body.pairingToken) this.evidence.addSecret(created.body.pairingToken);
+    this.addSecret(created.body.pairingToken);
     const authorized = await this.request({
       method: 'POST',
       path: `/v1/pairing-sessions/${encodeURIComponent(sessionID)}/authorize`,
@@ -156,6 +297,7 @@ export class SmokeSession {
         attempt: 0,
       },
     });
+    this.addSecret(result.body?.receiverToken);
     return result.body;
   }
 
@@ -163,38 +305,39 @@ export class SmokeSession {
     return openWebSocket({ origin: this.target.wsOrigin, path, token, target: this.target });
   }
 
-  async verifyRows({ minimumActive = false } = {}) {
+  async verifyRows() {
     const senderIDs = this.plan.senders.map(sender => sender.id);
+    const accountIDs = this.plan.accounts.map(account => account.id);
     const rows = await this.remote.sqlJSON(`
 SELECT json_build_object(
   'accounts', (
     SELECT count(*)
     FROM pin_glide.identity_accounts
-    WHERE id IN (${this.plan.accounts.map(account => `'${account.id}'`).join(',')})
+    WHERE id = ANY(${sqlTextArray(accountIDs)})
   ),
   'senders', (
     SELECT count(*)
     FROM pin_glide.identity_sender_registrations
-    WHERE id IN (${senderIDs.map(id => `'${id}'`).join(',')})
+    WHERE id = ANY(${sqlTextArray(senderIDs)})
       AND state = 'active'
   ),
   'active', (
     SELECT count(*)
     FROM pin_glide.identity_credentials
-    WHERE sender_id IN (${senderIDs.map(id => `'${id}'`).join(',')})
+    WHERE sender_id = ANY(${sqlTextArray(senderIDs)})
       AND revoked_at IS NULL
       AND expires_at > now()
   ),
   'badDigests', (
     SELECT count(*)
     FROM pin_glide.identity_credentials
-    WHERE sender_id IN (${senderIDs.map(id => `'${id}'`).join(',')})
+    WHERE sender_id = ANY(${sqlTextArray(senderIDs)})
       AND token_digest !~ '^[0-9a-f]{64}$'
   ),
   'badLifetimes', (
     SELECT count(*)
     FROM pin_glide.identity_credentials
-    WHERE sender_id IN (${senderIDs.map(id => `'${id}'`).join(',')})
+    WHERE sender_id = ANY(${sqlTextArray(senderIDs)})
       AND (
         (scope IN ('user_session', 'uploader') AND expires_at - issued_at <> interval '3 hours')
         OR (scope = 'refresh' AND expires_at - issued_at <> interval '7 days')
@@ -203,72 +346,43 @@ SELECT json_build_object(
   'families', (
     SELECT count(DISTINCT family_id)
     FROM pin_glide.identity_credentials
-    WHERE sender_id IN (${senderIDs.map(id => `'${id}'`).join(',')})
+    WHERE sender_id = ANY(${sqlTextArray(senderIDs)})
   )
 );
 `);
     if (
       rows.accounts !== this.plan.accounts.length
       || rows.senders !== this.plan.senders.length
-      || (minimumActive ? rows.active < this.plan.senders.length * 3 : rows.active !== this.plan.senders.length * 3)
+      || rows.active !== this.plan.senders.length * 3
       || rows.badDigests !== 0
       || rows.badLifetimes !== 0
       || rows.families !== this.plan.senders.length
     ) {
       throw new Error(`Fixture rows are not normal authority: ${JSON.stringify(rows)}`);
     }
+    return rows;
   }
 
   async verifyAuthority() {
-    const missingMessage = `smoke-missing-${this.plan.runId}`;
+    const verified = [];
     for (const sender of this.plan.senders) {
       const management = credential(sender, 'user_session').token;
       const uploader = credential(sender, 'uploader').token;
       const renewal = credential(sender, 'refresh').token;
-      const listed = await this.request({ path: '/v1/self/receivers', token: management });
-      if (listed.status !== 200) throw new Error('Management credential did not authorize its Receiver list');
-      try {
-        await this.request({ path: `/v1/messages/${missingMessage}`, token: uploader });
-        throw new Error('Upload credential unexpectedly found a missing Message');
-      } catch (error) {
-        if (!(error instanceof SmokeProblem) || error.status !== 404 || error.code !== 'resource_not_found') {
-          throw new Error(`Upload credential was not accepted: ${error.message}`);
-        }
-      }
-      const rotated = await this.request({
-        method: 'POST',
-        path: '/v1/auth/refresh',
-        body: {
-          refreshToken: renewal,
-          operationId: `smoke-${this.plan.runId}-refresh-${sender.id}`,
-          attempt: 0,
-        },
-      });
-      if (rotated.body?.senderId !== sender.id) {
-        throw new Error(`Refresh rotated the wrong Sender: ${rotated.body?.senderId || 'missing'}`);
-      }
-      sender.credentials = [
-        { scope: 'user_session', ...rotated.body.userSession },
-        { scope: 'uploader', ...rotated.body.uploader },
-        { scope: 'refresh', ...rotated.body.refresh },
-      ];
-      this.evidence.addSecret(sender.credentials.map(item => item.token));
-      const rotatedManagement = credential(sender, 'user_session').token;
-      const rotatedUploader = credential(sender, 'uploader').token;
-      const afterRefresh = await this.request({ path: '/v1/self/receivers', token: rotatedManagement });
-      if (afterRefresh.status !== 200) {
-        throw new Error('Rotated management credential did not authorize its Receiver list');
-      }
-      try {
-        await this.request({ path: `/v1/messages/${missingMessage}`, token: rotatedUploader });
-        throw new Error('Rotated upload credential unexpectedly found a missing Message');
-      } catch (error) {
-        if (!(error instanceof SmokeProblem) || error.status !== 404 || error.code !== 'resource_not_found') {
-          throw new Error(`Rotated upload credential was not accepted: ${error.message}`);
-        }
-      }
+      await this.verifyManagement(management);
+      await this.verifyUploader(uploader);
+      await this.expectProblem(
+        { path: '/v1/self/receivers', token: renewal },
+        401,
+        'credential_invalid',
+      );
+      const operationID = this.newOperationID(`authority-${sender.label}`);
+      const rotated = await this.refresh(sender.label, { operationID, attempt: 0 });
+      await this.verifyManagement(rotated.userSession.token);
+      await this.verifyUploader(rotated.uploader.token);
+      verified.push({ senderId: sender.id, accountId: rotated.accountId, operationId: operationID, attempt: 0 });
     }
-    await this.verifyRows({ minimumActive: true });
+    return verified;
   }
 
   async cleanup() {

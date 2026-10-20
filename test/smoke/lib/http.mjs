@@ -21,7 +21,15 @@ export class SmokeHttp {
     this.timeoutMs = timeoutMs;
   }
 
-  async call({ method = 'GET', path, token, body, headers = {} } = {}) {
+  call(options) {
+    return this.dispatch(options, false);
+  }
+
+  callDropped(options) {
+    return this.dispatch(options, true);
+  }
+
+  async dispatch({ method = 'GET', path, token, body, headers = {} } = {}, discardResponse) {
     const route = serverRelativePath(path, 'HTTP');
     const url = new URL(route, this.origin);
     if (url.origin !== this.origin) {
@@ -40,28 +48,46 @@ export class SmokeHttp {
     }
 
     let response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    timer.unref();
     try {
-      response = await this.fetchImpl(url, {
-        method,
-        headers: requestHeaders,
-        body: requestBody,
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch (error) {
-      throw new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
-    }
-
-    const text = await response.text();
-    let payload;
-    if (text) {
       try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = undefined;
+        response = await this.fetchImpl(url, {
+          method,
+          headers: requestHeaders,
+          body: requestBody,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        throw new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
       }
+
+      const headerRequestID = response.headers.get('x-request-id');
+      const requestID = headerRequestID || requestHeaders['x-request-id'];
+      if (discardResponse && response.ok) {
+        controller.abort();
+        return { status: response.status, requestId: requestID, cacheControl: response.headers.get('cache-control') };
+      }
+      const text = await response.text();
+      let payload;
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = undefined;
+        }
+      }
+      const resolvedRequestID = headerRequestID || payload?.requestId || requestHeaders['x-request-id'];
+      if (!response.ok) throw new SmokeProblem(response.status, payload, resolvedRequestID);
+      return {
+        status: response.status,
+        requestId: resolvedRequestID,
+        cacheControl: response.headers.get('cache-control'),
+        body: payload,
+      };
+    } finally {
+      clearTimeout(timer);
     }
-    const requestID = response.headers.get('x-request-id') || payload?.requestId || requestHeaders['x-request-id'];
-    if (!response.ok) throw new SmokeProblem(response.status, payload, requestID);
-    return { status: response.status, requestId: requestID, body: payload };
   }
 }

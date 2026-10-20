@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import { createFixturePlan, escapeSQLString, renderBootstrapSQL } from './lib/fixtures.mjs';
+import {
+  createFixturePlan,
+  escapeSQLString,
+  renderAgeRefreshOperationSQL,
+  renderBootstrapSQL,
+  renderExpireAccessSQL,
+  renderExpireRefreshSQL,
+  renderExpireRefreshParentSQL,
+  renderRevokeSenderRegistrationSQL,
+  renderSupersedeFamilySQL,
+} from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { checkExitCode } from './runner.mjs';
 import { TARGET, targetFromOptions, validateTarget } from './lib/target.mjs';
@@ -29,11 +39,15 @@ test('the smoke target accepts only the adopted LAN installation', () => {
 test('the fixture plan stores only lowercase SHA-256 digests with normal lifetimes', () => {
   const plan = createFixturePlan({ runId: 'test-run', now: new Date('2026-10-20T00:00:00Z') });
   assert.equal(plan.accounts.length, 2);
-  assert.deepEqual(plan.senders.map(sender => sender.accountID), [
+  assert.deepEqual(plan.senders.slice(0, 3).map(sender => sender.accountID), [
     plan.accounts[0].id,
     plan.accounts[0].id,
     plan.accounts[1].id,
   ]);
+  assert.deepEqual(
+    plan.senders.map(sender => sender.id.slice(`smoke-test-run-sender-`.length)),
+    ['a1', 'a2', 'foreign', 'scope', 'switch', 'order', 'recover', 'window', 'aging', 'race', 'permanent', 'superseded'],
+  );
 
   const bootstrap = renderBootstrapSQL(plan);
   for (const sender of plan.senders) {
@@ -48,6 +62,41 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
       assert(!bootstrap.includes(credential.token), 'raw credential entered fixture SQL');
       assert(bootstrap.includes(credential.digest));
     }
+  }
+  const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
+  for (const credential of superseded.replacementCredentials) {
+    assert(!bootstrap.includes(credential.token), 'replacement credential entered initial fixture SQL');
+  }
+});
+
+test('fixture state SQL changes only the named run-owned Sender state', () => {
+  const plan = createFixturePlan({ runId: 'state-test-run', now: new Date('2026-10-20T00:00:00Z') });
+  const sender = plan.senders.find(item => item.id.endsWith('-scope'));
+  const superseded = plan.senders.find(item => item.id.endsWith('-superseded'));
+  const operationID = 'state-test-operation';
+  const statements = [
+    renderExpireAccessSQL(plan, 'scope'),
+    renderExpireRefreshSQL(plan, 'scope'),
+    renderAgeRefreshOperationSQL(plan, 'scope', operationID),
+    renderExpireRefreshParentSQL(plan, 'scope', operationID),
+    renderRevokeSenderRegistrationSQL(plan, 'scope'),
+    renderSupersedeFamilySQL(plan, 'superseded'),
+  ];
+  assert.match(statements[0], /scope IN \('user_session', 'uploader'\)/);
+  assert.match(statements[1], /scope = 'refresh'/);
+  assert.match(statements[2], /interval '31 seconds'/);
+  assert.match(statements[3], /operation_id = 'state-test-operation'/);
+  assert.match(statements[4], /state = 'revoked'/);
+  assert.match(statements[5], new RegExp(superseded.replacementFamilyID));
+  for (const [index, statement] of statements.entries()) {
+    assert.match(statement, /current_database\(\) = 'pin_glide'/);
+    assert(statement.includes(index === 5 ? superseded.id : sender.id));
+    for (const credential of sender.credentials) {
+      assert(!statement.includes(credential.token), 'raw credential entered fixture state SQL');
+    }
+  }
+  for (const credential of superseded.replacementCredentials) {
+    assert(!statements[5].includes(credential.token), 'raw replacement credential entered fixture SQL');
   }
 });
 
@@ -81,6 +130,29 @@ test('the HTTP peer refuses cross-origin paths before issuing a request and repo
       && error.requestId === 'request-1',
   );
   assert.equal(calls, 1);
+});
+
+test('the HTTP peer can abandon a committed response so refresh recovery is exercised', async () => {
+  let signal;
+  const peer = new SmokeHttp({
+    origin: TARGET.httpOrigin,
+    fetchImpl: async (_url, options) => {
+      signal = options.signal;
+      return new Response('{"token":"must-not-be-read"}', {
+        status: 200,
+        headers: { 'x-request-id': 'request-dropped' },
+      });
+    },
+  });
+
+  const result = await peer.callDropped({
+    method: 'POST',
+    path: '/v1/auth/refresh',
+    body: { refreshToken: 'secret', operationId: 'operation-1', attempt: 0 },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.requestId, 'request-dropped');
+  assert.equal(signal.aborted, true);
 });
 
 test('the runner rejects an overridden target instead of ignoring it', () => {

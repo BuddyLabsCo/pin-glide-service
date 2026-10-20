@@ -19,12 +19,22 @@ import (
 )
 
 type generatedSmokeSQL struct {
-	Bootstrap         string `json:"bootstrap"`
-	Cleanup           string `json:"cleanup"`
-	ExternalWriterSQL string `json:"externalWriterSql"`
-	FirstSenderID     string `json:"firstSenderId"`
-	FirstAccountID    string `json:"firstAccountId"`
-	SecondAccountID   string `json:"secondAccountId"`
+	Bootstrap          string `json:"bootstrap"`
+	Cleanup            string `json:"cleanup"`
+	ExternalWriterSQL  string `json:"externalWriterSql"`
+	ExpireAccess       string `json:"expireAccess"`
+	ExpireRefresh      string `json:"expireRefresh"`
+	AgeOperation       string `json:"ageOperation"`
+	ExpireParent       string `json:"expireParent"`
+	RevokeRegistration string `json:"revokeRegistration"`
+	SupersedeFamily    string `json:"supersedeFamily"`
+	FirstSenderID      string `json:"firstSenderId"`
+	FirstAccountID     string `json:"firstAccountId"`
+	SecondAccountID    string `json:"secondAccountId"`
+	ScopeSenderID      string `json:"scopeSenderId"`
+	ScopeParentDigest  string `json:"scopeParentDigest"`
+	PermanentSenderID  string `json:"permanentSenderId"`
+	SupersededSenderID string `json:"supersededSenderId"`
 }
 
 func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
@@ -40,11 +50,54 @@ func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
 	execSQL(t, pool, sql.Bootstrap)
 	assertCount(t, pool, 2, `SELECT count(*) FROM pin_glide.identity_accounts
 		WHERE id IN ($1, $2)`, sql.FirstAccountID, sql.SecondAccountID)
-	assertCount(t, pool, 3, `SELECT count(*) FROM pin_glide.identity_sender_registrations
+	assertCount(t, pool, 12, `SELECT count(*) FROM pin_glide.identity_sender_registrations
 		WHERE id LIKE 'smoke-integration-fixture-sender-%' AND state = 'active'`)
-	assertCount(t, pool, 9, `SELECT count(*) FROM pin_glide.identity_credentials
+	assertCount(t, pool, 36, `SELECT count(*) FROM pin_glide.identity_credentials
 		WHERE sender_id LIKE 'smoke-integration-fixture-sender-%'
 		  AND token_digest ~ '^[0-9a-f]{64}$'`)
+
+	execSQL(t, pool, `
+INSERT INTO pin_glide.identity_refresh_operations
+    (sender_id, operation_id, attempt, parent_digest, expires_at, committed_at)
+VALUES ($1, 'integration-operation', 0, $2, now() + interval '7 days', now())`,
+		sql.ScopeSenderID, sql.ScopeParentDigest)
+	execSQL(t, pool, sql.ExpireAccess)
+	assertCount(t, pool, 2, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1
+		  AND scope IN ('user_session', 'uploader')
+		  AND expires_at <= now()`, sql.ScopeSenderID)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1
+		  AND scope = 'refresh'
+		  AND expires_at > now()`, sql.ScopeSenderID)
+	execSQL(t, pool, sql.ExpireRefresh)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1
+		  AND scope = 'refresh'
+		  AND expires_at <= now()`, sql.ScopeSenderID)
+	execSQL(t, pool, sql.AgeOperation)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_refresh_operations
+		WHERE sender_id = $1
+		  AND operation_id = 'integration-operation'
+		  AND committed_at <= now() - interval '30 seconds'`, sql.ScopeSenderID)
+	execSQL(t, pool, sql.ExpireParent)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_credentials AS credential
+		JOIN pin_glide.identity_refresh_operations AS operation
+		  ON operation.sender_id = credential.sender_id
+		 AND operation.parent_digest = credential.token_digest
+		WHERE operation.sender_id = $1
+		  AND operation.operation_id = 'integration-operation'
+		  AND credential.expires_at <= now()`, sql.ScopeSenderID)
+	execSQL(t, pool, sql.SupersedeFamily)
+	assertCount(t, pool, 3, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1 AND revoked_at IS NOT NULL`, sql.SupersededSenderID)
+	assertCount(t, pool, 3, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1 AND revoked_at IS NULL`, sql.SupersededSenderID)
+	execSQL(t, pool, sql.RevokeRegistration)
+	assertCount(t, pool, 1, `SELECT count(*) FROM pin_glide.identity_sender_registrations
+		WHERE id = $1 AND state = 'revoked' AND revoked_at IS NOT NULL`, sql.PermanentSenderID)
+	assertCount(t, pool, 0, `SELECT count(*) FROM pin_glide.identity_credentials
+		WHERE sender_id = $1 AND revoked_at IS NULL`, sql.PermanentSenderID)
 
 	execSQL(t, pool, `
 INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
@@ -144,6 +197,9 @@ const plan = fixtures.createFixturePlan({
   runId: 'integration-fixture',
   now: new Date('2026-10-20T00:00:00Z'),
 });
+const scope = plan.senders.find(sender => sender.id.endsWith('-scope'));
+const permanent = plan.senders.find(sender => sender.id.endsWith('-permanent'));
+const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
 process.stdout.write(JSON.stringify({
   bootstrap: fixtures.renderBootstrapSQL(plan),
   cleanup: fixtures.renderCleanupSQL(
@@ -152,9 +208,19 @@ process.stdout.write(JSON.stringify({
     ['smoke-integration-fixture-request'],
   ),
   externalWriterSql: remote.externalWriterQuery,
+  expireAccess: fixtures.renderExpireAccessSQL(plan, 'scope'),
+  expireRefresh: fixtures.renderExpireRefreshSQL(plan, 'scope'),
+  ageOperation: fixtures.renderAgeRefreshOperationSQL(plan, 'scope', 'integration-operation'),
+  expireParent: fixtures.renderExpireRefreshParentSQL(plan, 'scope', 'integration-operation'),
+  revokeRegistration: fixtures.renderRevokeSenderRegistrationSQL(plan, 'permanent'),
+  supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
   secondAccountId: plan.accounts[1].id,
+  scopeSenderId: scope.id,
+  scopeParentDigest: scope.credentials.find(credential => credential.scope === 'refresh').digest,
+  permanentSenderId: permanent.id,
+  supersededSenderId: superseded.id,
 }));
 `
 	command := exec.Command("node", "--input-type=module", "--eval", script)
