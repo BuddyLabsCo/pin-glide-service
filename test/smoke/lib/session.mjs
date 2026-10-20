@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  credentialLifetimeInterval,
   fixtureSender,
   renderBootstrapSQL,
   renderCleanupSQL,
@@ -91,19 +92,18 @@ export class SmokeSession {
   }
 
   async request(options) {
-    try {
-      const result = await this.http.call(options);
-      if (result.requestId) this.requestIds.push(result.requestId);
-      return result;
-    } catch (error) {
-      if (error.requestId) this.requestIds.push(error.requestId);
-      throw error;
-    }
+    return this.send(options, false);
   }
 
   async droppedRequest(options) {
+    return this.send(options, true);
+  }
+
+  async send(options, dropped) {
     try {
-      const result = await this.http.callDropped(options);
+      const result = dropped
+        ? await this.http.callDropped(options)
+        : await this.http.call(options);
       if (result.requestId) this.requestIds.push(result.requestId);
       return result;
     } catch (error) {
@@ -165,14 +165,18 @@ export class SmokeSession {
       );
     }
     const credentials = [
-      { scope: 'user_session', ...body.userSession },
-      { scope: 'uploader', ...body.uploader },
-      { scope: 'refresh', ...body.refresh },
+      { ...body.userSession, scope: 'user_session' },
+      { ...body.uploader, scope: 'uploader' },
+      { ...body.refresh, scope: 'refresh' },
     ];
     for (const item of credentials) {
       if (!item.token || !Number.isFinite(Date.parse(item.expiresAt))) {
         throw new Error(`Refresh returned an incomplete ${item.scope} credential`);
       }
+      item.digest = createHash('sha256').update(item.token).digest('hex');
+    }
+    if (new Set(credentials.map(item => item.token)).size !== credentials.length) {
+      throw new Error('Refresh returned non-independent credential tokens');
     }
     sender.credentials = credentials;
     sender.latestRefresh = { operationID, attempt };
@@ -339,8 +343,14 @@ SELECT json_build_object(
     FROM pin_glide.identity_credentials
     WHERE sender_id = ANY(${sqlTextArray(senderIDs)})
       AND (
-        (scope IN ('user_session', 'uploader') AND expires_at - issued_at <> interval '3 hours')
-        OR (scope = 'refresh' AND expires_at - issued_at <> interval '7 days')
+        (
+          scope IN ('user_session', 'uploader')
+          AND expires_at - issued_at <> interval '${credentialLifetimeInterval('user_session')}'
+        )
+        OR (
+          scope = 'refresh'
+          AND expires_at - issued_at <> interval '${credentialLifetimeInterval('refresh')}'
+        )
       )
   ),
   'families', (

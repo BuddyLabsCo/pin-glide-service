@@ -1,8 +1,8 @@
 import {
   runScenario,
   verifyCheckpoints,
-  verifyDiagnosticRedaction,
 } from './session_credential_support.mjs';
+import { verifyDiagnosticRedaction } from './session_diagnostics.mjs';
 import {
   accountSwitch,
   ordinaryLogout,

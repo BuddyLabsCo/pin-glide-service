@@ -11,10 +11,15 @@ import {
   snapshot,
 } from './session_credential_support.mjs';
 
+function credentialsUnchanged(before, after) {
+  return JSON.stringify(before.credentials) === JSON.stringify(after.credentials);
+}
+
 async function orderedAttempts(session) {
   const initial = snapshot(session.sender('order'));
   const firstOperation = session.newOperationID('order-attempt-first');
   const first = await session.refresh('order', { operationID: firstOperation, attempt: 1 });
+  const afterFirst = await durableFacts(session, 'order', [firstOperation]);
   const delayedOriginal = await session.expectProblem(
     {
       method: 'POST',
@@ -28,6 +33,10 @@ async function orderedAttempts(session) {
     409,
     'operation_superseded',
   );
+  const afterDelayedOriginal = await durableFacts(session, 'order', [firstOperation]);
+  if (!credentialsUnchanged(afterFirst, afterDelayedOriginal)) {
+    throw new Error('A superseded original attempt changed the credential family');
+  }
 
   const secondOperation = session.newOperationID('order-later');
   const second = await session.refresh('order', {
@@ -35,6 +44,7 @@ async function orderedAttempts(session) {
     attempt: 0,
     token: first.refresh.token,
   });
+  const beforeStale = await durableFacts(session, 'order', [firstOperation, secondOperation]);
   const stale = [];
   for (const attempt of [0, 1]) {
     stale.push(await session.expectProblem(
@@ -64,6 +74,10 @@ async function orderedAttempts(session) {
     422,
     'validation_failed',
   );
+  const afterStale = await durableFacts(session, 'order', [firstOperation, secondOperation]);
+  if (!credentialsUnchanged(beforeStale, afterStale)) {
+    throw new Error('A rejected stale attempt changed the credential family');
+  }
   await session.verifyManagement(second.userSession.token);
 
   const thirdOperation = session.newOperationID('order-continued');
@@ -90,6 +104,7 @@ async function orderedAttempts(session) {
     unsupported,
     persistedAttempts: attempts,
     latestCheckpoint: session.sender('order').latestRefresh,
+    rejectedAttemptsIssuedNothing: true,
   };
 }
 
@@ -111,6 +126,7 @@ export async function droppedResponseRecovery(session) {
     token: initial.refresh.token,
   });
   await session.verifyManagement(recovered.userSession.token);
+  await session.verifyUploader(recovered.uploader.token);
   const parentDigest = createHash('sha256').update(initial.refresh.token).digest('hex');
   const facts = await durableFacts(session, 'recover', [operationID]);
   const operation = facts.operations.find(item => item.operationId === operationID);
@@ -160,21 +176,54 @@ export async function reuseIsolation(session) {
     401,
     'credential_revoked',
   );
+  const reusedFamily = {
+    management: await session.expectProblem(
+      { path: '/v1/self/receivers', token: rotated.userSession.token },
+      401,
+      'credential_invalid',
+    ),
+    uploader: await session.expectProblem(
+      {
+        path: `/v1/messages/smoke-reuse-${session.plan.runId}`,
+        token: rotated.uploader.token,
+      },
+      401,
+      'credential_invalid',
+    ),
+    refresh: successorRevoked,
+  };
+  const siblingOperation = session.newOperationID('reuse-sibling');
+  const sibling = await session.refresh('order', {
+    operationID: siblingOperation,
+    attempt: 0,
+  });
+  await session.verifyManagement(sibling.userSession.token);
+  await session.verifyUploader(sibling.uploader.token);
   const foreignOperation = session.newOperationID('foreign-isolation');
   const foreign = await session.refresh('foreign', {
     operationID: foreignOperation,
     attempt: 0,
   });
   await session.verifyManagement(foreign.userSession.token);
+  await session.verifyUploader(foreign.uploader.token);
   const facts = await durableFacts(session, 'window', [operationID]);
-  if (facts.registrationState !== 'active' || facts.revokedCredentials < 1) {
+  if (
+    facts.registrationState !== 'active'
+    || facts.activeCredentials !== 0
+    || facts.revokedCredentials < 3
+  ) {
     throw new Error('Refresh reuse did not revoke only its Sender family');
   }
 
   return {
     outsideWindow,
-    successorRevoked,
+    reusedFamily,
     revokedOnlyOwnFamily: true,
+    sameAccountSibling: {
+      senderId: session.sender('order').id,
+      operationId: siblingOperation,
+      attempt: 0,
+    },
     unrelatedSender: {
       senderId: session.sender('foreign').id,
       operationId: foreignOperation,
@@ -208,6 +257,7 @@ export async function parentExpiry(session) {
     token: rotated.refresh.token,
   });
   await session.verifyManagement(continued.userSession.token);
+  await session.verifyUploader(continued.uploader.token);
   const facts = await durableFacts(session, 'aging', [oldOperation, continuedOperation]);
   if (!facts.operations.some(item => item.operationId === continuedOperation && item.attempt === 0)) {
     throw new Error('Expired predecessor recovery revoked the current family');
@@ -281,6 +331,27 @@ export async function refreshLogoutRace(session) {
       { path: '/v1/self/receivers', token: current.userSession.token },
       401,
       'credential_invalid',
+    );
+    revoked.rotatedUploader = await session.expectProblem(
+      {
+        path: `/v1/messages/smoke-race-${session.plan.runId}`,
+        token: current.uploader.token,
+      },
+      401,
+      'credential_invalid',
+    );
+    revoked.rotatedRefresh = await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/refresh',
+        body: {
+          refreshToken: current.refresh.token,
+          operationId: session.newOperationID('race-after-rotated-logout'),
+          attempt: 0,
+        },
+      },
+      401,
+      'credential_revoked',
     );
   }
   const facts = await durableFacts(session, 'race', current ? [operationID] : []);

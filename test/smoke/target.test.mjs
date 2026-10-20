@@ -5,13 +5,7 @@ import test from 'node:test';
 import {
   createFixturePlan,
   escapeSQLString,
-  renderAgeRefreshOperationSQL,
   renderBootstrapSQL,
-  renderExpireAccessSQL,
-  renderExpireRefreshSQL,
-  renderExpireRefreshParentSQL,
-  renderRevokeSenderRegistrationSQL,
-  renderSupersedeFamilySQL,
 } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { checkExitCode } from './runner.mjs';
@@ -66,37 +60,6 @@ test('the fixture plan stores only lowercase SHA-256 digests with normal lifetim
   const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
   for (const credential of superseded.replacementCredentials) {
     assert(!bootstrap.includes(credential.token), 'replacement credential entered initial fixture SQL');
-  }
-});
-
-test('fixture state SQL changes only the named run-owned Sender state', () => {
-  const plan = createFixturePlan({ runId: 'state-test-run', now: new Date('2026-10-20T00:00:00Z') });
-  const sender = plan.senders.find(item => item.id.endsWith('-scope'));
-  const superseded = plan.senders.find(item => item.id.endsWith('-superseded'));
-  const operationID = 'state-test-operation';
-  const statements = [
-    renderExpireAccessSQL(plan, 'scope'),
-    renderExpireRefreshSQL(plan, 'scope'),
-    renderAgeRefreshOperationSQL(plan, 'scope', operationID),
-    renderExpireRefreshParentSQL(plan, 'scope', operationID),
-    renderRevokeSenderRegistrationSQL(plan, 'scope'),
-    renderSupersedeFamilySQL(plan, 'superseded'),
-  ];
-  assert.match(statements[0], /scope IN \('user_session', 'uploader'\)/);
-  assert.match(statements[1], /scope = 'refresh'/);
-  assert.match(statements[2], /interval '31 seconds'/);
-  assert.match(statements[3], /operation_id = 'state-test-operation'/);
-  assert.match(statements[4], /state = 'revoked'/);
-  assert.match(statements[5], new RegExp(superseded.replacementFamilyID));
-  for (const [index, statement] of statements.entries()) {
-    assert.match(statement, /current_database\(\) = 'pin_glide'/);
-    assert(statement.includes(index === 5 ? superseded.id : sender.id));
-    for (const credential of sender.credentials) {
-      assert(!statement.includes(credential.token), 'raw credential entered fixture state SQL');
-    }
-  }
-  for (const credential of superseded.replacementCredentials) {
-    assert(!statements[5].includes(credential.token), 'raw replacement credential entered fixture SQL');
   }
 });
 

@@ -16,6 +16,14 @@ export async function preExistingRevokedFamily(session) {
     401,
     'credential_invalid',
   );
+  const priorUploader = await session.expectProblem(
+    {
+      path: `/v1/messages/smoke-superseded-${session.plan.runId}`,
+      token: prior.uploader.token,
+    },
+    401,
+    'credential_invalid',
+  );
   const priorRefresh = await session.expectProblem(
     {
       method: 'POST',
@@ -43,6 +51,7 @@ export async function preExistingRevokedFamily(session) {
 
   return {
     priorManagement,
+    priorUploader,
     priorRefresh,
     currentFamilyAccepted: true,
     currentOperation: { operationId: currentOperation, attempt: 0 },

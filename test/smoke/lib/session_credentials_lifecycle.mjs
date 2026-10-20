@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 
 import { renderExpireAccessSQL, renderExpireRefreshSQL } from './fixtures.mjs';
 import {
-  addSenderToReceiver,
-  associations,
   durableFacts,
-  pairReceiver,
-  receiverState,
   snapshot,
 } from './session_credential_support.mjs';
+import {
+  addSenderToReceiver,
+  associations,
+  pairReceiver,
+  receiverState,
+} from './session_pairing_helpers.mjs';
 
 async function scopeAndExpiry(session) {
   const sender = session.sender('scope');
@@ -31,8 +33,35 @@ async function scopeAndExpiry(session) {
       401,
       'credential_invalid',
     ),
+    await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/refresh',
+        body: {
+          refreshToken: initial.user_session.token,
+          operationId: session.newOperationID('scope-management-refresh'),
+          attempt: 0,
+        },
+      },
+      401,
+      'credential_invalid',
+    ),
+    await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/refresh',
+        body: {
+          refreshToken: initial.uploader.token,
+          operationId: session.newOperationID('scope-uploader-refresh'),
+          attempt: 0,
+        },
+      },
+      401,
+      'credential_invalid',
+    ),
   ];
 
+  const initialFacts = await durableFacts(session, 'scope');
   const firstOperation = session.newOperationID('scope-slide');
   const rotated = await session.refresh('scope', { operationID: firstOperation, attempt: 0 });
   await session.verifyManagement(initial.user_session.token);
@@ -46,6 +75,13 @@ async function scopeAndExpiry(session) {
   if (!initialRefresh || !rotatedRefresh
     || Date.parse(rotatedRefresh.expiresAt) <= Date.parse(initialRefresh.expiresAt)) {
     throw new Error('Refresh did not advance the sliding refresh expiry');
+  }
+  for (const scope of ['user_session', 'uploader']) {
+    const before = initialFacts.credentials.find(item => item.tokenDigest === initial[scope].digest);
+    const after = rotationFacts.credentials.find(item => item.tokenDigest === initial[scope].digest);
+    if (!before || !after || after.expiresAt !== before.expiresAt) {
+      throw new Error(`Refresh changed the retained ${scope} expiry`);
+    }
   }
 
   await session.remote.sql(renderExpireAccessSQL(session.plan, 'scope'));
@@ -84,6 +120,7 @@ async function scopeAndExpiry(session) {
   return {
     scopes: { management: 200, uploader: 404, wrongScopes },
     accessOverlap: true,
+    overlapExpiriesUnchanged: true,
     slidingRefreshExpiryAdvanced: true,
     expiredAccess: { management: expiredManagement, uploader: expiredUploader },
     expiredRefresh,
@@ -191,24 +228,78 @@ export async function ordinaryLogout(session) {
 export async function accountSwitch(session) {
   const primary = await pairReceiver(session, 'switch');
   const survivor = await addSenderToReceiver(session, 'a2', primary);
+  const switchedCredentials = snapshot(session.sender('switch'));
+  const wrongAuthority = {
+    uploader: await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/logout',
+        token: switchedCredentials.uploader.token,
+        body: { mode: 'switch_account' },
+      },
+      401,
+      'credential_invalid',
+    ),
+    refresh: await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/logout',
+        token: switchedCredentials.refresh.token,
+        body: { mode: 'switch_account' },
+      },
+      401,
+      'credential_invalid',
+    ),
+  };
   const switched = await session.request({
     method: 'POST',
     path: '/v1/auth/logout',
-    token: session.token('switch', 'user_session'),
+    token: switchedCredentials.user_session.token,
     body: { mode: 'switch_account' },
   });
   if (switched.status !== 204) throw new Error(`Account switch returned ${switched.status}`);
   if (switched.cacheControl !== 'no-store') throw new Error('Account switch success was cacheable');
-  const switchedRevoked = await session.expectProblem(
-    { path: '/v1/self/receivers', token: session.token('switch', 'user_session') },
-    401,
-    'credential_invalid',
-  );
-  await session.verifyManagement(session.token('a2', 'user_session'));
+  const primaryRevoked = {
+    management: await session.expectProblem(
+      { path: '/v1/self/receivers', token: switchedCredentials.user_session.token },
+      401,
+      'credential_invalid',
+    ),
+    uploader: await session.expectProblem(
+      {
+        path: `/v1/messages/smoke-switched-${session.plan.runId}`,
+        token: switchedCredentials.uploader.token,
+      },
+      401,
+      'credential_invalid',
+    ),
+    refresh: await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/refresh',
+        body: {
+          refreshToken: switchedCredentials.refresh.token,
+          operationId: session.newOperationID('switched-refresh'),
+          attempt: 0,
+        },
+      },
+      401,
+      'credential_revoked',
+    ),
+  };
+  const survivorManagement = await session.verifyManagement(session.token('a2', 'user_session'));
+  const survivorUploader = await session.verifyUploader(session.token('a2', 'uploader'));
   const survivorAssociations = await associations(session, 'a2');
   if (!survivorAssociations.some(item => item.pairingId === survivor.pairingID)) {
     throw new Error('Account switch removed another Sender association');
   }
+  const survivorOperation = session.newOperationID('switch-survivor-refresh');
+  const survivorRotated = await session.refresh('a2', {
+    operationID: survivorOperation,
+    attempt: 0,
+  });
+  await session.verifyManagement(survivorRotated.userSession.token);
+  await session.verifyUploader(survivorRotated.uploader.token);
   const primaryFacts = await durableFacts(session, 'switch');
   const survivorFacts = await durableFacts(session, 'a2');
   const removed = primaryFacts.pairings.find(item => item.id === primary.pairingID);
@@ -227,8 +318,14 @@ export async function accountSwitch(session) {
     switchedPairing: removed,
     survivorPairing: retained,
     receiverState: receiver,
-    switchedCredential: switchedRevoked,
-    survivorManagement: 200,
+    wrongAuthority,
+    primaryRevoked,
+    survivor: {
+      management: survivorManagement.status,
+      uploader: survivorUploader.status,
+      operationId: survivorOperation,
+      attempt: 0,
+    },
   };
 }
 

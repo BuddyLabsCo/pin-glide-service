@@ -1,6 +1,18 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-export const credentialScopes = ['user_session', 'uploader', 'refresh'];
+const credentialLifetimeHours = {
+  user_session: 3,
+  uploader: 3,
+  refresh: 7 * 24,
+};
+
+export const credentialScopes = Object.keys(credentialLifetimeHours);
+
+export function credentialLifetimeInterval(scope) {
+  const hours = credentialLifetimeHours[scope];
+  if (hours === undefined) throw new Error(`Unknown smoke credential scope ${scope}`);
+  return `${hours} hours`;
+}
 
 function value(prefix) {
   return `${prefix}_${randomBytes(32).toString('hex')}`;
@@ -20,7 +32,7 @@ export function sqlTextArray(values) {
 }
 
 export function fixtureSender(plan, label) {
-  const sender = plan.senders.find(item => item.id.endsWith(`-${label}`));
+  const sender = plan.senders.find(item => item.label === label);
   if (!sender) throw new Error(`Unknown smoke Sender ${label}`);
   return sender;
 }
@@ -58,7 +70,9 @@ export function createFixturePlan({ runId = `smoke-${Date.now()}-${randomBytes(6
         scope,
         token,
         digest: digest(token),
-        expiresAt: new Date(now.getTime() + (scope === 'refresh' ? 7 * 24 : 3) * 60 * 60 * 1000),
+        expiresAt: new Date(
+          now.getTime() + credentialLifetimeHours[scope] * 60 * 60 * 1000,
+        ),
       };
     });
     return {
@@ -74,7 +88,9 @@ export function createFixturePlan({ runId = `smoke-${Date.now()}-${randomBytes(6
           scope,
           token,
           digest: digest(token),
-          expiresAt: new Date(now.getTime() + (scope === 'refresh' ? 7 * 24 : 3) * 60 * 60 * 1000),
+          expiresAt: new Date(
+            now.getTime() + credentialLifetimeHours[scope] * 60 * 60 * 1000,
+          ),
         };
       }) : undefined,
     };
@@ -167,7 +183,7 @@ export function renderBootstrapSQL(plan) {
   const credentialRows = plan.senders.flatMap(sender => sender.credentials.map(credential => `(
     ${escapeSQLString(sender.id)}, ${escapeSQLString(sender.familyID)}, ${escapeSQLString(credential.scope)},
     ${escapeSQLString(credential.digest)},
-    now(), now() + interval '${credential.scope === 'refresh' ? '7 days' : '3 hours'}'
+    now(), now() + interval '${credentialLifetimeInterval(credential.scope)}'
   )`)).join(',\n');
 
   return `BEGIN;
@@ -364,7 +380,7 @@ export function renderSupersedeFamilySQL(plan, label) {
   const rows = sender.replacementCredentials.map(credential => `(
     ${escapeSQLString(sender.id)}, ${escapeSQLString(sender.replacementFamilyID)},
     ${escapeSQLString(credential.scope)}, ${escapeSQLString(credential.digest)},
-    now(), now() + interval '${credential.scope === 'refresh' ? '7 days' : '3 hours'}'
+    now(), now() + interval '${credentialLifetimeInterval(credential.scope)}'
   )`).join(',\n');
   return transaction({ senderIDs: [sender.id] }, `
 UPDATE pin_glide.identity_credentials

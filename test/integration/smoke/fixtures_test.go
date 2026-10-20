@@ -33,6 +33,7 @@ type generatedSmokeSQL struct {
 	SecondAccountID    string `json:"secondAccountId"`
 	ScopeSenderID      string `json:"scopeSenderId"`
 	ScopeParentDigest  string `json:"scopeParentDigest"`
+	RefreshLifetime    string `json:"refreshLifetime"`
 	PermanentSenderID  string `json:"permanentSenderId"`
 	SupersededSenderID string `json:"supersededSenderId"`
 }
@@ -56,11 +57,12 @@ func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
 		WHERE sender_id LIKE 'smoke-integration-fixture-sender-%'
 		  AND token_digest ~ '^[0-9a-f]{64}$'`)
 
+	unaffectedBefore := stateFingerprint(t, pool, sql.ScopeSenderID, sql.SupersededSenderID, sql.PermanentSenderID)
 	execSQL(t, pool, `
 INSERT INTO pin_glide.identity_refresh_operations
     (sender_id, operation_id, attempt, parent_digest, expires_at, committed_at)
-VALUES ($1, 'integration-operation', 0, $2, now() + interval '7 days', now())`,
-		sql.ScopeSenderID, sql.ScopeParentDigest)
+VALUES ($1, 'integration-operation', 0, $2, now() + $3::interval, now())`,
+		sql.ScopeSenderID, sql.ScopeParentDigest, sql.RefreshLifetime)
 	execSQL(t, pool, sql.ExpireAccess)
 	assertCount(t, pool, 2, `SELECT count(*) FROM pin_glide.identity_credentials
 		WHERE sender_id = $1
@@ -98,6 +100,11 @@ VALUES ($1, 'integration-operation', 0, $2, now() + interval '7 days', now())`,
 		WHERE id = $1 AND state = 'revoked' AND revoked_at IS NOT NULL`, sql.PermanentSenderID)
 	assertCount(t, pool, 0, `SELECT count(*) FROM pin_glide.identity_credentials
 		WHERE sender_id = $1 AND revoked_at IS NULL`, sql.PermanentSenderID)
+	if unaffectedAfter := stateFingerprint(
+		t, pool, sql.ScopeSenderID, sql.SupersededSenderID, sql.PermanentSenderID,
+	); unaffectedAfter != unaffectedBefore {
+		t.Fatal("fixture state SQL changed an unrelated Sender or credential")
+	}
 
 	execSQL(t, pool, `
 INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
@@ -219,6 +226,7 @@ process.stdout.write(JSON.stringify({
   secondAccountId: plan.accounts[1].id,
   scopeSenderId: scope.id,
   scopeParentDigest: scope.credentials.find(credential => credential.scope === 'refresh').digest,
+  refreshLifetime: fixtures.credentialLifetimeInterval('refresh'),
   permanentSenderId: permanent.id,
   supersededSenderId: superseded.id,
 }));
@@ -312,6 +320,56 @@ func assertCount(t *testing.T, pool *sql.DB, want int, statement string, args ..
 	if got != want {
 		t.Fatalf("row count is %d, want %d for %s", got, want, strings.TrimSpace(statement))
 	}
+}
+
+func stateFingerprint(t *testing.T, pool *sql.DB, excludedSenderIDs ...string) string {
+	t.Helper()
+	const statement = `
+SELECT json_build_object(
+  'senders', (
+    SELECT coalesce(json_agg(json_build_object(
+      'id', id,
+      'state', state,
+      'revokedAt', revoked_at
+    ) ORDER BY id), '[]'::json)
+    FROM pin_glide.identity_sender_registrations
+    WHERE id NOT IN ($1, $2, $3)
+  ),
+  'credentials', (
+    SELECT coalesce(json_agg(json_build_object(
+      'id', id,
+      'senderId', sender_id,
+      'familyId', family_id,
+      'scope', scope,
+      'tokenDigest', token_digest,
+      'issuedAt', issued_at,
+      'expiresAt', expires_at,
+      'revokedAt', revoked_at
+    ) ORDER BY id), '[]'::json)
+    FROM pin_glide.identity_credentials
+    WHERE sender_id NOT IN ($1, $2, $3)
+  ),
+  'operations', (
+    SELECT coalesce(json_agg(json_build_object(
+      'senderId', sender_id,
+      'operationId', operation_id,
+      'attempt', attempt,
+      'parentDigest', parent_digest,
+      'expiresAt', expires_at,
+      'committedAt', committed_at
+    ) ORDER BY sender_id, operation_id), '[]'::json)
+    FROM pin_glide.identity_refresh_operations
+    WHERE sender_id NOT IN ($1, $2, $3)
+  )
+);`
+	var fingerprint string
+	if err := pool.QueryRowContext(
+		context.Background(), statement,
+		excludedSenderIDs[0], excludedSenderIDs[1], excludedSenderIDs[2],
+	).Scan(&fingerprint); err != nil {
+		t.Fatalf("read unaffected fixture state: %v", err)
+	}
+	return fingerprint
 }
 
 func repositoryRoot(t *testing.T) string {

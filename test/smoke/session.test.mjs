@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeProblem } from './lib/http.mjs';
 import { SmokeSession } from './lib/session.mjs';
-import { verifyCheckpoints, verifyDiagnosticRedaction } from './lib/session_credential_support.mjs';
+import { verifyCheckpoints } from './lib/session_credential_support.mjs';
+import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 import { TARGET } from './lib/target.mjs';
 import { integration } from './runner.mjs';
 
@@ -101,6 +103,10 @@ test('a refresh response updates the runner checkpoint with its accepted attempt
   assert.equal(sender.credentials.find(item => item.scope === 'user_session').token, 'new-management');
   assert.equal(sender.credentials.find(item => item.scope === 'uploader').token, 'new-uploader');
   assert.equal(sender.credentials.find(item => item.scope === 'refresh').token, 'new-refresh');
+  assert.equal(
+    sender.credentials.find(item => item.scope === 'refresh').digest,
+    createHash('sha256').update('new-refresh').digest('hex'),
+  );
 });
 
 test('an abandoned refresh response records an uncertain attempt without replacing the bundle', async () => {
@@ -133,6 +139,31 @@ test('an abandoned refresh response records an uncertain attempt without replaci
   assert.deepEqual(sender.credentials, original);
 });
 
+test('a refresh bundle must contain independent M/U/F tokens', () => {
+  const plan = createFixturePlan({ runId: 'refresh-independence-run' });
+  const sender = plan.senders.find(item => item.label === 'scope');
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http: {},
+    evidence: { addSecret() {} },
+    plan,
+  });
+  const response = {
+    accountId: sender.accountID,
+    senderId: sender.id,
+    operationId: 'operation-1',
+    attempt: 0,
+    userSession: { token: 'same-token', expiresAt: '2026-10-20T03:00:00Z' },
+    uploader: { token: 'same-token', expiresAt: '2026-10-20T03:00:00Z' },
+    refresh: { token: 'same-token', expiresAt: '2026-10-27T00:00:00Z' },
+  };
+  assert.throws(
+    () => session.acceptRefresh('scope', response, { operationID: 'operation-1', attempt: 0 }),
+    /non-independent/,
+  );
+});
+
 test('runner refresh checkpoints must match the persisted operation and attempt', async () => {
   const plan = createFixturePlan({ runId: 'checkpoint-proof-run' });
   const sender = plan.senders.find(item => item.id.endsWith('-scope'));
@@ -144,7 +175,7 @@ test('runner refresh checkpoints must match the persisted operation and attempt'
         if (statement.includes('token_digest')) {
           return sender.credentials.map(item => ({ senderId: sender.id, tokenDigest: item.digest }));
         }
-        return [{ senderId: sender.id, operationId: 'operation-1', attempt: 1 }];
+        return [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: true }];
       },
     },
   };
@@ -155,31 +186,42 @@ test('runner refresh checkpoints must match the persisted operation and attempt'
 
   session.remote.sqlJSON = async statement => (
     statement.includes('token_digest')
-      ? sender.credentials.map(item => ({ senderId: sender.id, tokenDigest: item.digest }))
-      : [{ senderId: sender.id, operationId: 'operation-1', attempt: 0 }]
+      ? sender.credentials.map(item => ({ senderId: 'another-sender', tokenDigest: item.digest }))
+      : [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: true }]
   );
-  await assert.rejects(() => verifyCheckpoints(session), /checkpoint was not persisted/);
+  await assert.rejects(() => verifyCheckpoints(session), /credential bundle/);
+
+  session.remote.sqlJSON = async statement => (
+    statement.includes('token_digest')
+      ? sender.credentials.map(item => ({ senderId: sender.id, tokenDigest: item.digest }))
+      : [{ senderId: sender.id, operationId: 'operation-1', attempt: 1, latest: false }]
+  );
+  await assert.rejects(() => verifyCheckpoints(session), /checkpoint is stale/);
 });
 
-test('service diagnostics are inspected for raw runner credentials', async () => {
+test('service diagnostics wait for every run-owned request before checking secrets', async () => {
+  let reads = 0;
   const session = {
-    requestIds: ['request-1'],
+    requestIds: ['request-1', 'request-2'],
     subjects: new Set(),
     secretValues: () => ['raw-secret'],
     remote: {
       async sqlJSON() {
-        return [{ requestId: 'request-1', subject: null, method: 'POST' }];
+        reads++;
+        const records = [{ requestId: 'request-1', subject: null, method: 'POST' }];
+        if (reads > 1) records.push({ requestId: 'request-2', subject: null, method: 'GET' });
+        return records;
       },
     },
   };
   assert.deepEqual(await verifyDiagnosticRedaction(session), {
-    records: 1,
-    scannedRequestIds: 1,
+    records: 2,
+    scannedRequestIds: 2,
   });
+  assert.equal(reads, 2);
 
-  session.remote.sqlJSON = async () => [
-    { requestId: 'request-1', subject: null, method: 'raw-secret' },
-  ];
+  session.requestIds = ['request-1'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
   await assert.rejects(() => verifyDiagnosticRedaction(session), /raw credential/);
 });
 
