@@ -387,9 +387,10 @@ test('failed lifecycle work still runs its cleanup and records that outcome', as
   };
   await assert.rejects(() => integration({
     target: TARGET,
-    checkResult: {},
+    checkResult: { remote: {} },
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
+    repairDeliveryStorage: async () => {},
     createSession: async () => session,
     runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {
@@ -414,9 +415,10 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
   };
   await assert.rejects(() => integration({
     target: TARGET,
-    checkResult: {},
+    checkResult: { remote: {} },
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
+    repairDeliveryStorage: async () => {},
     createSession: async () => session,
     runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {

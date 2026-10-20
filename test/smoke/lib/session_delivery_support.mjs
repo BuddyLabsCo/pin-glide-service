@@ -181,7 +181,6 @@ WHERE sender_id = ${escapeSQLString(session.sender(label).id)}
 export function deliveryDurationQuery(session, label, messages, status) {
   return `
 SELECT json_build_object(
-  'minimumMs', coalesce(extract(epoch FROM min(completed_at - created_at)) * 1000, 0)::double precision,
   'maximumMs', coalesce(extract(epoch FROM max(completed_at - created_at)) * 1000, 0)::double precision,
   'rows', count(*)
 )

@@ -115,6 +115,52 @@ SELECT json_build_object(
   if (state.hidden) await remote.sql(deliveryRestoreSQL());
 }
 
+const lockQuery = `
+SELECT count(*)::int AS held
+FROM pg_locks AS locks
+JOIN pg_class AS relations ON relations.oid = locks.relation
+WHERE relations.relname = 'delivery_deliveries'
+  AND locks.mode = 'AccessExclusiveLock'
+  AND locks.granted;
+`;
+
+// Hold the Delivery relation so the next upload's claim waits, which is what
+// lets the scenario observe the whole-batch deadline rather than a write or
+// Receipt bound.
+export async function withDeliveryBatchLock(remote, callback, { seconds = 20 } = {}) {
+  const command = [
+    `psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide -c`,
+    quote(`BEGIN; LOCK TABLE pin_glide.delivery_deliveries IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(${seconds}); COMMIT;`),
+  ].join(' ');
+  const holder = remote.ssh(
+    `${remote.compose} exec -T postgres ${command}`,
+    { timeoutMs: (seconds + 30) * 1_000 },
+  );
+  // The holder ends by itself either when its sleep completes or when the
+  // service's deadline ends the waiting claim.
+  holder.catch(() => {});
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const state = await remote.sqlJSON(lockQuery);
+    if (Number(state.held) > 0) break;
+    if (Date.now() > deadline) throw new Error('Delivery batch lock was not acquired');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return withFailureJoiningCleanup(
+    async () => callback(holder),
+    async () => {
+      await holder.catch(() => {});
+      for (;;) {
+        const state = await remote.sqlJSON(lockQuery);
+        if (Number(state.held) === 0) return;
+        if (Date.now() > deadline + 30_000) throw new Error('Delivery batch lock was not released');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    },
+    'Delivery batch lock and its release both failed',
+  );
+}
+
 export async function withDeliveryStorageFault(remote, callback) {
   const fault = await startDeliveryStorageFault(remote);
   return withFailureJoiningCleanup(

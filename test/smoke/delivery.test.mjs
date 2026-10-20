@@ -64,16 +64,20 @@ test('the Delivery restore watchdog retries until the restore succeeds', () => {
   const guard = path.join(directory, 'guard');
   const watchdog = `${guard}.sh`;
   const calls = path.join(directory, 'calls');
+  const lockCalls = path.join(directory, 'lock-calls');
   const psql = path.join(directory, 'psql');
   const flock = path.join(directory, 'flock');
   writeFileSync(guard, '');
   writeFileSync(`${guard}.sql`, 'SELECT 1;\n');
   writeFileSync(psql, `#!/bin/sh
 cat >/dev/null
+test -s ${lockCalls}
 printf 'run\\n' >> ${calls}
 test "$(wc -l < ${calls})" -ge 2
 `);
-  writeFileSync(flock, '#!/bin/sh\nexit 0\n');
+  writeFileSync(flock, `#!/bin/sh
+printf '%s\\n' "$*" >> ${lockCalls}
+`);
   chmodSync(psql, 0o700);
   chmodSync(flock, 0o700);
   writeFileSync(watchdog, deliveryRestoreWatchdog(
@@ -88,6 +92,7 @@ test "$(wc -l < ${calls})" -ge 2
   assert.equal(existsSync(guard), false);
   assert.equal(existsSync(`${guard}.sql`), false);
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 2);
+  assert.equal(readFileSync(lockCalls, 'utf8').trim(), '9');
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {

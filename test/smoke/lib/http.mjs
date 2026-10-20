@@ -41,15 +41,19 @@ export class SmokeHttp {
   // already admitted is expected to continue.
   callAbandoned(options) {
     const controller = new AbortController();
+    controller.abandoned = false;
     return {
       request: this.dispatch(options, false, controller),
-      abort: () => controller.abort(),
-      aborted: () => controller.signal.aborted,
+      abort: () => {
+        controller.abandoned = true;
+        controller.abort();
+      },
+      aborted: () => controller.abandoned,
     };
   }
 
   async dispatch(
-    { method = 'GET', path, token, body, rawBody, headers = {} } = {},
+    { method = 'GET', path, token, body, rawBody, headers = {}, timeoutMs = this.timeoutMs } = {},
     discardResponse,
     controller = new AbortController(),
   ) {
@@ -77,7 +81,7 @@ export class SmokeHttp {
     }
 
     let response;
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref();
     try {
       try {
@@ -89,7 +93,7 @@ export class SmokeHttp {
         });
       } catch (error) {
         const failure = new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
-        failure.aborted = controller.signal.aborted;
+        failure.aborted = controller.abandoned === true;
         throw failure;
       }
 

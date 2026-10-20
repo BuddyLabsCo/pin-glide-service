@@ -1,8 +1,5 @@
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import {
-  recoverDeliveryStorageFault,
-  withDeliveryStorageFault,
-} from './delivery_faults.mjs';
+import { withDeliveryBatchLock, withDeliveryStorageFault } from './delivery_faults.mjs';
 import {
   scenarioDuplicates,
   scenarioMixed,
@@ -81,16 +78,19 @@ async function scenarioSendFailed(session, context) {
       }
     }
     // The stored send_failed duration is the write attempt itself, without
-    // upload or queueing time, so every failed write proves the 2s bound.
+    // upload or queueing time, so the longest failed write proves the 2s bound.
     const failureDurations = await session.remote.sqlJSON(
       deliveryDurationQuery(session, 'pair2', failed.map(item => item.message), 'send_failed'),
     );
+    // The first blocked write exhausts the deadline; later entries queued on
+    // the same closed socket may fail sooner, so one failure must land at the
+    // bound and none may exceed it.
     if (
       Number(failureDurations.rows) !== failed.length
-      || Number(failureDurations.minimumMs) < 1_500
+      || Number(failureDurations.maximumMs) < 1_500
       || Number(failureDurations.maximumMs) > 2_500
     ) {
-      throw new Error(`Failed Delivery writes took ${failureDurations.minimumMs}-${failureDurations.maximumMs}ms, outside the two-second bound`);
+      throw new Error(`Failed Delivery writes reached ${failureDurations.maximumMs}ms, outside the two-second bound`);
     }
     for (const { response, message } of failed) {
       expectResult(response, 0, target.receiverID, 'send_failed', 'send_failed');
@@ -118,6 +118,35 @@ async function scenarioSendFailed(session, context) {
     socket.resumeReads();
     await socket.close();
   }
+}
+
+async function scenarioBatchBudget(session, context) {
+  const live = liveTarget(session, context);
+  const message = messageID(session, 'batch-budget');
+  let started;
+  const outcome = await withDeliveryBatchLock(session.remote, async () => {
+    started = Date.now();
+    try {
+      // The client waits past the service's own budget so it observes the
+      // service's 503 rather than an HTTP peer timeout.
+      await session.request({
+        method: 'POST',
+        path: '/v1/messages',
+        token: session.token('pair2', 'uploader'),
+        body: { messageId: message, items: [deliveryItem(live)] },
+        timeoutMs: 20_000,
+      });
+      return { status: 207 };
+    } catch (error) {
+      if (error?.status !== 503 || error?.code !== 'delivery_status_unavailable') throw error;
+      return { status: error.status, code: error.code };
+    }
+  }, { seconds: 20 });
+  const elapsedMs = Date.now() - started;
+  if (elapsedMs < 14_500 || elapsedMs > 16_500) {
+    throw new Error(`A blocked Delivery batch answered in ${elapsedMs}ms, outside the fifteen-second budget`);
+  }
+  return { ...outcome, elapsedMs, batchBounded: true };
 }
 
 async function scenarioUncertainty(session, context) {
@@ -345,7 +374,6 @@ export async function runDeliveryScenarios(session, context = {}) {
   if (!context.currentPairing || !context.shared || !context.enrollment) {
     throw new Error('Delivery smoke scenarios require the shared Pairing context');
   }
-  await recoverDeliveryStorageFault(session.remote);
   const scenarios = [];
   scenarios.push(await runDeliveryScenario(
     session,
@@ -364,6 +392,12 @@ export async function runDeliveryScenarios(session, context = {}) {
     'a bounded write failure reports send_failed without claiming absence',
     { http: ['PostMessages', 'GetMessage'], wss: ['delivery'] },
     () => scenarioSendFailed(session, context),
+  ));
+  scenarios.push(await runDeliveryScenario(
+    session,
+    'a blocked Delivery batch ends inside the fifteen-second budget',
+    { http: ['PostMessages'], wss: [] },
+    () => scenarioBatchBudget(session, context),
   ));
   scenarios.push(await runDeliveryScenario(
     session,

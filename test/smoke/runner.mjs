@@ -21,6 +21,7 @@ import {
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { runDeliveryScenarios } from './lib/session_delivery.mjs';
+import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
@@ -379,10 +380,14 @@ async function integration({
   runLifecycle = runSeededJourneys,
   runModel = runModelScenarios,
   plan = createFixturePlan(),
+  repairDeliveryStorage = recoverDeliveryStorageFault,
 }) {
   let session;
   let cleaned = false;
   try {
+    // Fixture bootstrap deletes run-owned Delivery rows, so a table a crashed
+    // run left renamed must be repaired before that cleanup runs.
+    if (checkResult.remote) await repairDeliveryStorage(checkResult.remote);
     session = await createSession({
       target,
       remote: checkResult.remote,
