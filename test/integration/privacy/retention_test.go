@@ -225,7 +225,10 @@ VALUES (1, current_database(), current_user, 'retention-probe-old', 'succeeded',
 	// all.
 	environment.exec(t, `
 INSERT INTO pin_glide.model_configurations (id, workspace_id, model, enabled)
-VALUES ('default', 'retention-workspace', 'qwen3.7-flash', true)`)
+VALUES ('default', 'retention-workspace', 'qwen3.7-flash', true)
+ON CONFLICT (id) DO UPDATE
+SET workspace_id = EXCLUDED.workspace_id, model = EXCLUDED.model,
+    enabled = EXCLUDED.enabled, updated_at = now()`)
 	environment.exec(t, `DELETE FROM pin_glide.model_configurations WHERE id = 'default'`)
 	if configurations := environment.count(t,
 		`SELECT count(*) FROM pin_glide.model_configurations`); configurations != 0 {

@@ -47,7 +47,7 @@ services:
       # keys with. Protected server configuration.
       PIN_GLIDE_BAILIAN_API_KEY: ${BAILIAN_API_KEY:?Set BAILIAN_API_KEY in .env}
     ports:
-      - "8080:8080"
+      - "33489:8080"
     depends_on:
       postgres:
         condition: service_healthy

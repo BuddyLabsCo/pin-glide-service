@@ -27,7 +27,7 @@ function configured(provider) {
     'compose', '--env-file', '/dev/null', '-f', compose, 'config', '--format', 'json',
   ], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout).services.api.environment;
+  return JSON.parse(result.stdout).services.api;
 }
 
 test('Compose interpolates every supported identity-provider startup matrix', () => {
@@ -101,9 +101,20 @@ test('Compose interpolates every supported identity-provider startup matrix', ()
     'PIN_GLIDE_QQ_APP_KEY',
   ];
   for (const item of cases) {
-    const environment = configured(item.env);
+    const api = configured(item.env);
     for (const name of variables) {
-      assert.equal(environment[name] ?? '', item.want[name] ?? '', `${item.name}: ${name}`);
+      assert.equal(api.environment[name] ?? '', item.want[name] ?? '', `${item.name}: ${name}`);
     }
   }
+});
+
+test('Compose publishes the adopted LAN API port while keeping the container listener unchanged', () => {
+  const api = configured({});
+  assert.equal(api.environment.PIN_GLIDE_API_ADDRESS, ':8080');
+  assert.deepEqual(api.ports, [{
+    mode: 'ingress',
+    target: 8080,
+    published: '33489',
+    protocol: 'tcp',
+  }]);
 });

@@ -112,9 +112,7 @@ configuration from the environment:
 
 WeChat and QQ configuration is optional at startup. A missing or partial provider pair fails only when that provider is used. The API and database tools do not require either provider in any environment.
 
-Temporary model credentials come from that parent key plus the enabled
-non-secret `pin_glide.model_configurations` row an operator maintains; see
-`deploy/compose/README.md` for the deployment steps.
+Temporary model credentials come from that parent key plus the enabled non-secret `pin_glide.model_configurations` row. The release Data Script installs the approved Beijing Workspace and `qwen3.7-flash` model; see `deploy/compose/README.md` for verification and change control.
 The repository verifies that boundary with the fake in `test/fakes/bailian` and
 the adapter's own HTTP tests; confirming the real temporary-key endpoint, its
 lifetime parameter, its answer and the parent key's permissions is a separate
@@ -229,6 +227,22 @@ install/upgrade/restore journey stays in
 `node test/smoke/release-install.mjs --integration-ready`; neither suite is a
 publication gate. The real local restore/mask/lifecycle check is explicit:
 `node test/smoke/dev-snapshot.mjs --docker`.
+
+The deployed LAN smoke runner checks a published release against `local-server`
+without accepting an ambiguous target:
+
+```sh
+PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
+PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev \
+  node test/smoke/runner.mjs --integration-ready
+```
+
+`--check` is read-only. `--integration-ready` also seeds and removes run-owned
+SQL fixtures, verifies their normal M/U/F authority, creates a stopped-writer
+container snapshot, restores it into a disposable database, and writes redacted
+evidence.
+See `deploy/compose/README.md` for the target guards,
+upgrade-origin rule, evidence and provider-proof exclusions.
 
 The repository is implemented ticket by ticket, and the published descriptions
 describe only the surface delivered so far: the WSS definitions declare no
