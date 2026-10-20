@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runProcess } from './lib/commands.mjs';
 import { Evidence } from './lib/evidence.mjs';
+import { SmokeValidationError } from './lib/errors.mjs';
 import { releaseVersion } from './lib/target.mjs';
 import { validatePublishedRelease } from './lib/release.mjs';
 
@@ -148,6 +149,7 @@ async function verifyReady(installation, version) {
     'SELECT release_version FROM release.release_deploy_history ORDER BY id DESC LIMIT 1',
   );
   if (release !== version) throw new Error(`Published installation Release is ${release}, not ${version}`);
+  const images = {};
   for (const [service, reference] of [
     ['api', `ghcr.io/buddylabsco/pin-glide-api:${version}`],
     ['postgres', postgresImage],
@@ -168,10 +170,13 @@ async function verifyReady(installation, version) {
     if (runningReference !== reference || runningID !== imageID) {
       throw new Error(`Published installation ${service} is not running ${reference}`);
     }
+    images[service] = { reference, id: imageID };
   }
+  return images;
 }
 
 async function verifyLabels(run, release, commit, env) {
+  const images = {};
   for (const service of ['api', 'db-tools']) {
     const reference = `ghcr.io/buddylabsco/pin-glide-${service}:${release}`;
     const result = await run('docker', [
@@ -188,7 +193,16 @@ async function verifyLabels(run, release, commit, env) {
     if (labels['org.opencontainers.image.revision'] !== commit) {
       throw new Error(`${reference} has the wrong revision label`);
     }
+    const id = (await run('docker', [
+      'image',
+      'inspect',
+      reference,
+      '--format',
+      '{{.Id}}',
+    ], { env, timeoutMs: 30_000 })).stdout.trim();
+    images[service === 'db-tools' ? 'dbTools' : service] = { reference, id };
   }
+  return images;
 }
 
 async function publishedOrigin(version, run, env) {
@@ -214,8 +228,7 @@ async function publishedOrigin(version, run, env) {
   return commit;
 }
 
-async function integration({ options, release, evidence, env, run }) {
-  const originCommit = await publishedOrigin(options.from, run, env);
+async function integration({ options, release, originCommit, evidence, env, run }) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-glide-published-install-'));
   const sourceEnv = path.join(work, 'source.env');
   writePrivate(sourceEnv, [
@@ -223,7 +236,7 @@ async function integration({ options, release, evidence, env, run }) {
     'COMPOSE_PROJECT_NAME=pin-glide-published-source',
     'POSTGRES_USER=pin_glide',
     `POSTGRES_PASSWORD=${randomBytes(24).toString('hex')}`,
-    `BAILIAN_API_KEY=${process.env.BAILIAN_API_KEY || 'published-install-placeholder'}`,
+    'BAILIAN_API_KEY=published-install-placeholder',
     '',
   ].join('\n'));
   let base;
@@ -280,12 +293,19 @@ async function integration({ options, release, evidence, env, run }) {
     installations.push(fresh);
     await install(fresh, options.to, '--prep', { initial: true });
     await install(fresh, options.to, '--initial-deploy');
-    await verifyReady(fresh, options.to);
-    await verifyLabels(run, options.to, release.sourceCommit, env);
+    const freshImages = {
+      ...await verifyReady(fresh, options.to),
+      ...await verifyLabels(run, options.to, release.sourceCommit, env),
+    };
     evidence.record({
       scenario: 'published fresh installation',
       status: 'passed',
-      details: { release: options.to, sourceCommit: release.sourceCommit },
+      details: {
+        release: options.to,
+        sourceCommit: release.sourceCommit,
+        images: freshImages,
+        assets: release.assets,
+      },
     });
 
     const upgradeProject = `pin-glide-published-upgrade-${randomBytes(6).toString('hex')}`;
@@ -300,12 +320,16 @@ async function integration({ options, release, evidence, env, run }) {
     installations.push(upgrade);
     await install(upgrade, options.from, '--prep', { initial: true });
     await install(upgrade, options.from, '--initial-deploy');
-    await verifyReady(upgrade, options.from);
-    await verifyLabels(run, options.from, originCommit, env);
+    const originImages = {
+      ...await verifyReady(upgrade, options.from),
+      ...await verifyLabels(run, options.from, originCommit, env),
+    };
     await install(upgrade, options.to, '--prep');
     await install(upgrade, options.to, '--full-release');
-    await verifyReady(upgrade, options.to);
-    await verifyLabels(run, options.to, release.sourceCommit, env);
+    const upgradedImages = {
+      ...await verifyReady(upgrade, options.to),
+      ...await verifyLabels(run, options.to, release.sourceCommit, env),
+    };
     evidence.record({
       scenario: `published declared upgrade ${options.from} to ${options.to}`,
       status: 'passed',
@@ -314,17 +338,24 @@ async function integration({ options, release, evidence, env, run }) {
         originCommit,
         release: options.to,
         sourceCommit: release.sourceCommit,
+        originImages,
+        upgradedImages,
+        assets: release.assets,
       },
     });
   } catch (error) {
     failure = error;
   } finally {
     const cleanupErrors = await cleanup();
-    fs.rmSync(work, { recursive: true, force: true });
     if (cleanupErrors.length > 0) {
       failure = failure
-        ? new AggregateError([failure, ...cleanupErrors], 'Published installation and cleanup both failed')
-        : new AggregateError(cleanupErrors, 'Published installation cleanup failed');
+        ? new AggregateError(
+          [failure, ...cleanupErrors],
+          `Published installation and cleanup both failed; retained ${work}`,
+        )
+        : new AggregateError(cleanupErrors, `Published installation cleanup failed; retained ${work}`);
+    } else {
+      fs.rmSync(work, { recursive: true, force: true });
     }
   }
   if (failure) throw failure;
@@ -337,6 +368,7 @@ async function main(argv = process.argv.slice(2)) {
     runId: `published-install-${Date.now()}-${randomBytes(6).toString('hex')}`,
     exclusions: [
       'Business API journeys after installation',
+      'Bailian model issuance covered by the deployed runner',
       'Real QQ or WeChat authorization',
     ],
   });
@@ -352,28 +384,36 @@ async function main(argv = process.argv.slice(2)) {
     if (!release.origins[options.to].includes(options.from)) {
       throw new Error(`${options.from} is not a declared supported origin for ${options.to}`);
     }
+    const originCommit = await publishedOrigin(options.from, runProcess, env);
     prerequisitesPassed = true;
     if (options.mode === 'check') {
       evidence.record({
         scenario: 'published installation prerequisites',
         status: 'passed',
-        details: { origin: options.from, release: options.to },
+        details: {
+          origin: options.from,
+          originCommit,
+          release: options.to,
+          sourceCommit: release.sourceCommit,
+          assets: release.assets,
+        },
       });
     } else {
-      await integration({ options, release, evidence, env, run: runProcess });
+      await integration({ options, release, originCommit, evidence, env, run: runProcess });
     }
     const report = evidence.write(evidencePath);
     console.log(JSON.stringify(report, null, 2));
     return 0;
   } catch (error) {
+    const failed = prerequisitesPassed || error instanceof SmokeValidationError;
     evidence.record({
       scenario: options.mode === 'check' ? 'published installation prerequisites' : 'published installation journey',
-      status: prerequisitesPassed ? 'failed' : 'blocked',
+      status: failed ? 'failed' : 'blocked',
       details: { reason: error.message },
     });
     const report = evidence.write(evidencePath);
     console.error(JSON.stringify(report, null, 2));
-    return prerequisitesPassed ? 1 : 2;
+    return failed ? 1 : 2;
   }
 }
 

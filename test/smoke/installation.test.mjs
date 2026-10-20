@@ -85,11 +85,28 @@ test('published installation arguments require explicit origin and target versio
 });
 
 test('published installation Compose keeps release tags but removes host-wide resources', () => {
-  const config = rewriteCompose(composeFixture(), 'pin-glide-published-test');
+  const source = composeFixture();
+  for (const service of Object.values(source.services)) {
+    Object.assign(service, {
+      build: '.',
+      networks: ['shared'],
+      profiles: ['unsafe'],
+      volumes: ['./host:/host'],
+    });
+  }
+  source.services.api.ports = [{ target: 8080, published: '33489' }];
+  const config = rewriteCompose(source, 'pin-glide-published-test');
   assert.equal(config.name, 'pin-glide-published-test');
   assert.equal(config.services.api.ports, undefined);
   assert.equal(config.services.api.image, 'ghcr.io/buddylabsco/pin-glide-api:${RELEASE}');
   assert.equal(config.services['db-tools'].container_name, 'pin-glide-published-test-db-tools');
+  for (const service of Object.values(config.services)) {
+    assert.equal(service.build, undefined);
+    assert.equal(service.networks, undefined);
+    assert.equal(service.profiles, undefined);
+  }
+  assert.equal(config.services.api.volumes, undefined);
+  assert.equal(config.services['db-tools'].volumes, undefined);
   assert.deepEqual(config.services.postgres.volumes, ['database:/var/lib/postgresql']);
   assert.deepEqual(Object.keys(config.volumes), ['database']);
 });
