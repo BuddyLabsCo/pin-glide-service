@@ -6,6 +6,7 @@ import { renderInvalidateReceiverCredentialSQL } from './lib/receiver_fixtures.m
 import { SmokeBlocked, SmokeProblem } from './lib/http.mjs';
 import { runProtocolScenario } from './lib/session_pairing_support.mjs';
 import {
+  coverageTests,
   deliverOnce,
   deterministicTestReferences,
   expectedProblem,
@@ -175,19 +176,21 @@ test('deterministic tests run once over the referenced packages', async () => {
 });
 
 test('deterministic evidence binds a pass to its own package', async () => {
+  // The same test name in two packages: a name-union implementation would
+  // accept the second package's reference from the first package's run.
   const references = [
-    { test: 'TestOnlyHere', package: './internal/api/wss', level: 'unit', covers: [], observes: '' },
-    { test: 'TestOnlyThere', package: './test/integration/pairing', level: 'integration', covers: [], observes: '' },
+    { test: 'TestSameName', package: './internal/api/wss', level: 'unit', covers: [], observes: '' },
+    { test: 'TestSameName', package: './test/integration/pairing', level: 'integration', covers: [], observes: '' },
   ];
   const calls = [];
   await assert.rejects(
     () => runDeterministicTests('/repository', references, async (command, args) => {
       calls.push(args);
       if (command === 'docker') return { stdout: '29.0.0' };
-      // The second package never runs its own test.
-      return { stdout: '--- PASS: TestOnlyHere (0.00s)' };
+      // Only the first package reports the shared name.
+      return { stdout: args.at(-1) === './internal/api/wss' ? '--- PASS: TestSameName (0.00s)' : 'no tests to run' };
     }),
-    /TestOnlyThere/,
+    /TestSameName/,
   );
   assert.equal(calls.filter(args => args[0] === 'test').length, 2);
 });
@@ -206,6 +209,21 @@ test('a failed deterministic run names the failing test', async () => {
       throw error;
     }),
     new RegExp(`${references[1].test} failed`),
+  );
+});
+
+test('a required coverage with no executed test is a hole, not a pass', () => {
+  const references = [
+    { test: 'TestPolicy', covers: ['policy-close'], package: './p', level: 'unit', observes: '' },
+  ];
+  assert.deepEqual(coverageTests(references, new Set(['TestPolicy']), 'policy-close'), ['TestPolicy']);
+  assert.throws(
+    () => coverageTests(references, new Set(['TestPolicy']), 'failed-upgrade-cleanup'),
+    /no executed deterministic test covers failed-upgrade-cleanup/,
+  );
+  assert.throws(
+    () => coverageTests(references, new Set(), 'policy-close'),
+    /no executed deterministic test covers policy-close/,
   );
 });
 

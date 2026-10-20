@@ -44,7 +44,7 @@ export const deterministicTestReferences = [
     test: 'TestShutdownEndsAnUpgradeStillCommitting',
     package: './internal/api/wss',
     level: 'unit',
-    covers: ['failed-upgrade-cleanup', 'shutdown'],
+    covers: ['shutdown'],
     observes: 'shutdown cancelling an upgrade while its final commit is in flight',
   },
   {
@@ -65,7 +65,9 @@ export const deterministicTestReferences = [
     test: 'TestReceiverRevocationSerializesWithRedemptionAndUpgrade',
     package: './test/integration/pairing',
     level: 'integration',
-    covers: ['policy-close', 'excluded-revocation'],
+    // Its 1008 assertion runs only when the racing upgrade commits, so it
+    // proves serialization rather than a guaranteed policy close.
+    covers: ['excluded-revocation'],
     observes: 'revocation serialized with redemption and an upgrade still committing',
   },
   {
@@ -93,6 +95,19 @@ export function parseRanTests(output, references) {
 export function failingTests(output, references) {
   const failed = new Set([...String(output).matchAll(/^\s*--- FAIL: (\w+)/gm)].map(match => match[1]));
   return references.map(item => item.test).filter(test => failed.has(test));
+}
+
+// coverageTests names the executed tests that prove one required behavior. No
+// executed test is a hole in the evidence, not an empty list to report as a
+// pass.
+export function coverageTests(references, passedTests, coverage) {
+  const tests = references
+    .filter(item => item.covers.includes(coverage) && passedTests.has(item.test))
+    .map(item => item.test);
+  if (tests.length === 0) {
+    throw new Error(`no executed deterministic test covers ${coverage}`);
+  }
+  return tests;
 }
 
 // runDeterministicTests executes the referenced Go tests and reports only what
@@ -129,7 +144,9 @@ export async function runDeterministicTests(root, references, run = runProcess) 
       }
       const output = `${error.result?.stdout || ''}\n${error.result?.stderr || ''}`;
       const failed = failingTests(output, inPackage);
-      const detail = failed.length > 0 ? `: ${failed.join(', ')} failed` : '';
+      const detail = failed.length > 0
+        ? `: ${failed.join(', ')} failed`
+        : `: ${error.message}`;
       throw new Error(`deterministic Receiver tests failed in ${packagePath}${detail}`, { cause: error });
     }
     tests.push(...parseRanTests(result.stdout, inPackage));

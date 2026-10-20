@@ -12,6 +12,7 @@ import {
   restartAndReconnect,
 } from './session_receiver_faults.mjs';
 import {
+  coverageTests,
   pairingHTTP,
   receiverHTTP,
   runDeterministicTests,
@@ -69,9 +70,7 @@ export async function runReceiverScenarios(session, { root, runDeterministic = r
   // observations already recorded.
   const deterministic = await runDeterministic(root, deterministicTestReferences);
   const passed = new Set(deterministic.tests);
-  const covering = coverage => deterministicTestReferences
-    .filter(item => item.covers.includes(coverage) && passed.has(item.test))
-    .map(item => item.test);
+  const covering = coverage => coverageTests(deterministicTestReferences, passed, coverage);
   return {
     scenarios,
     requests: session.requestIds.length,
@@ -80,7 +79,7 @@ export async function runReceiverScenarios(session, { root, runDeterministic = r
       live: 'not_run',
       reason: 'a live 1008 needs a generation change after possession, which only excluded owner recovery or global Receiver revocation performs',
       deterministic: covering('policy-close'),
-      policyViolationObserved: false,
+      livePolicyViolationObserved: false,
     },
     recoverableBusinessError: {
       status: 'not_applicable',
