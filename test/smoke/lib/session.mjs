@@ -100,16 +100,20 @@ export class SmokeSession {
   }
 
   abandonedRequest(options) {
-    const { request, abort } = this.http.callAbandoned(options);
+    const { request, abort, aborted } = this.http.callAbandoned(options);
     return {
       request: request.then(result => {
         this.trackRequestId(result);
         return result;
       }, error => {
         this.trackRequestId(error);
+        // The caller's own abort is what proves cancellation; a timeout or
+        // service failure is a different outcome.
+        error.aborted = aborted();
         throw error;
       }),
       abort,
+      aborted,
     };
   }
 

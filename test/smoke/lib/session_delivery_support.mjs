@@ -178,7 +178,21 @@ WHERE sender_id = ${escapeSQLString(session.sender(label).id)}
 `;
 }
 
-export async function waitForAdmitted(session, label, messages, timeoutMs = 5_000) {
+export function deliveryDurationQuery(session, label, messages, status) {
+  return `
+SELECT json_build_object(
+  'minimumMs', coalesce(extract(epoch FROM min(completed_at - created_at)) * 1000, 0)::double precision,
+  'maximumMs', coalesce(extract(epoch FROM max(completed_at - created_at)) * 1000, 0)::double precision,
+  'rows', count(*)
+)
+FROM pin_glide.delivery_deliveries
+WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
+  AND message_id = ANY(${sqlTextArray(messages)})
+  AND status = ${escapeSQLString(status)};
+`;
+}
+
+export async function waitForAdmitted(session, label, messages, expected = messages.length, timeoutMs = 5_000) {
   const query = `
 SELECT count(*)::int AS count
 FROM pin_glide.delivery_deliveries
@@ -189,8 +203,8 @@ WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
   let last;
   while (Date.now() < deadline) {
     last = await session.remote.sqlJSON(query);
-    if (Number(last.count) === messages.length) return;
+    if (Number(last.count) >= expected) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  throw new Error(`Delivery admission reached ${last?.count || 0} of ${messages.length} entries`);
+  throw new Error(`Delivery admission reached ${last?.count || 0} of ${expected} entries`);
 }

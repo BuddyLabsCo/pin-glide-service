@@ -2,11 +2,11 @@ import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { quote } from './shell.mjs';
 
 const guardPattern = /^\/tmp\/pin-glide-dev-smoke-delivery\.[A-Za-z0-9]+$/;
-const attempts = 12;
-const intervalSeconds = 5;
+const environmentLock = '/tmp/pin-glide-dev-smoke.lock';
 
-export function deliveryRestoreWatchdog(remote) {
-  const restoreSQL = quote(`
+export function deliveryRestoreSQL() {
+  return `BEGIN;
+SET LOCAL lock_timeout = '10s';
 DO $$
 BEGIN
     IF NOT (current_database() = 'pin_glide') THEN
@@ -23,26 +23,25 @@ BEGIN
     END IF;
 END
 $$;
-`.trim());
+COMMIT;
+`;
+}
+
+export function deliveryRestoreWatchdog(remote, { intervalSeconds = 5, lockFile = environmentLock } = {}) {
   return `#!/bin/sh
 guard=$1
+[ -e ${lockFile} ] || (umask 0; : > ${lockFile})
+exec 9>${lockFile}
+flock 9
 attempt=0
-while [ -e "$guard" ] && [ "$attempt" -lt ${attempts} ]; do
-    sleep ${intervalSeconds}
+while [ -e "$guard" ] && [ "$attempt" -lt 12 ]; do
+    if ${remote.compose} exec -T postgres psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide -f - < "$guard.sql"; then
+        rm -f "$guard" "$guard.sql"
+        break
+    fi
     attempt=$((attempt + 1))
+    sleep ${intervalSeconds}
 done
-if [ -e "$guard" ]; then
-    attempt=0
-    while [ "$attempt" -lt 3 ]; do
-        if ${remote.compose} exec -T postgres psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide -c ${restoreSQL}; then
-            rm -f "$guard"
-            break
-        fi
-        attempt=$((attempt + 1))
-        sleep ${intervalSeconds}
-    done
-fi
-rm -f "$guard"
 rm -f "$0"
 `;
 }
@@ -69,30 +68,10 @@ COMMIT;
 async function restore(remote, guard, watchdog) {
   const script = `
 set +e
-${remote.compose} exec -T postgres psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide <<'SQL'
-BEGIN;
-SET LOCAL lock_timeout = '10s';
-DO $$
-BEGIN
-    IF NOT (current_database() = 'pin_glide') THEN
-        RAISE EXCEPTION 'refusing smoke Delivery restore outside pin_glide';
-    END IF;
-    IF to_regclass('pin_glide.smoke_delivery_hidden') IS NOT NULL THEN
-        IF to_regclass('pin_glide.delivery_deliveries') IS NOT NULL THEN
-            RAISE EXCEPTION 'smoke Delivery restore found both table names';
-        END IF;
-        EXECUTE 'ALTER TABLE pin_glide.smoke_delivery_hidden RENAME TO delivery_deliveries';
-    END IF;
-    IF to_regclass('pin_glide.delivery_deliveries') IS NULL THEN
-        RAISE EXCEPTION 'smoke Delivery restore found neither table name';
-    END IF;
-END
-$$;
-COMMIT;
-SQL
+${remote.compose} exec -T postgres psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide -f - < ${quote(`${guard}.sql`)}
 status=$?
 if [ "$status" -eq 0 ]; then
-    rm -f -- ${quote(guard)} ${quote(watchdog)}
+    rm -f -- ${quote(guard)} ${quote(`${guard}.sql`)} ${quote(watchdog)}
 fi
 exit "$status"
 `;
@@ -104,6 +83,7 @@ export async function startDeliveryStorageFault(remote) {
 set -euo pipefail
 guard=$(mktemp /tmp/pin-glide-dev-smoke-delivery.XXXXXX)
 watchdog="$guard.sh"
+printf '%s\\n' ${quote(deliveryRestoreSQL())} > "$guard.sql"
 printf '%s\\n' ${quote(deliveryRestoreWatchdog(remote))} > "$watchdog"
 chmod 700 "$watchdog"
 nohup "$watchdog" "$guard" </dev/null >/dev/null 2>&1 &
@@ -122,6 +102,17 @@ printf '%s\\n' "$guard|$watchdog"
     throw error;
   }
   return { guard, watchdog };
+}
+
+// A previous run can die between renaming the table and releasing the shared
+// lock. The next authorized run repairs that leftover before doing any work.
+export async function recoverDeliveryStorageFault(remote) {
+  const state = await remote.sqlJSON(`
+SELECT json_build_object(
+  'hidden', to_regclass('pin_glide.smoke_delivery_hidden') IS NOT NULL
+);
+`);
+  if (state.hidden) await remote.sql(deliveryRestoreSQL());
 }
 
 export async function withDeliveryStorageFault(remote, callback) {

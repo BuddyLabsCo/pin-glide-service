@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
+import { deliveryRestoreWatchdog } from './lib/delivery_faults.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import { withDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runDeliveryScenario } from './lib/session_delivery_support.mjs';
 import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
@@ -49,32 +59,35 @@ test('the HTTP peer carries malformed raw upload bodies without JSON re-encoding
   );
 });
 
-test('the Delivery storage fault is restored after a failed scenario', async () => {
-  const calls = [];
-  const remote = {
-    target: { deploymentDir: '/srv/pin-glide-dev' },
-    compose: "sudo -n docker compose --project-directory '/srv/pin-glide-dev'",
-    ssh(script) {
-      calls.push(script);
-      return Promise.resolve({
-        stdout: calls.length === 1
-          ? '/tmp/pin-glide-dev-smoke-delivery.Ab3dEf|/tmp/pin-glide-dev-smoke-delivery.Ab3dEf.sh\n'
-          : '',
-      });
-    },
-    sql(statement) {
-      calls.push(statement);
-      return Promise.resolve();
-    },
-  };
-  await assert.rejects(
-    () => withDeliveryStorageFault(remote, async () => {
-      throw new Error('scenario failed');
-    }),
-    /scenario failed/,
-  );
-  assert.match(calls[1], /current_database\(\) = 'pin_glide'[\s\S]*ALTER TABLE pin_glide\.delivery_deliveries RENAME TO smoke_delivery_hidden/);
-  assert.match(calls[2], /EXECUTE .*ALTER TABLE pin_glide\.smoke_delivery_hidden RENAME TO delivery_deliveries/);
+test('the Delivery restore watchdog retries until the restore succeeds', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'pin-glide-delivery-watchdog-'));
+  const guard = path.join(directory, 'guard');
+  const watchdog = `${guard}.sh`;
+  const calls = path.join(directory, 'calls');
+  const psql = path.join(directory, 'psql');
+  const flock = path.join(directory, 'flock');
+  writeFileSync(guard, '');
+  writeFileSync(`${guard}.sql`, 'SELECT 1;\n');
+  writeFileSync(psql, `#!/bin/sh
+cat >/dev/null
+printf 'run\\n' >> ${calls}
+test "$(wc -l < ${calls})" -ge 2
+`);
+  writeFileSync(flock, '#!/bin/sh\nexit 0\n');
+  chmodSync(psql, 0o700);
+  chmodSync(flock, 0o700);
+  writeFileSync(watchdog, deliveryRestoreWatchdog(
+    { compose: psql },
+    { intervalSeconds: 0, lockFile: path.join(directory, 'lock') },
+  ));
+  chmodSync(watchdog, 0o700);
+
+  execFileSync('sh', [watchdog, guard], {
+    env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+  });
+  assert.equal(existsSync(guard), false);
+  assert.equal(existsSync(`${guard}.sql`), false);
+  assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 2);
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {

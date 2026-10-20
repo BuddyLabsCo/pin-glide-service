@@ -44,6 +44,7 @@ export class SmokeHttp {
     return {
       request: this.dispatch(options, false, controller),
       abort: () => controller.abort(),
+      aborted: () => controller.signal.aborted,
     };
   }
 
@@ -87,7 +88,9 @@ export class SmokeHttp {
           signal: controller.signal,
         });
       } catch (error) {
-        throw new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
+        const failure = new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
+        failure.aborted = controller.signal.aborted;
+        throw failure;
       }
 
       const headerRequestID = response.headers.get('x-request-id');

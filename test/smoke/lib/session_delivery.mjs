@@ -1,5 +1,8 @@
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import { withDeliveryStorageFault } from './delivery_faults.mjs';
+import {
+  recoverDeliveryStorageFault,
+  withDeliveryStorageFault,
+} from './delivery_faults.mjs';
 import {
   scenarioDuplicates,
   scenarioMixed,
@@ -9,6 +12,7 @@ import {
 import { scenarioAuthority } from './session_delivery_authority.mjs';
 import {
   deliveryItem,
+  deliveryDurationQuery,
   expectMetadata,
   expectNoMessage,
   expectResult,
@@ -48,7 +52,9 @@ async function scenarioSendFailed(session, context) {
         ciphertext: Buffer.alloc(700 * 1024, 7).toString('base64'),
       })],
     ).then(response => ({ response, message, elapsedMs: Date.now() - started })));
-    await waitForAdmitted(session, 'pair2', messages);
+    // One claimed row is enough to prove storage admission; the rest may
+    // still be claiming when the first write's deadline starts.
+    await waitForAdmitted(session, 'pair2', messages, 1);
     const admittedOffsetMs = Date.now() - started;
     const responses = await Promise.all(pending);
     const failed = responses.filter(({ response }) => (
@@ -74,13 +80,17 @@ async function scenarioSendFailed(session, context) {
         throw new Error(`Delivery request took ${requestElapsedMs}ms, beyond its 15-second budget`);
       }
     }
-    const fastestFailureMs = Math.min(...failed.map(item => item.elapsedMs));
-    // The first blocked write exhausts its own two-second deadline, so an
-    // early failure (such as a transport reset) and a longer write bound both
-    // stay outside this observation. Later writes queue behind it, so only
-    // the fastest failure can prove the deadline.
-    if (fastestFailureMs < 1_500 || fastestFailureMs > admittedOffsetMs + 2_500) {
-      throw new Error(`The first failed Delivery write answered in ${fastestFailureMs}ms, outside the two-second bound`);
+    // The stored send_failed duration is the write attempt itself, without
+    // upload or queueing time, so every failed write proves the 2s bound.
+    const failureDurations = await session.remote.sqlJSON(
+      deliveryDurationQuery(session, 'pair2', failed.map(item => item.message), 'send_failed'),
+    );
+    if (
+      Number(failureDurations.rows) !== failed.length
+      || Number(failureDurations.minimumMs) < 1_500
+      || Number(failureDurations.maximumMs) > 2_500
+    ) {
+      throw new Error(`Failed Delivery writes took ${failureDurations.minimumMs}-${failureDurations.maximumMs}ms, outside the two-second bound`);
     }
     for (const { response, message } of failed) {
       expectResult(response, 0, target.receiverID, 'send_failed', 'send_failed');
@@ -95,7 +105,7 @@ async function scenarioSendFailed(session, context) {
       observedStatuses: [...new Set(observedStatuses)],
       failedEntries: failed.length,
       failedElapsedMs: failed.map(item => item.elapsedMs),
-      fastestFailureMs,
+      failureDurations,
       requestElapsedMs: responses.map(item => item.elapsedMs),
       concurrentRequests: messages.length,
       admittedOffsetMs,
@@ -127,10 +137,12 @@ async function scenarioUncertainty(session, context) {
     let aborted = false;
     try {
       await abandoned.request;
-    } catch {
-      aborted = true;
+    } catch (error) {
+      aborted = error.aborted === true;
     }
-    if (!aborted) throw new Error('Caller received the abandoned response instead of disconnecting');
+    if (!aborted || !abandoned.aborted()) {
+      throw new Error('Caller received the abandoned response instead of disconnecting');
+    }
     sendReceipt(socket, frame);
     const continued = await waitForMetadata(session, 'pair2', disconnectedMessage, [{
       receiverID: live.receiverID,
@@ -167,10 +179,12 @@ async function scenarioRestart(session, context) {
     let callerDisconnected = false;
     try {
       await abandoned.request;
-    } catch {
-      callerDisconnected = true;
+    } catch (error) {
+      callerDisconnected = error.aborted === true;
     }
-    if (!callerDisconnected) throw new Error('Restart scenario did not disconnect the caller');
+    if (!callerDisconnected || !abandoned.aborted()) {
+      throw new Error('Restart scenario did not disconnect the caller');
+    }
 
     await session.remote.restartAPI();
     const continued = await waitForMetadata(session, 'pair2', abandonedMessage, [{
@@ -331,6 +345,7 @@ export async function runDeliveryScenarios(session, context = {}) {
   if (!context.currentPairing || !context.shared || !context.enrollment) {
     throw new Error('Delivery smoke scenarios require the shared Pairing context');
   }
+  await recoverDeliveryStorageFault(session.remote);
   const scenarios = [];
   scenarios.push(await runDeliveryScenario(
     session,
