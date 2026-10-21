@@ -197,7 +197,9 @@ WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
 
 export async function waitForAdmitted(session, label, messages, expected = messages.length, timeoutMs = 5_000) {
   const query = `
-SELECT count(*)::int AS count
+SELECT json_build_object(
+  'count', count(*)::int
+) AS admitted
 FROM pin_glide.delivery_deliveries
 WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
   AND message_id = ANY(${sqlTextArray(messages)});

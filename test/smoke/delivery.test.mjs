@@ -12,10 +12,26 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { deliveryRestoreWatchdog, withDeliveryBatchLock } from './lib/delivery_faults.mjs';
+import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import { runDeliveryScenario } from './lib/session_delivery_support.mjs';
+import { runDeliveryScenario, waitForAdmitted } from './lib/session_delivery_support.mjs';
 import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
+
+test('Delivery admission polling reads the JSON count used by the deployed query', async () => {
+  const statements = [];
+  const session = {
+    plan: createFixturePlan({ runId: 'delivery-admission' }),
+    remote: {
+      async sqlJSON(statement) {
+        statements.push(statement);
+        return { count: 1 };
+      },
+    },
+  };
+  await waitForAdmitted(session, 'pair2', ['message-1'], 1, 100);
+  assert.match(statements[0], /json_build_object/);
+});
 
 test('an unexpected Delivery frame is reported without its ciphertext', async () => {
   const socket = {
