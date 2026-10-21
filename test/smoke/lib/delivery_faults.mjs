@@ -136,24 +136,25 @@ export async function withDeliveryBatchLock(remote, callback, { seconds = 20 } =
     `${remote.compose} exec -T postgres ${command}`,
     { timeoutMs: (seconds + 30) * 1_000 },
   );
-  // The holder ends by itself either when its sleep completes or when the
-  // service's deadline ends the waiting claim.
   holder.catch(() => {});
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const state = await remote.sqlJSON(lockQuery);
-    if (Number(state.held) > 0) break;
-    if (Date.now() > deadline) throw new Error('Delivery batch lock was not acquired');
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
   return withFailureJoiningCleanup(
-    async () => callback(holder),
+    async () => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const state = await remote.sqlJSON(lockQuery);
+        if (Number(state.held) > 0) break;
+        if (Date.now() > deadline) throw new Error('Delivery batch lock was not acquired');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return callback(holder);
+    },
     async () => {
       await holder.catch(() => {});
+      const deadline = Date.now() + 30_000;
       for (;;) {
         const state = await remote.sqlJSON(lockQuery);
         if (Number(state.held) === 0) return;
-        if (Date.now() > deadline + 30_000) throw new Error('Delivery batch lock was not released');
+        if (Date.now() > deadline) throw new Error('Delivery batch lock was not released');
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     },

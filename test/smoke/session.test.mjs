@@ -378,6 +378,7 @@ test('pairing peers are closed when the relay journey fails', async () => {
 test('failed lifecycle work still runs its cleanup and records that outcome', async () => {
   const plan = createFixturePlan({ runId: 'pairing-failure-run' });
   const recorded = [];
+  const order = [];
   let closes = 0;
   const session = {
     requestIds: [],
@@ -390,13 +391,20 @@ test('failed lifecycle work still runs its cleanup and records that outcome', as
     checkResult: { remote: {} },
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
-    repairDeliveryStorage: async () => {},
-    createSession: async () => session,
+    repairDeliveryStorage: async () => {
+      order.push('repair');
+    },
+    createSession: async () => {
+      order.push('create');
+      return session;
+    },
     runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {
+      order.push('lifecycle');
       throw new Error('authorization failed');
     },
   }), /authorization failed/);
+  assert.deepEqual(order, ['repair', 'create', 'lifecycle']);
   assert.equal(closes, 1);
   assert.equal(recorded.at(-1).scenario, 'run-owned fixture cleanup');
   assert.equal(recorded.at(-1).status, 'passed');
@@ -405,6 +413,7 @@ test('failed lifecycle work still runs its cleanup and records that outcome', as
 test('a failed cleanup is recorded and an error after close never cleans up twice', async () => {
   const plan = createFixturePlan({ runId: 'cleanup-failure-run' });
   const recorded = [];
+  const order = [];
   let closes = 0;
   const session = {
     requestIds: [],
@@ -418,13 +427,19 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
     checkResult: { remote: {} },
     evidence: { record(entry) { recorded.push(entry); } },
     plan,
-    repairDeliveryStorage: async () => {},
-    createSession: async () => session,
+    repairDeliveryStorage: async () => {
+      order.push('repair');
+    },
+    createSession: async () => {
+      order.push('create');
+      return session;
+    },
     runModel: async () => ({ provider: 'bailian' }),
     runLifecycle: async () => {
       throw new Error('authorization failed');
     },
   }), /authorization failed/);
+  assert.deepEqual(order, ['repair', 'create']);
   assert.equal(closes, 1);
   assert.equal(recorded.at(-1).status, 'failed');
   assert.match(recorded.at(-1).details.reason, /cleanup failed/);
