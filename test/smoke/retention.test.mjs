@@ -48,6 +48,8 @@ test('scheduled cleanup probe waits for a committed run and tracks only its own 
   assert.deepEqual(result.runIDs, [11]);
   assert.equal(result.status, 'succeeded');
   assert.equal(result.selfRemoving, true);
+  assert(result.command.includes(result.probeName));
+  assert.match(result.command, /cron\.unschedule/);
   assert.deepEqual([...session.retentionRunIDs], [11]);
 });
 

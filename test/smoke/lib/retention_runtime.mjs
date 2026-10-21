@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 
 import { withFailureJoiningCleanup } from './cleanup.mjs';
 import {
-  cronCommand,
   cronJobs,
   cronTimezones,
   retentionJobName,
@@ -431,7 +430,7 @@ SELECT json_build_object(
             runIDs: runs.map(run => run.runID),
             status: completed.status,
             completedAt: completed.endTime,
-            command: cronCommand,
+            command: probeCommand,
             selfRemoving: !remaining.jobExists,
           };
         }
