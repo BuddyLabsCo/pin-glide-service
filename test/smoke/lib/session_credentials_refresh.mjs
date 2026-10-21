@@ -119,7 +119,11 @@ export async function droppedResponseRecovery(session) {
   if (dropped.status !== 200) throw new Error(`Dropped refresh returned ${dropped.status}`);
   if (dropped.cacheControl !== 'no-store') throw new Error('Dropped refresh response was cacheable');
   if (session.sender('recover').latestRefresh !== undefined) {
-    throw new Error('An uncertain refresh response advanced the runner checkpoint');
+    throw new Error(
+      `An uncertain refresh response advanced the runner checkpoint: ${JSON.stringify(
+        session.sender('recover').latestRefresh,
+      )}`,
+    );
   }
   const recovered = await session.refresh('recover', {
     operationID,
