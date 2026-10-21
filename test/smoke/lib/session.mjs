@@ -115,6 +115,7 @@ export class SmokeSession {
         return result;
       }, error => {
         this.trackRequestId(error);
+        if (error instanceof SmokeProblem && error.body) this.errorBodies.push(error.body);
         // The caller's own abort is what proves cancellation; a timeout or
         // service failure is a different outcome.
         error.aborted = aborted();

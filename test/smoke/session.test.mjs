@@ -212,7 +212,11 @@ test('direct and abandoned Delivery requests register payload secrets before tra
       },
       callAbandoned() {
         return {
-          request: Promise.resolve({ status: 202, requestId: 'request-abandoned' }),
+          request: Promise.reject(new SmokeProblem(
+            500,
+            { code: 'delivery_unavailable', detail: 'abandoned-body' },
+            'request-abandoned',
+          )),
           abort() {},
           aborted() {
             return false;
@@ -239,7 +243,11 @@ test('direct and abandoned Delivery requests register payload secrets before tra
       items: [{ nonce: 'abandoned-nonce', ciphertext: 'abandoned-ciphertext' }],
     },
   });
-  await abandoned.request;
+  await assert.rejects(() => abandoned.request, /HTTP 500/);
+  assert.deepEqual(session.errorBodies, [{
+    code: 'delivery_unavailable',
+    detail: 'abandoned-body',
+  }]);
   assert.deepEqual([...session.secretValues()].sort(), [
     'abandoned-ciphertext',
     'abandoned-nonce',

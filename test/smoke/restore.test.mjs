@@ -151,9 +151,11 @@ test('disposable restore validates restored facts and propagates failure', async
 test('disposable PostgreSQL restore returns restored facts and propagates failures', async () => {
   const name = 'smoke_restore_0123456789abcdef';
   const snapshot = `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T030000.000000001Z-1.dump`;
+  const phases = [];
   const remote = {
     target: TARGET,
-    async ssh(script) {
+    async ssh(script, options) {
+      phases.push(options.phase);
       if (script.includes(' psql ')) {
         return { stdout: '{"database":"restored"}\n', stderr: '' };
       }
@@ -166,10 +168,13 @@ test('disposable PostgreSQL restore returns restored facts and propagates failur
     image: 'ghcr.io/example/postgres:18',
     factsQuery: 'SELECT 1;',
   }), { database: 'restored' });
+  assert.deepEqual(phases, ['create', 'ready', 'restore', 'facts', 'cleanup']);
 
+  phases.length = 0;
   await assert.rejects(() => restoreFactsInDisposablePostgres({
     target: TARGET,
-    async ssh(script) {
+    async ssh(script, options) {
+      phases.push(options.phase);
       if (script.includes('pg_restore')) throw new Error('restore failed');
       return { stdout: '', stderr: '' };
     },
@@ -179,6 +184,7 @@ test('disposable PostgreSQL restore returns restored facts and propagates failur
     image: 'ghcr.io/example/postgres:18',
     factsQuery: 'SELECT 1;',
   }), /restore failed/);
+  assert.deepEqual(phases, ['create', 'ready', 'restore', 'cleanup']);
 });
 
 test('restored facts reject incomplete extension or scheduled-work state', () => {

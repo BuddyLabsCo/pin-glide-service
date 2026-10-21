@@ -271,7 +271,7 @@ export async function restoreFactsInDisposablePostgres(remote, {
       '--env POSTGRES_HOST_AUTH_METHOD=trust',
       `--volume ${quote(`${remote.target.snapshotDir}:/snapshots:ro`)}`,
       quote(image),
-    ].join(' '), { timeoutMs: 120_000 });
+    ].join(' '), { timeoutMs: 120_000, phase: 'create' });
     started = true;
     const attempts = Math.max(1, Math.ceil(waitMs / sleepMs));
     await remote.ssh(`
@@ -284,16 +284,16 @@ while [ "$attempt" -lt ${attempts} ]; do
     sleep ${Math.max(1, Math.ceil(sleepMs / 1000))}
 done
 exit 1
-`, { timeoutMs: waitMs + 30_000 });
+`, { timeoutMs: waitMs + 30_000, phase: 'ready' });
     await remote.ssh(
       `sudo -n docker exec -i ${quote(name)} pg_restore --exit-on-error ` +
         `--username=pin_glide --dbname=pin_glide ${quote(`/snapshots/${fileName}`)}`,
-      { timeoutMs: 600_000 },
+      { timeoutMs: 600_000, phase: 'restore' },
     );
     const result = await remote.ssh(
       `sudo -n docker exec -i ${quote(name)} psql -X -v ON_ERROR_STOP=1 -A -t ` +
         '-U pin_glide -d pin_glide -f -',
-      { input: factsQuery, timeoutMs: 120_000 },
+      { input: factsQuery, timeoutMs: 120_000, phase: 'facts' },
     );
     const line = result.stdout
       .split('\n')
@@ -310,7 +310,7 @@ exit 1
         await remote.ssh(
           `if sudo -n docker container inspect ${quote(name)} >/dev/null 2>&1; then ` +
             `sudo -n docker rm -fv ${quote(name)} >/dev/null; fi`,
-          { timeoutMs: 120_000 },
+          { timeoutMs: 120_000, phase: 'cleanup' },
         );
       } catch (cleanupError) {
         failure = failure

@@ -24,6 +24,7 @@ test('scheduled cleanup probe waits for a committed run and tracks only its own 
       async sqlJSON(statement) {
         if (statement.includes('maxRunID')) return { maxRunID: 10 };
         if (statement.includes('cron.schedule')) return { jobID: 23 };
+        if (statement.includes('jobExists')) return { jobExists: false };
         if (statement.includes('cron.job_run_details')) {
           poll++;
           return poll === 1

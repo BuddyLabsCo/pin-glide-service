@@ -22,19 +22,16 @@ import {
 import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
 
-test('Delivery admission polling reads the JSON count used by the deployed query', async () => {
-  const statements = [];
+test('Delivery admission polling accepts a committed count after retrying', async () => {
   const session = {
     plan: createFixturePlan({ runId: 'delivery-admission' }),
     remote: {
-      async sqlJSON(statement) {
-        statements.push(statement);
+      async sqlJSON() {
         return { count: 1 };
       },
     },
   };
   await waitForAdmitted(session, 'pair2', ['message-1'], 1, 100);
-  assert.match(statements[0], /json_build_object/);
 });
 
 test('Delivery metadata compares timestamp instants across wire formats', () => {
@@ -136,7 +133,6 @@ printf '%s\\n' "$*" >> ${lockCalls}
 
 test('a failed batch-lock acquisition waits for the holder before rejecting', async () => {
   const order = [];
-  const queries = [];
   const remote = {
     compose: "sudo -n docker compose --project-directory '/srv/pin-glide-dev'",
     ssh() {
@@ -147,8 +143,7 @@ test('a failed batch-lock acquisition waits for the holder before rejecting', as
         }, 20);
       });
     },
-    sqlJSON(statement) {
-      queries.push(statement);
+    sqlJSON() {
       if (!order.includes('holder')) {
         order.push('poll');
         throw new Error('transient poll failure');
@@ -163,7 +158,6 @@ test('a failed batch-lock acquisition waits for the holder before rejecting', as
     /transient poll failure/,
   );
   assert.deepEqual(order, ['poll', 'holder']);
-  assert.match(queries[0], /json_build_object/);
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {

@@ -393,6 +393,14 @@ WHERE jobid = ${jobID}
         if (failed) throw new Error(`Scheduled cleanup probe ${failed.status}: ${failed.returnMessage || 'no detail'}`);
         const completed = runs.find(run => run.status === 'succeeded');
         if (completed) {
+          const remaining = await session.remote.sqlJSON(`
+SELECT json_build_object(
+  'jobExists', EXISTS (SELECT 1 FROM cron.job WHERE jobid = ${jobID})
+) AS remaining;
+`);
+          if (remaining.jobExists) {
+            throw new Error('Scheduled cleanup probe remained scheduled after its successful run');
+          }
           return {
             jobID,
             probeName,
@@ -400,7 +408,7 @@ WHERE jobid = ${jobID}
             status: completed.status,
             completedAt: completed.endTime,
             command: cronCommand,
-            selfRemoving: true,
+            selfRemoving: !remaining.jobExists,
           };
         }
         if (Date.now() >= deadline) throw new Error('Scheduled cleanup probe did not complete');
