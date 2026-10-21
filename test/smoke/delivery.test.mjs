@@ -113,6 +113,7 @@ printf '%s\\n' "$*" >> ${lockCalls}
 
 test('a failed batch-lock acquisition waits for the holder before rejecting', async () => {
   const order = [];
+  const queries = [];
   const remote = {
     compose: "sudo -n docker compose --project-directory '/srv/pin-glide-dev'",
     ssh() {
@@ -123,7 +124,8 @@ test('a failed batch-lock acquisition waits for the holder before rejecting', as
         }, 20);
       });
     },
-    sqlJSON() {
+    sqlJSON(statement) {
+      queries.push(statement);
       if (!order.includes('holder')) {
         order.push('poll');
         throw new Error('transient poll failure');
@@ -138,6 +140,7 @@ test('a failed batch-lock acquisition waits for the holder before rejecting', as
     /transient poll failure/,
   );
   assert.deepEqual(order, ['poll', 'holder']);
+  assert.match(queries[0], /json_build_object/);
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {

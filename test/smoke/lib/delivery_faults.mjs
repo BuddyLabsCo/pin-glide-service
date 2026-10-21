@@ -116,7 +116,9 @@ SELECT json_build_object(
 }
 
 const lockQuery = `
-SELECT count(*)::int AS held
+SELECT json_build_object(
+  'held', count(*)::int
+) AS lock_state
 FROM pg_locks AS locks
 JOIN pg_class AS relations ON relations.oid = locks.relation
 WHERE relations.relname = 'delivery_deliveries'
