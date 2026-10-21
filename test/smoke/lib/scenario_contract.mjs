@@ -10,6 +10,13 @@ const digests = {
   asyncapi: createHash('sha256').update(asyncapiText).digest('hex'),
 };
 
+// The published close meanings are the authority for what a connection must
+// send, so scenarios assert against them rather than a second copy.
+export const closeMeaning = Object.fromEntries(
+  [...asyncapiText.matchAll(/- code: (\d+)\s*\n\s+description: [^\n]*\n\s+reason: ?"?([^"\n]*)"?/g)]
+    .map(match => [Number(match[1]), match[2]]),
+);
+
 export function operationIdentity(name) {
   if (!openapiText.includes(`operationId: ${name}`)) {
     throw new Error(`Scenario names an unpublished HTTP operation ${name}`);

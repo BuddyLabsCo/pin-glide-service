@@ -13,16 +13,13 @@ import { modelConfiguration } from './lib/configuration.mjs';
 import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
 import { RemoteEnvironment, acquireEnvironmentLock, repository } from './lib/remote.mjs';
-import {
-  recoverySnapshot,
-  restoreSnapshotToDisposableDatabase,
-  verifySnapshotLocations,
-} from './lib/restore.mjs';
+import { recoverySnapshot, restoreSnapshotToDisposableDatabase, verifySnapshotLocations } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { runDeliveryScenarios } from './lib/session_delivery.mjs';
 import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
+import { runReceiverScenarios } from './lib/session_receiver.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -42,7 +39,7 @@ function usage() {
     'schema/data ledgers, contracts and snapshot inventory without writes. It',
     'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
-    'exercises seeded Sender credential/session, Pairing, Delivery and real',
+    'exercises seeded Sender credential/session, Pairing, Delivery, Receiver and real',
     'Bailian model journeys through the deployed service, then creates a',
     'stopped-writer snapshot and restores it into a disposable database.',
     'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
@@ -369,6 +366,7 @@ async function runSeededJourneys({ session, plan }) {
     credentials: await runSenderCredentialScenarios({ session, plan }),
     pairing: pairingEvidence,
     delivery: await runDeliveryScenarios(session, context),
+    receiver: await runReceiverScenarios(session, { root }),
   };
 }
 
@@ -398,7 +396,7 @@ async function integration({
     const model = await runModel({ session, model: checkResult.model });
     const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
-      scenario: 'seeded Sender, Pairing, Delivery and real Bailian smoke journey',
+      scenario: 'seeded Sender, Pairing, Delivery, Receiver and real Bailian smoke journey',
       status: 'passed',
       details: {
         ...lifecycle,

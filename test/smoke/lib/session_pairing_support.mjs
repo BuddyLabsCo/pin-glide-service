@@ -3,9 +3,10 @@ import { WebSocketClosedError } from './websocket.mjs';
 import { expectNoMessage, expectSocketClose } from './socket_assertions.mjs';
 import { runScenario } from './session_credential_support.mjs';
 import { associations } from './session_pairing_helpers.mjs';
-import { contractEvidence } from './scenario_contract.mjs';
+import { closeMeaning, contractEvidence } from './scenario_contract.mjs';
 
 export { expectNoMessage as expectNoFrame, expectSocketClose };
+export { closeMeaning };
 
 const wssNames = {
   pairingState: 'pairing_state',
@@ -13,14 +14,20 @@ const wssNames = {
   pairingRelayOut: 'pairing_relay',
   credentialReady: 'credential_ready',
   pairingRemoved: 'pairing_removed',
+  delivery: 'delivery',
+  receipt: 'receipt',
   error: 'error',
 };
 
-export async function runPairingScenario(session, name, exercised, callback) {
+export async function runProtocolScenario(session, name, exercised, callback) {
   return runScenario(session, name, async () => ({
     contract: contractEvidence(session, exercised, wssNames),
     ...(await callback()),
   }));
+}
+
+export async function runPairingScenario(session, name, exercised, callback) {
+  return runProtocolScenario(session, name, exercised, callback);
 }
 
 export function sessionPath(pairing) {
@@ -193,13 +200,16 @@ export async function expirePairingSession(session, sessionID) {
   await session.remote.sql(renderExpirePairingSessionSQL(sessionID));
 }
 
-export async function waitForPresence(session, label, pairingID, wanted) {
+export async function waitForPresence(session, label, pairingID, wanted, {
+  attempts = 30,
+  intervalMs = 100,
+} = {}) {
   let last;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const listed = await associations(session, label);
     last = listed.find(item => item.pairingId === pairingID);
     if (last?.presence === wanted) return last;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error(`Pairing ${pairingID} never reported presence ${wanted}`);
 }

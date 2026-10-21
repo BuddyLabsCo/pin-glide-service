@@ -62,6 +62,9 @@ export function createFixturePlan({ runId = `smoke-${Date.now()}-${randomBytes(6
     { label: 'superseded', accountID: accounts[0].id },
     { label: 'pair1', accountID: accounts[0].id },
     { label: 'pair2', accountID: accounts[0].id },
+    { label: 'receiver-main', accountID: accounts[0].id },
+    { label: 'receiver-shared', accountID: accounts[0].id },
+    { label: 'receiver-other', accountID: accounts[1].id },
     { label: 'model', accountID: accounts[0].id },
     { label: 'model-expired', accountID: accounts[0].id },
     { label: 'model-revoked', accountID: accounts[0].id },
@@ -151,7 +154,7 @@ WHERE request_id = ANY(${sqlTextArray(requestIds)})
 `;
 }
 
-function transaction(message, body) {
+export function transaction(message, body) {
   return `BEGIN;
 SET LOCAL lock_timeout = '10s';
 DO $$

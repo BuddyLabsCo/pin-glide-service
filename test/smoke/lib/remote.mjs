@@ -115,6 +115,14 @@ export class RemoteEnvironment {
     );
   }
 
+  stopApi() {
+    return this.ssh(`${this.compose} stop api`, { timeoutMs: 60_000 });
+  }
+
+  startApi() {
+    return this.ssh(`${this.compose} up -d --no-deps --wait api`, { timeoutMs: 180_000 });
+  }
+
   async withInvalidBailianKey(callback) {
     return withInvalidBailianKey(this, callback);
   }

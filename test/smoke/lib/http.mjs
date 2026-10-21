@@ -9,8 +9,12 @@ export class SmokeProblem extends Error {
     this.name = 'SmokeProblem';
     this.status = status;
     this.code = body?.code || '';
+    this.type = body?.type || '';
+    this.title = body?.title || '';
     this.requestId = requestID || body?.requestId || '';
-    this.detail = body?.detail || body?.title || '';
+    this.bodyRequestId = body?.requestId || '';
+    this.bodyStatus = body?.status;
+    this.detail = body?.detail || '';
   }
 }
 

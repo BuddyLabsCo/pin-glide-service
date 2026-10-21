@@ -72,3 +72,42 @@ test('the WebSocket peer presents bearer authority and answers service pings', a
   assert.equal(protocol, 'pin-glide.v1');
   assert.equal(pong, 'probe');
 });
+
+test('the WebSocket peer can leave a service Ping unanswered', async t => {
+  let pong = false;
+  const server = http.createServer();
+  server.on('upgrade', (request, socket) => {
+    const accept = createHash('sha1')
+      .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64');
+    socket.write([
+      'HTTP/1.1 101 Switching Protocols',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Accept: ${accept}`,
+      'Sec-WebSocket-Protocol: pin-glide.v1',
+      '',
+      '',
+    ].join('\r\n'));
+    socket.write(serverFrame(9, Buffer.from('probe')));
+    socket.on('data', data => {
+      if ((data[0] & 0x0f) === 10) pong = true;
+    });
+    t.after(() => socket.destroy());
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const origin = `ws://127.0.0.1:${server.address().port}`;
+
+  const socket = await openWebSocket({
+    origin,
+    path: '/v1/receiver/events',
+    token: 'receiver-secret',
+    answerPings: false,
+    target: { ...TARGET, wsOrigin: origin },
+  });
+  t.after(() => socket.close());
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(socket.pings, 1);
+  assert.equal(pong, false);
+});

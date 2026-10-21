@@ -30,7 +30,6 @@ function maskedFrame(opcode, payload = Buffer.alloc(0)) {
   for (let index = 0; index < body.length; index++) masked[index] = body[index] ^ mask[index % 4];
   return Buffer.concat([header, mask, masked]);
 }
-
 export class WebSocketClosedError extends Error {
   constructor(close) {
     super(`smoke WebSocket closed with ${close.code}${close.reason ? ` ${close.reason}` : ''}`);
@@ -41,8 +40,11 @@ export class WebSocketClosedError extends Error {
 }
 
 class WebSocketPeer {
-  constructor(socket, head) {
+  constructor(socket, head, { answerPings = true } = {}) {
     this.socket = socket;
+    this.answerPings = answerPings;
+    this.pings = 0;
+    this.firstPingAt = 0;
     this.leftover = Buffer.alloc(0);
     this.fragments = undefined;
     this.messages = [];
@@ -101,7 +103,12 @@ class WebSocketPeer {
     if (opcode >= 8) {
       if (!fin || payload.length > 125) throw new Error('invalid server WebSocket control frame');
       if (opcode === 8) return this.receiveClose(payload);
-      if (opcode === 9) return this.send(10, payload);
+      if (opcode === 9) {
+        if (this.pings === 0) this.firstPingAt = Date.now();
+        this.pings++;
+        if (this.answerPings) this.send(10, payload);
+        return;
+      }
       if (opcode === 10) return;
       throw new Error('unknown server WebSocket control frame');
     }
@@ -161,6 +168,19 @@ class WebSocketPeer {
     });
   }
 
+  waitForClose(timeoutMs = 5_000) {
+    if (this.closeInfo) return Promise.resolve(this.closeInfo);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('timed out waiting for a WebSocket close'));
+      }, timeoutMs);
+      this.closeEvent.then(close => {
+        clearTimeout(timer);
+        resolve(close);
+      });
+    });
+  }
+
   sendJSON(value) {
     this.send(1, Buffer.from(JSON.stringify(value)));
   }
@@ -168,6 +188,10 @@ class WebSocketPeer {
   send(opcode, payload) {
     if (this.closeInfo || this.sendClosed) throw new WebSocketClosedError(this.closeInfo || { code: 1006, reason: 'closed' });
     this.socket.write(maskedFrame(opcode, payload));
+  }
+
+  sendText(text) {
+    this.send(1, Buffer.from(text));
   }
 
   receiveClose(payload) {
@@ -188,6 +212,7 @@ class WebSocketPeer {
   finish(close) {
     if (this.closeInfo) return;
     this.closeInfo = close;
+    this.closedAt = Date.now();
     this.resolveClose(close);
     for (const waiter of this.waiters.splice(0)) {
       clearTimeout(waiter.timer);
@@ -206,7 +231,9 @@ class WebSocketPeer {
     this.socket.end();
     const timer = setTimeout(() => {
       this.socket.destroy();
-      this.finish({ code, reason });
+      // A peer that never answers the Close handshake is an abnormal end, not
+      // confirmation that it accepted our code.
+      this.finish({ code: 1006, reason: 'close handshake timed out' });
     }, 1_000);
     timer.unref();
     return this.closeEvent;
@@ -229,6 +256,7 @@ export async function openWebSocket({
   path,
   token,
   protocol = 'pin-glide.v1',
+  answerPings = true,
   target = TARGET,
   timeoutMs = 5_000,
 } = {}) {
@@ -243,8 +271,8 @@ export async function openWebSocket({
     Upgrade: 'websocket',
     'Sec-WebSocket-Version': '13',
     'Sec-WebSocket-Key': key,
-    'Sec-WebSocket-Protocol': protocol,
   };
+  if (protocol) headers['Sec-WebSocket-Protocol'] = protocol;
   if (token) headers.Authorization = `Bearer ${token}`;
 
   return new Promise((resolve, reject) => {
@@ -293,12 +321,12 @@ export async function openWebSocket({
         socket.destroy();
         return fail(new Error('invalid WebSocket upgrade response'));
       }
-      if (response.headers['sec-websocket-protocol'] !== protocol) {
+      if (protocol && response.headers['sec-websocket-protocol'] !== protocol) {
         socket.destroy();
         return fail(new Error('WebSocket upgrade did not select pin-glide.v1'));
       }
       settled = true;
-      resolve(new WebSocketPeer(socket, head));
+      resolve(new WebSocketPeer(socket, head, { answerPings }));
     });
     request.end();
   });
