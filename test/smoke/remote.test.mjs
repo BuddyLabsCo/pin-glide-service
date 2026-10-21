@@ -87,7 +87,10 @@ test('controlled provider faults restore the original Compose environment and ne
       return { stdout: '', stderr: '' };
     },
   });
-  remote.preserveApiLogs = async () => {};
+  let preserved = 0;
+  remote.preserveApiLogs = async () => {
+    preserved++;
+  };
 
   await assert.rejects(
     () => remote.withInvalidBailianKey(async () => {
@@ -108,6 +111,7 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, new RegExp(faultPaths.watchdog.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, /rm -f/);
   assert.match(calls.at(-1).script, /--force-recreate --wait api/);
+  assert.equal(preserved, 2);
 
   calls.length = 0;
   await assert.rejects(
@@ -123,6 +127,7 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, /\/etc\/hosts/);
   assert.match(calls.at(-1).script, /pin-glide-smoke-fault/);
   assert.doesNotMatch(calls.at(-1).script, /sed -i/);
+  assert.equal(preserved, 4);
 });
 
 test('invalid-key verification failure restores the original API environment', async () => {

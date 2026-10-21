@@ -7,6 +7,7 @@ import {
 } from './fixtures.mjs';
 import { sameJSON } from './json.mjs';
 import { ModelFaults } from './model_faults.mjs';
+import { invalidParentKey } from './provider_faults.mjs';
 import {
   BailianPeer,
   BailianProblem,
@@ -105,7 +106,7 @@ export async function runModelScenarios({
   let expiry;
   const otpSMS = `Pin Glide smoke: your verification code is ${otp}. Do not share it.`;
   const noOTPSMS = 'Pin Glide smoke: this reminder contains no verification code.';
-  for (const value of [otp, otpSMS, noOTPSMS]) session.addSecret(value);
+  for (const value of [invalidParentKey, otp, otpSMS, noOTPSMS]) session.addSecret(value);
 
   await runScenario(
     session,

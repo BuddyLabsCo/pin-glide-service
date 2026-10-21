@@ -3,6 +3,7 @@ import { quote } from './shell.mjs';
 
 const watchdogAttempts = 24;
 const watchdogIntervalSeconds = 5;
+export const invalidParentKey = 'sk-smoke-invalid-parent-key';
 
 function compose(remote, envFileArgument) {
   return [
@@ -83,9 +84,9 @@ chmod 700 "$watchdog"
 nohup "$watchdog" "$guard" >/dev/null 2>&1 &
 cp -- ${quote(envFile)} "$temporary"
 if grep -q '^BAILIAN_API_KEY=' "$temporary"; then
-    sed -i 's|^BAILIAN_API_KEY=.*$|BAILIAN_API_KEY=sk-smoke-invalid-parent-key|' "$temporary"
+    sed -i 's|^BAILIAN_API_KEY=.*$|BAILIAN_API_KEY=${invalidParentKey}|' "$temporary"
 else
-    printf '%s\\n' 'BAILIAN_API_KEY=sk-smoke-invalid-parent-key' >> "$temporary"
+    printf '%s\\n' 'BAILIAN_API_KEY=${invalidParentKey}' >> "$temporary"
 fi
 fault_active=true
 ${compose(remote, '"$temporary"')} up -d --no-deps --force-recreate --wait api
@@ -111,7 +112,7 @@ printf '%s|%s|%s\\n' "$temporary" "$guard" "$watchdog"
       `sudo -n docker inspect "$(${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ps -q api)" --format '{{json .Config.Env}}'`,
       { timeoutMs: 30_000 },
     );
-    if (!runningEnvironment.stdout.includes('BAILIAN_API_KEY=sk-smoke-invalid-parent-key')) {
+    if (!runningEnvironment.stdout.includes(`BAILIAN_API_KEY=${invalidParentKey}`)) {
       throw new Error('Invalid parent-key fault did not reach the running API');
     }
   } catch (error) {

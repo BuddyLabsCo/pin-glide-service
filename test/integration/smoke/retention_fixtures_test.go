@@ -4,6 +4,8 @@ package smoke_test
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -115,6 +117,20 @@ VALUES
 	if privacy == "" {
 		t.Fatal("run-owned privacy query returned no evidence")
 	}
+	var privacyRows map[string]any
+	if err := json.Unmarshal([]byte(privacy), &privacyRows); err != nil {
+		t.Fatalf("decode run-owned privacy rows: %v: %s", err, privacy)
+	}
+	for _, category := range []string{
+		"accounts", "senders", "credentials", "refreshOperations", "receivers",
+		"receiverCredentials", "pairings", "pairingSessions", "deliveries",
+		"diagnostics", "schemaAudits", "cronRuns",
+	} {
+		rows, ok := privacyRows[category].([]any)
+		if !ok || len(rows) == 0 {
+			t.Fatalf("privacy category %s is empty: %s", category, privacy)
+		}
+	}
 	execSQL(t, pool, sql.ConfigurationProbe)
 	assertCount(t, pool, 1,
 		`SELECT count(*) FROM pin_glide.model_configurations WHERE id = 'default'`)
@@ -135,6 +151,52 @@ VALUES
 			if count != float64(0) {
 				t.Errorf("run-owned retention fixture %s.%s survived cleanup: %v", section, name, count)
 			}
+		}
+	}
+	execSQL(t, pool, sql.Cleanup)
+	assertCleanupVerification(t, pool, sql.CleanupVerification)
+}
+
+func TestRetentionProbeCleanupTargetsOnlyItsOwnJob(t *testing.T) {
+	postgres := harness.StartPostgres(t)
+	postgres.ApplySchema(t, "pin_glide")
+	pool, err := db.Open(context.Background(), postgres.DSN)
+	if err != nil {
+		t.Fatalf("open disposable database: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	sql := generateSmokeSQL(t)
+
+	execSQL(t, pool, `
+SELECT cron.schedule('smoke-integration-retention-probe', '1 second', 'SELECT 1;');
+SELECT cron.schedule('smoke-integration-unrelated-probe', '1 second', 'SELECT 1;');
+`)
+	assertCount(t, pool, 1,
+		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-retention-probe'`)
+	assertCount(t, pool, 1,
+		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-unrelated-probe'`)
+
+	execSQL(t, pool, sql.ProbeCleanup)
+	assertCount(t, pool, 0,
+		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-retention-probe'`)
+	assertCount(t, pool, 1,
+		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-unrelated-probe'`)
+	execSQL(t, pool, sql.ProbeHistoryCleanup)
+}
+
+func assertCleanupVerification(t *testing.T, pool *sql.DB, statement string) {
+	t.Helper()
+	var raw string
+	if err := pool.QueryRowContext(context.Background(), statement).Scan(&raw); err != nil {
+		t.Fatalf("read cleanup verification: %v", err)
+	}
+	var remaining map[string]float64
+	if err := json.Unmarshal([]byte(raw), &remaining); err != nil {
+		t.Fatalf("decode cleanup verification: %v: %s", err, raw)
+	}
+	for category, count := range remaining {
+		if count != 0 {
+			t.Errorf("run-owned %s rows survived cleanup: %v", category, count)
 		}
 	}
 }

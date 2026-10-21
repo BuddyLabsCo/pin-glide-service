@@ -214,10 +214,18 @@ export async function waitForHealth(session) {
 
 // deliverOnce uploads one synthetic ciphertext and waits for the live delivery
 // frame and its Receipt, so a later reconnect can prove no payload was kept.
-export async function deliverOnce(session, label, pairing, socket, tag) {
+export async function deliverOnce(
+  session,
+  label,
+  pairing,
+  socket,
+  tag,
+  {
+    nonce = randomBytes(12).toString('base64'),
+    ciphertext = randomBytes(17).toString('base64'),
+  } = {},
+) {
   const messageID = session.newOperationID(`receiver-delivery-${tag}`);
-  const nonce = randomBytes(12).toString('base64');
-  const ciphertext = randomBytes(17).toString('base64');
   session.addSecret([nonce, ciphertext]);
   const uploading = settle(session.request({
     method: 'POST',

@@ -35,6 +35,8 @@ import {
 export {
   assertRetentionCounts,
   jsonFromOutput,
+  retentionProbeCleanupSQL,
+  retentionProbeHistoryCleanupSQL,
   retentionDrainProbeCommand,
   retentionProbeCommand,
   runScheduledCleanupProbe,

@@ -98,6 +98,7 @@ test('recovery records snapshot and restore failures in their own scenarios', as
     },
     evidence: { record: entry => before.push(entry) },
     startDrainProbe: async () => failedBeforeStop,
+    probeWriter: async () => ({ blocked: true }),
     restore: async () => {},
   }), /snapshot command failed/);
   assert(before.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));

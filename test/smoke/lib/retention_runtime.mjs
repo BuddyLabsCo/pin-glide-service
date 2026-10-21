@@ -21,6 +21,27 @@ function assertProbeName(probeName) {
   }
 }
 
+export function retentionProbeCleanupSQL(probeName) {
+  assertProbeName(probeName);
+  return `
+SELECT cron.unschedule(jobname)
+FROM cron.job
+WHERE jobname = ${escapeSQLString(probeName)};
+SELECT pg_cancel_backend(pid)
+FROM pg_stat_activity
+WHERE application_name = 'pg_cron'
+  AND query LIKE ${escapeSQLString(`%${probeName}%`)};
+`;
+}
+
+export function retentionProbeHistoryCleanupSQL(probeName) {
+  assertProbeName(probeName);
+  return `
+DELETE FROM cron.job_run_details
+WHERE command LIKE ${escapeSQLString(`%${probeName}%`)};
+`;
+}
+
 export function terminateApplicationBackendsSQL(application) {
   if (typeof application !== 'string' || application === '' || application.length > 63) {
     throw new Error('Unknown-writer application name must be 1 to 63 characters');
@@ -119,7 +140,7 @@ WHERE jobname = ${escapeSQLString(stableJobName)};
   return job;
 }
 
-export async function unknownWriterBlocksSnapshot(remote, application, sleepImpl = sleep) {
+export async function holdExternalWriter(remote, application, sleepImpl = sleep) {
   const terminate = terminateApplicationBackendsSQL(application);
   const holder = remote.ssh(
     `${remote.compose} exec -T -e ${quote(`PGAPPNAME=${application}`)} postgres ` +
@@ -127,19 +148,37 @@ export async function unknownWriterBlocksSnapshot(remote, application, sleepImpl
     { timeoutMs: 30_000 },
   );
   holder.catch(() => {});
-  return withFailureJoiningCleanup(
-    async () => {
-      const deadline = Date.now() + 10_000;
-      for (;;) {
-        const writers = await remote.sqlJSON(`
+  try {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const writers = await remote.sqlJSON(`
 SELECT json_build_object('connections', count(*))
 FROM pg_stat_activity
 WHERE application_name = ${escapeSQLString(application)};
 `);
-        if (Number(writers.connections) > 0) break;
-        if (Date.now() >= deadline) throw new Error('Controlled external writer did not connect');
-        await sleepImpl(100);
-      }
+      if (Number(writers.connections) > 0) break;
+      if (Date.now() >= deadline) throw new Error('Controlled external writer did not connect');
+      await sleepImpl(100);
+    }
+  } catch (error) {
+    await remote.sql(terminate).catch(() => {});
+    await holder.catch(() => {});
+    throw error;
+  }
+  return {
+    application,
+    async cleanup() {
+      await remote.sql(terminate);
+      await holder.catch(() => {});
+      await remote.assertNoExternalWriters();
+    },
+  };
+}
+
+export async function unknownWriterBlocksSnapshot(remote, application, sleepImpl = sleep) {
+  const writer = await holdExternalWriter(remote, application, sleepImpl);
+  return withFailureJoiningCleanup(
+    async () => {
       let blocked = false;
       try {
         await remote.assertNoExternalWriters();
@@ -150,30 +189,18 @@ WHERE application_name = ${escapeSQLString(application)};
       if (!blocked) throw new Error('The snapshot writer guard accepted a connected external writer');
       return { blocked: true, application };
     },
-    async () => {
-      await remote.sql(terminate);
-      await holder.catch(() => {});
-      await remote.assertNoExternalWriters();
-    },
+    () => writer.cleanup(),
     'Unknown-writer probe and writer restoration both failed',
   );
 }
 
-async function removeRetentionProbe(remote, { jobID, probeName }, {
+async function removeRetentionProbe(remote, { probeName }, {
   pollMs,
   timeoutMs,
   sleepImpl,
 }) {
   const pattern = escapeSQLString(`%${probeName}%`);
-  await remote.sql(`
-SELECT cron.unschedule(jobname)
-FROM cron.job
-WHERE jobid = ${Number(jobID)};
-SELECT pg_cancel_backend(pid)
-FROM pg_stat_activity
-WHERE application_name = 'pg_cron'
-  AND query LIKE ${pattern};
-`);
+  await remote.sql(retentionProbeCleanupSQL(probeName));
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const remaining = await remote.sqlJSON(`
@@ -190,10 +217,7 @@ SELECT json_build_object(
     if (Date.now() >= deadline) throw new Error('Retention drain probe SQL did not stop');
     await sleepImpl(pollMs);
   }
-  await remote.sql(`
-DELETE FROM cron.job_run_details
-WHERE command LIKE ${pattern};
-`);
+  await remote.sql(retentionProbeHistoryCleanupSQL(probeName));
 }
 
 function drainProbeStateQuery(probe) {

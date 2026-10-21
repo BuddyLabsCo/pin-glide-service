@@ -106,6 +106,8 @@ test('exact pre-upgrade problems require every published field', () => {
 });
 
 test('a live delivery is correlated and acknowledged before its replay check', async () => {
+  const nonce = 'cmVjZWl2ZXItdGVzdA==';
+  const ciphertext = Buffer.from('0123456789abcdefg').toString('base64');
   const messages = [{
     json: {
       type: 'delivery',
@@ -113,8 +115,8 @@ test('a live delivery is correlated and acknowledged before its replay check', a
       receiverId: 'receiver-1',
       pairingId: 'pairing-1',
       messageId: 'message-1',
-      nonce: 'AAAAAAAAAAAAAAAA',
-      ciphertext: 'AQIDBAUGBwgJCgsMDQ4PEBESExQ=',
+      nonce,
+      ciphertext,
     },
   }];
   const receipts = [];
@@ -140,6 +142,7 @@ test('a live delivery is correlated and acknowledged before its replay check', a
     { receiverID: 'receiver-1', pairingID: 'pairing-1' },
     socket,
     'test',
+    { nonce, ciphertext },
   );
   assert.equal(delivered.messageId, 'message-1');
   assert.equal(delivered.status, 'received');

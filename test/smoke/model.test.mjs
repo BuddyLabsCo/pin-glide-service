@@ -439,6 +439,7 @@ test('the model smoke journey uses normal upload authority and restores every fa
   assert.equal(faultCount, 4);
   assert.equal(waitedFor, '2026-10-21T00:10:00.000Z');
   assert.deepEqual(secrets, [
+    'sk-smoke-invalid-parent-key',
     '481927',
     'Pin Glide smoke: your verification code is 481927. Do not share it.',
     'Pin Glide smoke: this reminder contains no verification code.',

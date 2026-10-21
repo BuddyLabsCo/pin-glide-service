@@ -19,40 +19,43 @@ import (
 )
 
 type generatedSmokeSQL struct {
-	Bootstrap          string `json:"bootstrap"`
-	Cleanup            string `json:"cleanup"`
-	ExternalWriterSQL  string `json:"externalWriterSql"`
-	TerminateWriterSQL string `json:"terminateWriterSql"`
-	ExpireAccess       string `json:"expireAccess"`
-	ExpireRefresh      string `json:"expireRefresh"`
-	AgeOperation       string `json:"ageOperation"`
-	ExpireParent       string `json:"expireParent"`
-	RevokeRegistration string `json:"revokeRegistration"`
-	SupersedeFamily    string `json:"supersedeFamily"`
-	InvalidateReceiver string `json:"invalidateReceiver"`
-	RetentionAging     string `json:"retentionAging"`
-	RetentionBoundary  string `json:"retentionBoundary"`
-	RetentionState     string `json:"retentionState"`
-	RetentionCall      string `json:"retentionCall"`
-	RetentionPrivacy   string `json:"retentionPrivacy"`
-	RetentionCleanup   string `json:"retentionCleanup"`
-	RetentionProbe     string `json:"retentionProbeCommand"`
-	ConfigurationProbe string `json:"configurationProbe"`
-	RetentionJobName   string `json:"retentionJobName"`
-	RetentionSchedule  string `json:"retentionSchedule"`
-	RetentionCommand   string `json:"retentionCommand"`
-	RetentionOwner     string `json:"retentionOwner"`
-	RetentionDatabase  string `json:"retentionDatabase"`
-	FirstSenderID      string `json:"firstSenderId"`
-	FirstAccountID     string `json:"firstAccountId"`
-	SecondAccountID    string `json:"secondAccountId"`
-	ScopeSenderID      string `json:"scopeSenderId"`
-	ScopeParentDigest  string `json:"scopeParentDigest"`
-	RefreshLifetime    string `json:"refreshLifetime"`
-	PermanentSenderID  string `json:"permanentSenderId"`
-	SupersededSenderID string `json:"supersededSenderId"`
-	SenderCount        int    `json:"senderCount"`
-	CredentialCount    int    `json:"credentialCount"`
+	Bootstrap           string `json:"bootstrap"`
+	Cleanup             string `json:"cleanup"`
+	ExternalWriterSQL   string `json:"externalWriterSql"`
+	TerminateWriterSQL  string `json:"terminateWriterSql"`
+	ExpireAccess        string `json:"expireAccess"`
+	ExpireRefresh       string `json:"expireRefresh"`
+	AgeOperation        string `json:"ageOperation"`
+	ExpireParent        string `json:"expireParent"`
+	RevokeRegistration  string `json:"revokeRegistration"`
+	SupersedeFamily     string `json:"supersedeFamily"`
+	InvalidateReceiver  string `json:"invalidateReceiver"`
+	RetentionAging      string `json:"retentionAging"`
+	RetentionBoundary   string `json:"retentionBoundary"`
+	RetentionState      string `json:"retentionState"`
+	RetentionCall       string `json:"retentionCall"`
+	RetentionPrivacy    string `json:"retentionPrivacy"`
+	RetentionCleanup    string `json:"retentionCleanup"`
+	RetentionProbe      string `json:"retentionProbeCommand"`
+	ProbeCleanup        string `json:"probeCleanup"`
+	ProbeHistoryCleanup string `json:"probeHistoryCleanup"`
+	CleanupVerification string `json:"cleanupVerification"`
+	ConfigurationProbe  string `json:"configurationProbe"`
+	RetentionJobName    string `json:"retentionJobName"`
+	RetentionSchedule   string `json:"retentionSchedule"`
+	RetentionCommand    string `json:"retentionCommand"`
+	RetentionOwner      string `json:"retentionOwner"`
+	RetentionDatabase   string `json:"retentionDatabase"`
+	FirstSenderID       string `json:"firstSenderId"`
+	FirstAccountID      string `json:"firstAccountId"`
+	SecondAccountID     string `json:"secondAccountId"`
+	ScopeSenderID       string `json:"scopeSenderId"`
+	ScopeParentDigest   string `json:"scopeParentDigest"`
+	RefreshLifetime     string `json:"refreshLifetime"`
+	PermanentSenderID   string `json:"permanentSenderId"`
+	SupersededSenderID  string `json:"supersededSenderId"`
+	SenderCount         int    `json:"senderCount"`
+	CredentialCount     int    `json:"credentialCount"`
 }
 
 func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
@@ -281,12 +284,26 @@ process.stdout.write(JSON.stringify({
   retentionCall: retentionChecks.cleanupCallSQL(retention.referenceTime),
   retentionPrivacy: retentionChecks.runOwnedPrivacyQuery(plan, {
     receiverIDs: [retention.receiverID],
-    requestIDs: ['smoke-integration-fixture-request'],
+    requestIDs: [
+      'smoke-integration-fixture-request',
+      'smoke-integration-fixture-retention-diagnostic-old',
+      'smoke-integration-fixture-retention-diagnostic-fresh',
+    ],
     subjects: [retention.pairingID],
   }),
   retentionCleanup: retentionChecks.renderRetentionCleanupSQL(plan),
   retentionProbeCommand: retentionSession.retentionProbeCommand(
     'smoke-integration-retention-probe'),
+  probeCleanup: retentionSession.retentionProbeCleanupSQL(
+    'smoke-integration-retention-probe'),
+  probeHistoryCleanup: retentionSession.retentionProbeHistoryCleanupSQL(
+    'smoke-integration-retention-probe'),
+  cleanupVerification: fixtures.renderCleanupVerificationSQL(
+    plan,
+    ['smoke-integration-retention-receiver'],
+    ['smoke-integration-fixture-request'],
+    ['smoke-integration-retention-pairing'],
+  ),
   configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
   retentionJobName: database.retentionJobName,
   retentionSchedule: retentionJob.schedule,

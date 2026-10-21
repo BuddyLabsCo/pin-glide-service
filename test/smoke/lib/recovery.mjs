@@ -3,9 +3,9 @@ import path from 'node:path';
 
 import { validateConfiguration } from './database.mjs';
 import {
+  holdExternalWriter,
   retentionDrainProbeSchedule,
   startRunningRetentionProbe,
-  unknownWriterBlocksSnapshot,
 } from './retention_runtime.mjs';
 import { restoreSnapshotToDisposableDatabase } from './restore.mjs';
 
@@ -34,11 +34,30 @@ function assertDrainProbe(state, { restored }) {
   throw new Error(`The run-owned retention SQL ended unexpectedly: ${state.status || 'missing status'}`);
 }
 
+async function snapshotWriterGuard(remote, application, version) {
+  const writer = await holdExternalWriter(remote, application);
+  try {
+    let snapshot;
+    try {
+      snapshot = await remote.createStoppedSnapshot(version);
+    } catch (error) {
+      if (!/Another database writer/.test(error.message)) throw error;
+      return { blocked: true, application };
+    }
+    if (snapshot && typeof remote.removeSnapshot === 'function') {
+      await remote.removeSnapshot(snapshot);
+    }
+    throw new Error('The snapshot action accepted a connected external writer');
+  } finally {
+    await writer.cleanup();
+  }
+}
+
 export async function verifyRecovery({
   checkResult,
   evidence,
   restore = restoreSnapshotToDisposableDatabase,
-  probeWriter = unknownWriterBlocksSnapshot,
+  probeWriter = snapshotWriterGuard,
   startDrainProbe = startRunningRetentionProbe,
 }) {
   const backupScenario = 'stopped-writer container snapshot';
@@ -51,7 +70,17 @@ export async function verifyRecovery({
   let heldScheduledWork;
   let heldDrainProbe;
   let restoredDrainProbe;
+  let unknownWriterBlocked;
   try {
+    const writerApplication = `smoke-${evidence.runId || randomBytes(6).toString('hex')}-writer`;
+    unknownWriterBlocked = await probeWriter(
+      checkResult.remote,
+      writerApplication,
+      checkResult.release.tag.slice(1),
+    );
+    if (!unknownWriterBlocked?.blocked) {
+      throw new Error('The stopped recovery baseline accepted an external writer');
+    }
     drainProbe = await startDrainProbe(checkResult.remote, {
       runId: evidence.runId || `smoke-${randomBytes(6).toString('hex')}`,
     });
@@ -67,9 +96,6 @@ export async function verifyRecovery({
             throw new Error('Scheduled SQL had not drained after the API stopped');
           }
           heldDrainProbe = assertDrainProbe(await drainProbe.inspect(), { restored: false });
-          const writerApplication = `smoke-${evidence.runId || randomBytes(6).toString('hex')}-writer`;
-          const writer = await probeWriter(checkResult.remote, writerApplication);
-          if (!writer?.blocked) throw new Error('The stopped recovery baseline accepted an external writer');
           await new Promise(resolve => setTimeout(resolve, 250));
           const later = await checkResult.remote.scheduledWorkState();
           if ((later.activeJobs || []).length > 0) {
@@ -86,7 +112,7 @@ export async function verifyRecovery({
             runningRuns: Number(held.runningRuns),
             cronBackends: Number(held.cronBackends),
             newRunsWhileHeld: Number(later.maxRunID) - Number(held.maxRunID),
-            unknownWriterBlocked: writer.blocked,
+            unknownWriterBlocked: unknownWriterBlocked.blocked,
           };
         },
       },
