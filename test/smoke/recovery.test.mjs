@@ -143,16 +143,19 @@ test('recovery records snapshot and restore failures in their own scenarios', as
     release: { tag: 'v1.2.3', upgradeOrigin: '1.2.2' },
     snapshot: null,
     model,
+    postgresImage: 'ghcr.io/example/postgres:18',
     http: { call: async () => ({ body: { status: 'ok' }, requestId: 'request-1' }) },
   };
   let restoredSnapshot;
+  let restoreOptions;
   await assert.rejects(() => verifyRecovery({
     checkResult,
     evidence: { record: entry => after.push(entry) },
     startDrainProbe: async () => drainProbe,
     probeWriter: async () => ({ blocked: true }),
-    restore: async (remote, snapshot) => {
+    restore: async (remote, snapshot, options) => {
       restoredSnapshot = snapshot;
+      restoreOptions = options;
       throw new Error('restore failed');
     },
   }), /restore failed/);
@@ -165,6 +168,8 @@ test('recovery records snapshot and restore failures in their own scenarios', as
   assert.equal(backup?.details?.heldScheduledWork?.unknownWriterBlocked, true);
   assert.equal(backup?.details?.retentionDrainProbe?.observedRunning, true);
   assert.equal(backup?.details?.retentionDrainProbe?.cleanedUp, true);
+  assert.equal(restoreOptions.postgresImage, 'ghcr.io/example/postgres:18');
+  assert.equal(restoreOptions.retentionDrainProbe.name, 'held-state-run-retention-drain-abc123');
   assert.equal(drainProbe.inspections, 2);
   assert.equal(drainProbe.cleanups, 1);
   assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));

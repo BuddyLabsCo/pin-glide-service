@@ -8,6 +8,7 @@ import {
   lastCompletedSnapshot,
   listLocalSnapshots,
   recoverySnapshot,
+  restoreFactsInDisposablePostgres,
   restoreSnapshotToDisposableDatabase,
   validateRestoredFacts,
   verifyLocalSnapshotDirectory,
@@ -97,8 +98,7 @@ test('integration recovery can start from an empty shared snapshot directory', a
   assert.equal(await recoverySnapshot(remote, { allowMissing: true }), null);
 });
 
-test('disposable restore validates restored facts and drops its database even on failure', async () => {
-  const calls = [];
+test('disposable restore validates restored facts and propagates failure', async () => {
   const facts = {
     database: 'smoke_restore_placeholder',
     release: '1.2.3',
@@ -120,58 +120,76 @@ test('disposable restore validates restored facts and drops its database even on
     runningCronJobs: 0,
     otherConnections: 0,
   };
-  let restoredDatabase;
-  let restoredSnapshot;
-  let listedSnapshot;
-  const remote = {
-    async sqlOn(database, statement) {
-      calls.push(['sql', database, statement]);
-    },
-    async restoreList(snapshot) {
-      calls.push(['list']);
-      listedSnapshot = snapshot;
-      return { stdout: '1; 1 0 TABLE public thing\n' };
-    },
-    async restoreDump(database, snapshot) {
-      calls.push(['dump']);
-      restoredDatabase = database;
-      restoredSnapshot = snapshot;
-    },
-    async sqlJSONOn(database) {
-      calls.push(['facts']);
-      facts.database = database;
-      return facts;
-    },
+  let restoreInput;
+  const restoreFacts = async (_remote, input) => {
+    restoreInput = input;
+    return { ...facts, database: TARGET.database };
   };
-  const restored = await restoreSnapshotToDisposableDatabase(remote, '/snapshots/test.dump', {
+  const restored = await restoreSnapshotToDisposableDatabase({ target: TARGET }, '/snapshots/test.dump', {
     release: '1.2.3',
     upgradeOrigin: '1.2.2',
     model: facts.model,
+    postgresImage: 'ghcr.io/example/postgres:18',
+    restoreFacts,
   });
   assert.equal(restored.release, '1.2.3');
-  assert.deepEqual(calls.filter(call => call[0] === 'sql').map(call => call[1]), ['postgres', 'postgres']);
-  assert.equal(calls.filter(call => call[0] === 'list').length, 1);
-  assert.equal(calls.filter(call => call[0] === 'dump').length, 1);
-  assert.equal(listedSnapshot, '/snapshots/test.dump');
-  assert.equal(restoredSnapshot, '/snapshots/test.dump');
-  assert.match(restoredDatabase, /^smoke_restore_[a-f0-9]{16}$/);
+  assert.equal(restoreInput.snapshot, '/snapshots/test.dump');
+  assert.equal(restoreInput.image, 'ghcr.io/example/postgres:18');
+  assert.match(restoreInput.factsQuery, /json_build_object/);
+  assert.match(restoreInput.name, /^smoke_restore_[a-f0-9]{16}$/);
 
-  const failedCalls = [];
-  await assert.rejects(() => restoreSnapshotToDisposableDatabase({
-    async sqlOn(database, statement) {
-      failedCalls.push(['sql', database, statement]);
-    },
-    async restoreList() {
-      return { stdout: '1; 1 0 TABLE public thing\n' };
-    },
-    async restoreDump() {
+  await assert.rejects(() => restoreSnapshotToDisposableDatabase({ target: TARGET }, '/snapshots/test.dump', {
+    release: '1.2.3',
+    postgresImage: 'ghcr.io/example/postgres:18',
+    restoreFacts: async () => {
       throw new Error('restore failed');
     },
-    async sqlJSONOn() {
-      throw new Error('facts should not be queried');
+  }), /restore failed/);
+});
+
+test('disposable PostgreSQL restore uses an isolated container and always removes it', async () => {
+  const name = 'smoke_restore_0123456789abcdef';
+  const snapshot = `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T030000.000000001Z-1.dump`;
+  const calls = [];
+  const remote = {
+    target: TARGET,
+    async ssh(script, options) {
+      calls.push({ script, options });
+      if (script.includes(' psql ')) {
+        return { stdout: '{"database":"restored"}\n', stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
     },
-  }, '/snapshots/test.dump', { release: '1.2.3' }), /restore failed/);
-  assert.deepEqual(failedCalls.filter(call => call[0] === 'sql').map(call => call[1]), ['postgres', 'postgres']);
+  };
+  assert.deepEqual(await restoreFactsInDisposablePostgres(remote, {
+    name,
+    snapshot,
+    image: 'ghcr.io/example/postgres:18',
+    factsQuery: 'SELECT 1;',
+  }), { database: 'restored' });
+  assert.match(calls[0].script, /docker run --detach --rm/);
+  assert.match(calls[0].script, /--network none --pull never/);
+  assert.match(calls[0].script, /:\/snapshots:ro/);
+  assert.match(calls[1].script, /pg_isready/);
+  assert.match(calls[2].script, /pg_restore --exit-on-error/);
+  assert.equal(calls[3].options.input, 'SELECT 1;');
+  assert.match(calls[4].script, /docker rm -fv/);
+
+  calls.length = 0;
+  await assert.rejects(() => restoreFactsInDisposablePostgres({
+    target: TARGET,
+    async ssh(script) {
+      calls.push({ script });
+      if (script.includes('pg_restore')) throw new Error('restore failed');
+      return { stdout: '', stderr: '' };
+    },
+  }, {
+    name,
+    snapshot,
+    image: 'ghcr.io/example/postgres:18',
+    factsQuery: 'SELECT 1;',
+  }), /restore failed/);
+  assert.match(calls.at(-1).script, /docker rm -fv/);
 });
 
 test('restored facts reject incomplete extension or scheduled-work state', () => {
@@ -232,4 +250,24 @@ test('restored facts reject incomplete extension or scheduled-work state', () =>
     release: '1.2.3',
     model,
   }), /Scheduled job inventory/);
+
+  const probe = {
+    jobname: 'smoke-run-retention-drain-abc123',
+    username: 'pin_glide',
+    database: 'pin_glide',
+    schedule: '0 0 1 1 *',
+    active: false,
+    command: 'DO $$ BEGIN PERFORM pin_glide.pin_glide_fn_cleanup_expired_rows(\'2000-01-01\'); PERFORM pg_sleep(8); END $$;',
+  };
+  const restored = validateRestoredFacts({ ...facts, cron: [...facts.cron, probe] }, {
+    database: 'smoke_restore_1',
+    release: '1.2.3',
+    model,
+    retentionDrainProbe: { name: probe.jobname },
+  });
+  assert.deepEqual(restored.retentionDrainProbe, {
+    name: probe.jobname,
+    active: false,
+    schedule: '0 0 1 1 *',
+  });
 });

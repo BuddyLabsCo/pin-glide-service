@@ -137,6 +137,8 @@ export async function verifyRecovery({
         origins: checkResult.release.origins,
         upgradeOrigin: checkResult.release.upgradeOrigin,
         model: checkResult.model,
+        postgresImage: checkResult.postgresImage,
+        retentionDrainProbe: { name: drainProbe.probeName },
       },
     );
     evidence.record({

@@ -94,17 +94,6 @@ export class RemoteEnvironment {
     }
   }
 
-  restoreDump(database, snapshot, options = {}) {
-    if (!/^[a-z][a-z0-9_]{0,62}$/.test(database)) throw new Error('Invalid smoke database name');
-    const script = `cat ${quote(snapshot)} | ${this.composeArgs.join(' ')} exec -T postgres pg_restore --exit-on-error --username=pin_glide --dbname=${quote(database)}`;
-    return this.ssh(`sudo -n bash -ec ${quote(script)}`, options);
-  }
-
-  restoreList(snapshot, options = {}) {
-    const script = `cat ${quote(snapshot)} | ${this.composeArgs.join(' ')} exec -T postgres pg_restore --list`;
-    return this.ssh(`sudo -n bash -ec ${quote(script)}`, options);
-  }
-
   install(action, version) {
     const command = `sudo -n bash ${quote(`${this.target.deploymentDir}/install.sh`)}`;
     return this.ssh(

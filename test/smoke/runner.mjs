@@ -293,7 +293,15 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
       status: 'passed',
       details: database,
     });
-    return { remote, http, database, release, snapshot, model };
+    return {
+      remote,
+      http,
+      database,
+      release,
+      snapshot,
+      model,
+      postgresImage: running.postgres.reference,
+    };
   } catch (error) {
     if (error instanceof SmokeProblem || error instanceof SmokeValidationError) throw error;
     throw new SmokeValidationError(error);
