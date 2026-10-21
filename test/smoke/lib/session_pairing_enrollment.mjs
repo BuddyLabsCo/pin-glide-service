@@ -29,6 +29,7 @@ export async function enrollReceiver(session, context) {
   }
 
   const other = await session.createPairingSession({ mode: 'new_receiver' });
+  const claimed = await session.claimPairing(label, created);
   const foreignClaim = await session.expectProblem(
     {
       method: 'POST',
@@ -36,10 +37,9 @@ export async function enrollReceiver(session, context) {
       token: session.token('foreign', 'user_session'),
       body: {},
     },
-    404,
-    'resource_not_found',
+    409,
+    'pairing_session_claimed',
   );
-  const claimed = await session.claimPairing(label, created);
   const secondClaim = await session.expectProblem(
     {
       method: 'POST',
