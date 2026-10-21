@@ -95,6 +95,7 @@ test('controlled provider faults restore the original Compose environment and ne
     /invalid parent key observed/,
   );
   assert.match(calls[0].script, /BAILIAN_API_KEY/);
+  assert.match(calls[0].script, /sudo -n docker compose/);
   assert.match(calls[0].script, /force-recreate/);
   assert.match(calls[0].script, /trap cleanup EXIT/);
   assert.match(calls[0].script, /\/srv\/pin-glide-dev\/\.env/);
@@ -120,6 +121,42 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, /\/etc\/hosts/);
   assert.match(calls.at(-1).script, /pin-glide-smoke-fault/);
   assert.doesNotMatch(calls.at(-1).script, /sed -i/);
+});
+
+test('invalid-key verification failure restores the original API environment', async () => {
+  const calls = [];
+  const faultPaths = {
+    environment: '/tmp/pin-glide-dev-smoke-bailian.abc123.env',
+    guard: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123',
+    watchdog: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123.sh',
+  };
+  let callbackRan = false;
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args) => {
+      calls.push({ command, script: args.at(-1) });
+      if (calls.length === 1) {
+        return {
+          stdout: `${faultPaths.environment}|${faultPaths.guard}|${faultPaths.watchdog}\n`,
+          stderr: '',
+        };
+      }
+      if (args.at(-1).includes('docker inspect')) {
+        return { stdout: '["BAILIAN_API_KEY=restored"]\n', stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await assert.rejects(
+    () => remote.withInvalidBailianKey(async () => {
+      callbackRan = true;
+    }),
+    /did not reach the running API/,
+  );
+  assert.equal(callbackRan, false);
+  assert.match(calls.at(-1).script, /--env-file/);
+  assert.match(calls.at(-1).script, /force-recreate/);
 });
 
 test('the connectivity cleanup removes only its own marker from a hosts file', async t => {
@@ -155,7 +192,7 @@ printf '%s\\n' "$*" >> ${JSON.stringify(composeLog)}
   const body = watchdogBody(
     { target: TARGET },
     { attempts: 1, intervalSeconds: 0.05 },
-  ).replaceAll('docker compose', JSON.stringify(fake));
+  ).replaceAll('sudo -n docker compose', JSON.stringify(fake));
   const script = path.join(directory, 'watchdog.sh');
   fs.writeFileSync(script, body, { mode: 0o700 });
   const child = spawn(script, [guard], {

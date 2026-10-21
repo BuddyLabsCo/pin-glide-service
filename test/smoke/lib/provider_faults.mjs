@@ -6,7 +6,7 @@ const watchdogIntervalSeconds = 5;
 
 function compose(remote, envFileArgument) {
   return [
-    'docker compose',
+    'sudo -n docker compose',
     `--project-directory ${quote(remote.target.deploymentDir)}`,
     `--env-file ${envFileArgument}`,
     `-f ${quote(`${remote.target.deploymentDir}/docker-compose.yml`)}`,
@@ -69,10 +69,8 @@ cleanup() {
             ${compose(remote, quote(envFile))} up -d --no-deps --force-recreate --wait api || true
         fi
     fi
-    if [ "$status" -eq 0 ]; then
-        [ -z "$watchdog" ] || rm -f -- "$watchdog"
-        [ -z "$guard" ] || rm -f -- "$guard"
-    fi
+    [ -z "$watchdog" ] || rm -f -- "$watchdog"
+    [ -z "$guard" ] || rm -f -- "$guard"
     [ -z "$temporary" ] || rm -f -- "$temporary"
     exit "$status"
 }
@@ -108,12 +106,24 @@ printf '%s|%s|%s\\n' "$temporary" "$guard" "$watchdog"
   ) {
     throw new Error('Invalid parent-key fault did not report its restoration state');
   }
-  const runningEnvironment = await remote.ssh(
-    `sudo -n docker inspect "$(${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ps -q api)" --format '{{json .Config.Env}}'`,
-    { timeoutMs: 30_000 },
-  );
-  if (!runningEnvironment.stdout.includes('BAILIAN_API_KEY=sk-smoke-invalid-parent-key')) {
-    throw new Error('Invalid parent-key fault did not reach the running API');
+  try {
+    const runningEnvironment = await remote.ssh(
+      `sudo -n docker inspect "$(${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ps -q api)" --format '{{json .Config.Env}}'`,
+      { timeoutMs: 30_000 },
+    );
+    if (!runningEnvironment.stdout.includes('BAILIAN_API_KEY=sk-smoke-invalid-parent-key')) {
+      throw new Error('Invalid parent-key fault did not reach the running API');
+    }
+  } catch (error) {
+    try {
+      await stopInvalidBailianKeyFault(remote, { temporaryEnv, guard, watchdog });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Invalid parent-key fault verification and restoration both failed',
+      );
+    }
+    throw error;
   }
   return { temporaryEnv, guard, watchdog };
 }
