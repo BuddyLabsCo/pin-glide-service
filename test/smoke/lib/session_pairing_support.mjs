@@ -1,18 +1,12 @@
 import { escapeSQLString, renderExpirePairingSessionSQL } from './fixtures.mjs';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { WebSocketClosedError } from './websocket.mjs';
+import { expectNoMessage, expectSocketClose } from './socket_assertions.mjs';
 import { runScenario } from './session_credential_support.mjs';
 import { associations } from './session_pairing_helpers.mjs';
+import { contractEvidence } from './scenario_contract.mjs';
 
-const openAPI = 'generated/protocol/openapi.yaml';
-const asyncAPI = 'generated/protocol/asyncapi.yaml';
-const openapiBytes = readFileSync(new URL('../../../generated/protocol/openapi.yaml', import.meta.url));
-const asyncapiBytes = readFileSync(new URL('../../../generated/protocol/asyncapi.yaml', import.meta.url));
-const openapiDigest = createHash('sha256').update(openapiBytes).digest('hex');
-const asyncapiDigest = createHash('sha256').update(asyncapiBytes).digest('hex');
-const openapiText = openapiBytes.toString('utf8');
-const asyncapiText = asyncapiBytes.toString('utf8');
+export { expectNoMessage as expectNoFrame, expectSocketClose };
+
 const wssNames = {
   pairingState: 'pairing_state',
   pairingRelayIn: 'pairing_relay',
@@ -22,30 +16,9 @@ const wssNames = {
   error: 'error',
 };
 
-function operationIdentity(name) {
-  if (!openapiText.includes(`operationId: ${name}`)) {
-    throw new Error(`Pairing scenario names an unpublished HTTP operation ${name}`);
-  }
-  return { name, source: openAPI };
-}
-
-function messageIdentity(name) {
-  const wireName = wssNames[name];
-  if (!wireName || !asyncapiText.includes(`name: ${wireName}`)) {
-    throw new Error(`Pairing scenario names an unpublished WSS message ${name}`);
-  }
-  return { name: wireName, source: asyncAPI };
-}
-
 export async function runPairingScenario(session, name, exercised, callback) {
   return runScenario(session, name, async () => ({
-    contract: {
-      openapi: { source: openAPI, digest: openapiDigest },
-      asyncapi: { source: asyncAPI, digest: asyncapiDigest },
-      http: exercised.http.map(operationIdentity),
-      wss: exercised.wss.map(messageIdentity),
-      ...(session.target.sourceCommit ? { sourceCommit: session.target.sourceCommit } : {}),
-    },
+    contract: contractEvidence(session, exercised, wssNames),
     ...(await callback()),
   }));
 }
@@ -160,26 +133,6 @@ export async function completePairingReports(
     throw new Error(`Both authenticated reports did not reach ${receiverState}`);
   }
   return { sender, receiver };
-}
-
-export async function expectNoFrame(socket, description, timeoutMs = 300) {
-  try {
-    const message = await socket.next(timeoutMs);
-    throw new Error(`${description}: ${message.text}`);
-  } catch (error) {
-    if (error instanceof WebSocketClosedError) throw error;
-    if (!String(error.message).includes('timed out waiting')) throw error;
-  }
-}
-
-export async function expectSocketClose(socket, code) {
-  try {
-    await socket.next(5_000);
-  } catch (error) {
-    if (error instanceof WebSocketClosedError && error.code === code) return error;
-    throw error;
-  }
-  throw new Error(`Pairing channel stayed open instead of closing with ${code}`);
 }
 
 export async function drainPairingUntilClosed(socket) {
