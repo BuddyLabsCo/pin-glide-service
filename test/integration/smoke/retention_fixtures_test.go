@@ -154,7 +154,7 @@ VALUES
 		}
 	}
 	execSQL(t, pool, sql.Cleanup)
-	assertCleanupVerification(t, pool, sql.CleanupVerification)
+	assertCleanupVerification(t, pool, sql.CleanupVerification, sql.CleanupCategories)
 }
 
 func TestRetentionProbeCleanupTargetsOnlyItsOwnJob(t *testing.T) {
@@ -176,15 +176,78 @@ SELECT cron.schedule('smoke-integration-unrelated-probe', '1 second', 'SELECT 1;
 	assertCount(t, pool, 1,
 		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-unrelated-probe'`)
 
+	targetPool, targetConnection := heldConnection(t, postgres.DSN, "pg_cron")
+	unrelatedPool, unrelatedConnection := heldConnection(t, postgres.DSN, "pg_cron")
+	targetContext, targetCancel := context.WithCancel(context.Background())
+	unrelatedContext, unrelatedCancel := context.WithCancel(context.Background())
+	t.Cleanup(func() { _ = targetPool.Close() })
+	t.Cleanup(func() { _ = unrelatedPool.Close() })
+	t.Cleanup(targetCancel)
+	t.Cleanup(unrelatedCancel)
+	go func() {
+		_, _ = targetConnection.ExecContext(targetContext,
+			`SELECT pg_sleep(20); -- smoke-integration-retention-probe`)
+	}()
+	go func() {
+		_, _ = unrelatedConnection.ExecContext(unrelatedContext,
+			`SELECT pg_sleep(20); -- smoke-integration-unrelated-probe`)
+	}()
+	waitForRunningQuery(t, pool, "%smoke-integration-retention-probe%", 1)
+	waitForRunningQuery(t, pool, "%smoke-integration-unrelated-probe%", 1)
+
 	execSQL(t, pool, sql.ProbeCleanup)
 	assertCount(t, pool, 0,
 		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-retention-probe'`)
 	assertCount(t, pool, 1,
 		`SELECT count(*) FROM cron.job WHERE jobname = 'smoke-integration-unrelated-probe'`)
+	waitForRunningQuery(t, pool, "%smoke-integration-retention-probe%", 0)
+	assertRunningQuery(t, pool, "%smoke-integration-unrelated-probe%", 1)
+	unrelatedCancel()
+	targetCancel()
 	execSQL(t, pool, sql.ProbeHistoryCleanup)
 }
 
-func assertCleanupVerification(t *testing.T, pool *sql.DB, statement string) {
+func waitForRunningQuery(t *testing.T, pool *sql.DB, pattern string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if got := runningQueryCount(t, pool, pattern); got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("running pg_cron query count for %s did not reach %d", pattern, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func assertRunningQuery(t *testing.T, pool *sql.DB, pattern string, want int) {
+	t.Helper()
+	if got := runningQueryCount(t, pool, pattern); got != want {
+		t.Fatalf("running pg_cron query count for %s is %d, want %d", pattern, got, want)
+	}
+}
+
+func runningQueryCount(t *testing.T, pool *sql.DB, pattern string) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRowContext(context.Background(), `
+SELECT count(*)
+FROM pg_stat_activity
+WHERE application_name = 'pg_cron'
+  AND state = 'active'
+  AND query LIKE $1`, pattern).Scan(&count); err != nil {
+		t.Fatalf("query running pg_cron statements: %v", err)
+	}
+	return count
+}
+
+func assertCleanupVerification(
+	t *testing.T,
+	pool *sql.DB,
+	statement string,
+	expectedCategories []string,
+) {
 	t.Helper()
 	var raw string
 	if err := pool.QueryRowContext(context.Background(), statement).Scan(&raw); err != nil {
@@ -194,7 +257,14 @@ func assertCleanupVerification(t *testing.T, pool *sql.DB, statement string) {
 	if err := json.Unmarshal([]byte(raw), &remaining); err != nil {
 		t.Fatalf("decode cleanup verification: %v: %s", err, raw)
 	}
-	for category, count := range remaining {
+	if len(remaining) != len(expectedCategories) {
+		t.Fatalf("cleanup verification has %d categories, want %d: %s", len(remaining), len(expectedCategories), raw)
+	}
+	for _, category := range expectedCategories {
+		count, ok := remaining[category]
+		if !ok {
+			t.Fatalf("cleanup verification has no %s category: %s", category, raw)
+		}
 		if count != 0 {
 			t.Errorf("run-owned %s rows survived cleanup: %v", category, count)
 		}

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  cleanupVerificationCategories,
   credentialLifetimeInterval,
   fixtureSender,
   renderBootstrapSQL,
@@ -492,6 +493,16 @@ SELECT json_build_object(
       this.requestIds,
       [...this.subjects],
     ));
+    const actualCategories = Object.keys(remaining).sort();
+    const expectedCategories = [...cleanupVerificationCategories].sort();
+    if (
+      actualCategories.length !== expectedCategories.length
+      || actualCategories.some((category, index) => category !== expectedCategories[index])
+    ) {
+      throw new Error(
+        `Run-owned fixture cleanup returned an incomplete verification: ${actualCategories.join(', ')}`,
+      );
+    }
     const leftovers = Object.entries(remaining).filter(([, count]) => Number(count) !== 0);
     if (leftovers.length > 0) {
       throw new Error(`Run-owned fixture cleanup left rows: ${JSON.stringify(remaining)}`);

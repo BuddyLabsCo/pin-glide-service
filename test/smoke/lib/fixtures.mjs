@@ -31,6 +31,26 @@ export function sqlTextArray(values) {
   return `ARRAY[${values.map(escapeSQLString).join(', ')}]::text[]`;
 }
 
+export function retentionMarker(plan) {
+  return `smoke-${plan.runId}-retention`;
+}
+
+export const cleanupVerificationCategories = Object.freeze([
+  'accounts',
+  'senders',
+  'credentials',
+  'refreshOperations',
+  'receivers',
+  'receiverCredentials',
+  'pairings',
+  'pairingSessions',
+  'deliveries',
+  'diagnostics',
+  'schemaAudits',
+  'cronJobs',
+  'cronRuns',
+]);
+
 export function fixtureSender(plan, label) {
   const sender = plan.senders.find(item => item.label === label);
   if (!sender) throw new Error(`Unknown smoke Sender ${label}`);
@@ -260,7 +280,7 @@ export function renderCleanupVerificationSQL(
   const receivers = sqlTextArray(receiverIDs);
   const requests = sqlTextArray(requestIds);
   const ownedSubjects = sqlTextArray(subjects);
-  const marker = escapeSQLString(`smoke-${plan.runId}-retention%`);
+  const marker = escapeSQLString(`${retentionMarker(plan)}%`);
   return `
 SELECT json_build_object(
   'accounts', (

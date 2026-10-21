@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import { escapeSQLString } from './fixtures.mjs';
+import { escapeSQLString, retentionMarker } from './fixtures.mjs';
 
-export function retentionMarker(plan) {
-  return `smoke-${plan.runId}-retention`;
-}
+export { retentionMarker };
 
 export function retentionDigest(plan, suffix) {
   return createHash('sha256')

@@ -19,43 +19,44 @@ import (
 )
 
 type generatedSmokeSQL struct {
-	Bootstrap           string `json:"bootstrap"`
-	Cleanup             string `json:"cleanup"`
-	ExternalWriterSQL   string `json:"externalWriterSql"`
-	TerminateWriterSQL  string `json:"terminateWriterSql"`
-	ExpireAccess        string `json:"expireAccess"`
-	ExpireRefresh       string `json:"expireRefresh"`
-	AgeOperation        string `json:"ageOperation"`
-	ExpireParent        string `json:"expireParent"`
-	RevokeRegistration  string `json:"revokeRegistration"`
-	SupersedeFamily     string `json:"supersedeFamily"`
-	InvalidateReceiver  string `json:"invalidateReceiver"`
-	RetentionAging      string `json:"retentionAging"`
-	RetentionBoundary   string `json:"retentionBoundary"`
-	RetentionState      string `json:"retentionState"`
-	RetentionCall       string `json:"retentionCall"`
-	RetentionPrivacy    string `json:"retentionPrivacy"`
-	RetentionCleanup    string `json:"retentionCleanup"`
-	RetentionProbe      string `json:"retentionProbeCommand"`
-	ProbeCleanup        string `json:"probeCleanup"`
-	ProbeHistoryCleanup string `json:"probeHistoryCleanup"`
-	CleanupVerification string `json:"cleanupVerification"`
-	ConfigurationProbe  string `json:"configurationProbe"`
-	RetentionJobName    string `json:"retentionJobName"`
-	RetentionSchedule   string `json:"retentionSchedule"`
-	RetentionCommand    string `json:"retentionCommand"`
-	RetentionOwner      string `json:"retentionOwner"`
-	RetentionDatabase   string `json:"retentionDatabase"`
-	FirstSenderID       string `json:"firstSenderId"`
-	FirstAccountID      string `json:"firstAccountId"`
-	SecondAccountID     string `json:"secondAccountId"`
-	ScopeSenderID       string `json:"scopeSenderId"`
-	ScopeParentDigest   string `json:"scopeParentDigest"`
-	RefreshLifetime     string `json:"refreshLifetime"`
-	PermanentSenderID   string `json:"permanentSenderId"`
-	SupersededSenderID  string `json:"supersededSenderId"`
-	SenderCount         int    `json:"senderCount"`
-	CredentialCount     int    `json:"credentialCount"`
+	Bootstrap           string   `json:"bootstrap"`
+	Cleanup             string   `json:"cleanup"`
+	ExternalWriterSQL   string   `json:"externalWriterSql"`
+	TerminateWriterSQL  string   `json:"terminateWriterSql"`
+	ExpireAccess        string   `json:"expireAccess"`
+	ExpireRefresh       string   `json:"expireRefresh"`
+	AgeOperation        string   `json:"ageOperation"`
+	ExpireParent        string   `json:"expireParent"`
+	RevokeRegistration  string   `json:"revokeRegistration"`
+	SupersedeFamily     string   `json:"supersedeFamily"`
+	InvalidateReceiver  string   `json:"invalidateReceiver"`
+	RetentionAging      string   `json:"retentionAging"`
+	RetentionBoundary   string   `json:"retentionBoundary"`
+	RetentionState      string   `json:"retentionState"`
+	RetentionCall       string   `json:"retentionCall"`
+	RetentionPrivacy    string   `json:"retentionPrivacy"`
+	RetentionCleanup    string   `json:"retentionCleanup"`
+	RetentionProbe      string   `json:"retentionProbeCommand"`
+	ProbeCleanup        string   `json:"probeCleanup"`
+	ProbeHistoryCleanup string   `json:"probeHistoryCleanup"`
+	CleanupVerification string   `json:"cleanupVerification"`
+	CleanupCategories   []string `json:"cleanupCategories"`
+	ConfigurationProbe  string   `json:"configurationProbe"`
+	RetentionJobName    string   `json:"retentionJobName"`
+	RetentionSchedule   string   `json:"retentionSchedule"`
+	RetentionCommand    string   `json:"retentionCommand"`
+	RetentionOwner      string   `json:"retentionOwner"`
+	RetentionDatabase   string   `json:"retentionDatabase"`
+	FirstSenderID       string   `json:"firstSenderId"`
+	FirstAccountID      string   `json:"firstAccountId"`
+	SecondAccountID     string   `json:"secondAccountId"`
+	ScopeSenderID       string   `json:"scopeSenderId"`
+	ScopeParentDigest   string   `json:"scopeParentDigest"`
+	RefreshLifetime     string   `json:"refreshLifetime"`
+	PermanentSenderID   string   `json:"permanentSenderId"`
+	SupersededSenderID  string   `json:"supersededSenderId"`
+	SenderCount         int      `json:"senderCount"`
+	CredentialCount     int      `json:"credentialCount"`
 }
 
 func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
@@ -208,29 +209,6 @@ VALUES ('unrelated-integration-sender', 'unrelated-integration-account', 'active
 		WHERE id = 'unrelated-integration-sender'`)
 }
 
-func TestExternalWriterQueryExcludesOnlyPgDump(t *testing.T) {
-	postgres := harness.StartPostgres(t)
-	sql := generateSmokeSQL(t)
-	primary, err := db.Open(context.Background(), postgres.DSN)
-	if err != nil {
-		t.Fatalf("open primary connection: %v", err)
-	}
-	t.Cleanup(func() { _ = primary.Close() })
-
-	writer, writerConnection := heldConnection(t, postgres.DSN, "smoke-writer")
-	t.Cleanup(func() { _ = writer.Close() })
-	waitForConnections(t, primary, sql.ExternalWriterSQL, 1)
-	_ = writerConnection.Close()
-	_ = writer.Close()
-	waitForConnections(t, primary, sql.ExternalWriterSQL, 0)
-
-	dump, dumpConnection := heldConnection(t, postgres.DSN, "pg_dump")
-	t.Cleanup(func() { _ = dump.Close() })
-	assertConnections(t, primary, sql.ExternalWriterSQL, 0)
-	_ = dumpConnection.Close()
-	_ = dump.Close()
-}
-
 func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 	t.Helper()
 	root := repositoryRoot(t)
@@ -304,6 +282,7 @@ process.stdout.write(JSON.stringify({
     ['smoke-integration-fixture-request'],
     ['smoke-integration-retention-pairing'],
   ),
+  cleanupCategories: fixtures.cleanupVerificationCategories,
   configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
   retentionJobName: database.retentionJobName,
   retentionSchedule: retentionJob.schedule,

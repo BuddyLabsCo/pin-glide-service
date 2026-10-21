@@ -34,7 +34,7 @@ function assertDrainProbe(state, { restored }) {
   throw new Error(`The run-owned retention SQL ended unexpectedly: ${state.status || 'missing status'}`);
 }
 
-async function snapshotWriterGuard(remote, application, version) {
+export async function snapshotWriterGuard(remote, application, version) {
   const writer = await holdExternalWriter(remote, application);
   try {
     let snapshot;

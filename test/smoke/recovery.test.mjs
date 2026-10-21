@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { cronJobs, retention, retentionJobName } from './lib/database.mjs';
-import { verifyRecovery } from './lib/recovery.mjs';
+import { snapshotWriterGuard, verifyRecovery } from './lib/recovery.mjs';
 import { TARGET } from './lib/target.mjs';
 
 function drainProbeFixture({
@@ -176,4 +176,35 @@ test('recovery records snapshot and restore failures in their own scenarios', as
   assert.equal(drainProbe.inspections, 2);
   assert.equal(drainProbe.cleanups, 1);
   assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));
+});
+
+test('the default snapshot writer guard keeps a writer until the snapshot rejects it', async () => {
+  let releaseHolder;
+  let snapshots = 0;
+  let terminated = 0;
+  const remote = {
+    ssh() {
+      return new Promise(resolve => {
+        releaseHolder = resolve;
+      });
+    },
+    async sqlJSON() {
+      return { connections: 1 };
+    },
+    async createStoppedSnapshot() {
+      snapshots++;
+      throw new Error('Another database writer is still connected');
+    },
+    async sql() {
+      terminated++;
+      releaseHolder({ stdout: '', stderr: '' });
+    },
+    async assertNoExternalWriters() {},
+  };
+  assert.deepEqual(
+    await snapshotWriterGuard(remote, 'smoke-writer', '1.2.3'),
+    { blocked: true, application: 'smoke-writer' },
+  );
+  assert.equal(snapshots, 1);
+  assert.equal(terminated, 1);
 });

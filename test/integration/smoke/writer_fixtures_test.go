@@ -12,6 +12,29 @@ import (
 	"github.com/BuddyLabsCo/pin-glide-service/test/integration/harness"
 )
 
+func TestExternalWriterQueryExcludesOnlyPgDump(t *testing.T) {
+	postgres := harness.StartPostgres(t)
+	sql := generateSmokeSQL(t)
+	primary, err := db.Open(context.Background(), postgres.DSN)
+	if err != nil {
+		t.Fatalf("open primary connection: %v", err)
+	}
+	t.Cleanup(func() { _ = primary.Close() })
+
+	writer, writerConnection := heldConnection(t, postgres.DSN, "smoke-writer")
+	t.Cleanup(func() { _ = writer.Close() })
+	waitForConnections(t, primary, sql.ExternalWriterSQL, 1)
+	_ = writerConnection.Close()
+	_ = writer.Close()
+	waitForConnections(t, primary, sql.ExternalWriterSQL, 0)
+
+	dump, dumpConnection := heldConnection(t, postgres.DSN, "pg_dump")
+	t.Cleanup(func() { _ = dump.Close() })
+	assertConnections(t, primary, sql.ExternalWriterSQL, 0)
+	_ = dumpConnection.Close()
+	_ = dump.Close()
+}
+
 func TestApplicationTerminationTargetsOnlyTheRunOwnedWriter(t *testing.T) {
 	postgres := harness.StartPostgres(t)
 	sql := generateSmokeSQL(t)
