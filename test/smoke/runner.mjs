@@ -312,7 +312,7 @@ async function runSeededJourneys({ session, plan }) {
   const pairing = await runPairingScenarios(session);
   const { context, ...pairingEvidence } = pairing;
   return {
-    credentials: await runSenderCredentialScenarios({ session, plan }),
+    credentials: await runSenderCredentialScenarios(session),
     pairing: pairingEvidence,
     delivery: await runDeliveryScenarios(session, context),
     receiver: await runReceiverScenarios(session, { root }),
