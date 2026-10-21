@@ -14,7 +14,11 @@ import test from 'node:test';
 import { deliveryRestoreWatchdog, withDeliveryBatchLock } from './lib/delivery_faults.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import { runDeliveryScenario, waitForAdmitted } from './lib/session_delivery_support.mjs';
+import {
+  expectMetadata,
+  runDeliveryScenario,
+  waitForAdmitted,
+} from './lib/session_delivery_support.mjs';
 import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
 
@@ -31,6 +35,25 @@ test('Delivery admission polling reads the JSON count used by the deployed query
   };
   await waitForAdmitted(session, 'pair2', ['message-1'], 1, 100);
   assert.match(statements[0], /json_build_object/);
+});
+
+test('Delivery metadata compares timestamp instants across wire formats', () => {
+  expectMetadata({
+    status: 200,
+    body: {
+      deliveries: [{
+        receiverId: 'receiver-1',
+        status: 'received',
+        createdAt: '2026-10-21T17:00:00.123456+00:00',
+        completedAt: '2026-10-21T17:00:01.123456+00:00',
+      }],
+    },
+  }, [{
+    receiverID: 'receiver-1',
+    status: 'received',
+    createdAt: '2026-10-21T17:00:00.123456Z',
+    completedAt: '2026-10-21T17:00:01.123456Z',
+  }]);
 });
 
 test('an unexpected Delivery frame is reported without its ciphertext', async () => {

@@ -112,10 +112,10 @@ export function expectMetadata(response, deliveries) {
         `Delivery metadata for ${wanted.receiverID} = ${JSON.stringify(item)}, want ${wanted.status}`,
       );
     }
-    if (wanted.createdAt && item.createdAt !== wanted.createdAt) {
+    if (wanted.createdAt && Date.parse(item.createdAt) !== Date.parse(wanted.createdAt)) {
       throw new Error(`Delivery ${wanted.receiverID} admission time changed`);
     }
-    if (wanted.completedAt && item.completedAt !== wanted.completedAt) {
+    if (wanted.completedAt && Date.parse(item.completedAt) !== Date.parse(wanted.completedAt)) {
       throw new Error(`Delivery ${wanted.receiverID} terminal time changed`);
     }
   }

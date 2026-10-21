@@ -191,8 +191,8 @@ export async function deliveryLifetime(session, plan, fixture, pairing, socket) 
   return {
     message,
     deferredDuplicate: duplicate.body.results[0].status,
-    lookupDidNotExtendLifetime: lookup.createdAt === aged.createdAt
-      && lookup.completedAt === aged.completedAt,
+    lookupDidNotExtendLifetime: Date.parse(lookup.createdAt) === Date.parse(aged.createdAt)
+      && Date.parse(lookup.completedAt) === Date.parse(aged.completedAt),
     scheduledProbe: probe,
     purged,
     acceptedRepeat: repeatedView.status,
