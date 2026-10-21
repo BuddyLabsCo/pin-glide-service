@@ -24,7 +24,7 @@ import (
 
 const (
 	apiTitle   = "Pin Glide Service API"
-	apiVersion = "0.1.0"
+	apiVersion = "1.0.0"
 )
 
 // Dependencies are the external dependencies of the HTTP API.

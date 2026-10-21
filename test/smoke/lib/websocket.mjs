@@ -238,6 +238,17 @@ class WebSocketPeer {
     timer.unref();
     return this.closeEvent;
   }
+
+  // Stop reading the transport without closing it. A bounded server write can
+  // then fail for backpressure, which is the reversible fault used to exercise
+  // send_failed instead of a fake delivery channel.
+  pauseReads() {
+    this.socket.pause();
+  }
+
+  resumeReads() {
+    if (!this.closeInfo && !this.sendClosed) this.socket.resume();
+  }
 }
 
 export async function openWebSocket({

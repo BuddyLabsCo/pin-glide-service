@@ -70,10 +70,12 @@ func TestPublishedHTTPDescriptionKeepsTheDeliveryContract(t *testing.T) {
 		t.Errorf("upload request fields = %v, want %v", properties, fixture.Request.Properties)
 	}
 
+	assertArrayType(t, "upload items", request["properties"].(map[string]any)["items"].(map[string]any))
 	entry := request["properties"].(map[string]any)["items"].(map[string]any)["items"].(map[string]any)
 	entryName, entrySchema := schemaOf(t, description, entry)
 	assertStatusContract(t, "upload entry", entryName, entrySchema, fixture.Item)
 
+	assertArrayType(t, "upload results", success["properties"].(map[string]any)["results"].(map[string]any))
 	result := success["properties"].(map[string]any)["results"].(map[string]any)["items"].(map[string]any)
 	resultName, resultSchema := schemaOf(t, description, result)
 	assertStatusContract(t, "upload result", resultName, resultSchema, fixture.Result)
@@ -100,6 +102,7 @@ func TestPublishedHTTPDescriptionKeepsTheDeliveryContract(t *testing.T) {
 		t.Errorf("metadata required fields = %v, want %v", required, fixture.Metadata.Success.Required)
 	}
 
+	assertArrayType(t, "metadata deliveries", metadataSuccess["properties"].(map[string]any)["deliveries"].(map[string]any))
 	views := metadataSuccess["properties"].(map[string]any)["deliveries"].(map[string]any)["items"].(map[string]any)
 	viewName, view := schemaOf(t, description, views)
 	assertStatusContract(t, "delivery view", viewName, view, fixture.Metadata.View)
@@ -111,6 +114,15 @@ func TestPublishedHTTPDescriptionKeepsTheDeliveryContract(t *testing.T) {
 		}
 	}
 	assertFailureStatuses(t, metadataErrors, fixtureStatuses(fixture.Metadata.Errors))
+}
+
+// assertArrayType checks that clients can model a field as a non-null list.
+func assertArrayType(t *testing.T, what string, schema map[string]any) {
+	t.Helper()
+
+	if kind := schema["type"]; kind != "array" {
+		t.Errorf("%s type = %v, want array", what, kind)
+	}
 }
 
 // assertStatusContract requires one published schema to keep exactly the

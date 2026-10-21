@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { runProcess } from './commands.mjs';
+import { withFailureJoiningCleanup } from './cleanup.mjs';
 import {
   withBailianConnectivityFault,
   withInvalidBailianKey,
@@ -269,6 +270,38 @@ SELECT json_build_object(
 FROM pg_stat_database
 WHERE datname = current_database();
 `);
+  }
+
+  stopAPI() {
+    return this.ssh(`${this.compose} stop api`, { timeoutMs: 60_000 });
+  }
+
+  startAPI() {
+    return this.ssh(`${this.compose} up -d --no-deps --wait api`, { timeoutMs: 180_000 });
+  }
+
+  async restartAPI() {
+    let stopped = false;
+    await withFailureJoiningCleanup(
+      async () => {
+        await this.stopAPI();
+        stopped = true;
+        await this.startAPI();
+        stopped = false;
+      },
+      async () => {
+        if (stopped) await this.startAPI();
+      },
+      'API restart and recovery both failed',
+    );
+  }
+
+  stopPostgres() {
+    return this.ssh(`${this.compose} stop postgres`, { timeoutMs: 60_000 });
+  }
+
+  startPostgres() {
+    return this.ssh(`${this.compose} up -d --no-deps --wait postgres`, { timeoutMs: 180_000 });
   }
 
   image(reference) {

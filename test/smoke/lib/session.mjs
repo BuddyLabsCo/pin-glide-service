@@ -99,15 +99,37 @@ export class SmokeSession {
     return this.send(options, true);
   }
 
+  abandonedRequest(options) {
+    const { request, abort, aborted } = this.http.callAbandoned(options);
+    return {
+      request: request.then(result => {
+        this.trackRequestId(result);
+        return result;
+      }, error => {
+        this.trackRequestId(error);
+        // The caller's own abort is what proves cancellation; a timeout or
+        // service failure is a different outcome.
+        error.aborted = aborted();
+        throw error;
+      }),
+      abort,
+      aborted,
+    };
+  }
+
+  trackRequestId(value) {
+    if (value?.requestId) this.requestIds.push(value.requestId);
+  }
+
   async send(options, dropped) {
     try {
       const result = dropped
         ? await this.http.callDropped(options)
         : await this.http.call(options);
-      if (result.requestId) this.requestIds.push(result.requestId);
+      this.trackRequestId(result);
       return result;
     } catch (error) {
-      if (error.requestId) this.requestIds.push(error.requestId);
+      this.trackRequestId(error);
       throw error;
     }
   }

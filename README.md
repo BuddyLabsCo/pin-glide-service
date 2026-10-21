@@ -243,18 +243,22 @@ snapshot and restores it into a disposable database. It then seeds and removes
 run-owned SQL fixtures, exercises the Sender credential/session lifecycle
 through the deployed HTTP and WebSocket surface, calls the real service-issued
 Bailian flow directly, drives Receiver enrollment, add-Sender, replacement,
-association and capacity journeys, and checks Receiver credential scope,
-exclusive delivery connections, presence, protocol failures, issuance
-supersession, heartbeat recovery, restart offline state and reconnect without
-replay. It writes redacted evidence, then runs the referenced deterministic unit
+association and capacity journeys, checks Receiver credential scope, exclusive
+delivery connections, presence, protocol failures, issuance supersession,
+heartbeat recovery, restart offline state and reconnect without replay, and
+uploads Delivery batches through real Receiver sockets. Delivery evidence
+covers indexed envelope/item results, duplicate entries and concurrent
+retransmission, retained metadata, Receipt correlation and write/ACK outcomes,
+plus restart, PostgreSQL and storage uncertainty without payload recovery or
+resend. It writes redacted evidence, then runs the referenced deterministic unit
 and integration tests for race orderings and excluded recovery or
 global-revocation policy closes that the live smoke path cannot observe, and
 records them only when they pass, so the workstation running the integration
-mode also needs Go and Docker. The Bailian flow verifies strict
-text-only OTP and no-OTP inference plus controlled authority, configuration,
-parent-key and connectivity failures. It waits for the provider-reported
-temporary-key expiry (about eleven minutes) and briefly recreates the API
-container for the invalid-parent-key fault.
+mode also needs Go and Docker. The Bailian flow verifies strict text-only OTP
+and no-OTP inference plus controlled authority, configuration, parent-key and
+connectivity failures. It waits for the provider-reported temporary-key expiry
+(about eleven minutes) and briefly recreates the API container for the
+invalid-parent-key fault.
 After both releases are published, this command proves fresh installation and
 the declared upgrade with disposable Compose projects and the real release
 images:

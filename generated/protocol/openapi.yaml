@@ -99,16 +99,16 @@ components:
           type: string
         refresh:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Renewal credential with a sliding seven-day lifetime
+          description: Renewal credential F sent in the refreshToken body field for refresh or ordinary logout; sliding seven-day lifetime
         senderId:
           description: Sender registration ID (deviceId); save it to restore this installation
           type: string
         uploader:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Upload and model-credential access, valid for three hours
+          description: Upload and model-credential access sent in the Authorization header, valid for three hours
         userSession:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Management credential, valid for three hours
+          description: Management credential sent in the Authorization header, valid for three hours
       required:
         - accountId
         - senderId
@@ -183,7 +183,7 @@ components:
           format: date-time
           type: string
         token:
-          description: Raw opaque credential; send it only in the Authorization header of an authenticated HTTPS or WSS request
+          description: Raw opaque credential; never place credentials in URLs
           type: string
       required:
         - token
@@ -225,9 +225,7 @@ components:
           description: Retained admitted Deliveries of this Message
           items:
             $ref: "#/components/schemas/DeliveryView"
-          type:
-            - array
-            - "null"
+          type: array
         messageId:
           description: Message ID these Deliveries belong to
           type: string
@@ -548,9 +546,7 @@ components:
           description: The Sender's own active associations; empty when it has none
           items:
             $ref: "#/components/schemas/ReceiverAssociation"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - items
       type: object
@@ -587,16 +583,16 @@ components:
           type: string
         refresh:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Renewal credential with a sliding seven-day lifetime
+          description: Renewal credential F sent in the refreshToken body field for refresh or ordinary logout; sliding seven-day lifetime
         senderId:
           description: Sender registration ID (deviceId); save it to restore this installation
           type: string
         uploader:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Upload and model-credential access, valid for three hours
+          description: Upload and model-credential access sent in the Authorization header, valid for three hours
         userSession:
           $ref: "#/components/schemas/IssuedCredential"
-          description: Management credential, valid for three hours
+          description: Management credential sent in the Authorization header, valid for three hours
       required:
         - operationId
         - attempt
@@ -677,9 +673,7 @@ components:
           description: One entry per selected Receiver; entries are validated and processed independently and answered in input order
           items:
             $ref: "#/components/schemas/UploadItem"
-          type:
-            - array
-            - "null"
+          type: array
         messageId:
           description: Random Message ID the Sender generated once for this SMS operation; all of its Receiver ciphertexts carry it
           examples:
@@ -708,9 +702,7 @@ components:
           description: One result per input entry, in input order
           items:
             $ref: "#/components/schemas/UploadResult"
-          type:
-            - array
-            - "null"
+          type: array
       required:
         - messageId
         - requestId
@@ -782,7 +774,7 @@ components:
 info:
   description: The Pin Glide service HTTP surface. Whole-request failures carry an RFC 9457 problem detail with a stable machine-readable code; credentials belong in the Authorization header, never in a URL.
   title: Pin Glide Service API
-  version: 0.1.0
+  version: 1.0.0
 openapi: 3.1.0
 paths:
   /health:

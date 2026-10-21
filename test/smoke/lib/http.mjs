@@ -40,7 +40,27 @@ export class SmokeHttp {
     return this.dispatch(options, true);
   }
 
-  async dispatch({ method = 'GET', path, token, body, headers = {} } = {}, discardResponse) {
+  // Start a request whose caller can abandon it before the service answers.
+  // The server observes that transport cancellation; the delivery work it
+  // already admitted is expected to continue.
+  callAbandoned(options) {
+    const controller = new AbortController();
+    controller.abandoned = false;
+    return {
+      request: this.dispatch(options, false, controller),
+      abort: () => {
+        controller.abandoned = true;
+        controller.abort();
+      },
+      aborted: () => controller.abandoned,
+    };
+  }
+
+  async dispatch(
+    { method = 'GET', path, token, body, rawBody, headers = {}, timeoutMs = this.timeoutMs } = {},
+    discardResponse,
+    controller = new AbortController(),
+  ) {
     const route = serverRelativePath(path, 'HTTP');
     const url = new URL(route, this.origin);
     if (url.origin !== this.origin) {
@@ -53,14 +73,19 @@ export class SmokeHttp {
     };
     if (token) requestHeaders.authorization = `Bearer ${token}`;
     let requestBody;
-    if (body !== undefined) {
+    if (rawBody !== undefined && body !== undefined) {
+      throw new Error('Smoke HTTP requests cannot carry both body and rawBody');
+    }
+    if (rawBody !== undefined) {
+      requestHeaders['content-type'] = 'application/json';
+      requestBody = rawBody;
+    } else if (body !== undefined) {
       requestHeaders['content-type'] = 'application/json';
       requestBody = JSON.stringify(body);
     }
 
     let response;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref();
     try {
       try {
@@ -71,7 +96,9 @@ export class SmokeHttp {
           signal: controller.signal,
         });
       } catch (error) {
-        throw new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
+        const failure = new Error(`smoke HTTP ${method} ${route} failed: ${error.message}`);
+        failure.aborted = controller.abandoned === true;
+        throw failure;
       }
 
       const headerRequestID = response.headers.get('x-request-id');
