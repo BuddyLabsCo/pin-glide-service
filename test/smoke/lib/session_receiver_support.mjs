@@ -217,7 +217,7 @@ export async function waitForHealth(session) {
 export async function deliverOnce(session, label, pairing, socket, tag) {
   const messageID = session.newOperationID(`receiver-delivery-${tag}`);
   const nonce = randomBytes(12).toString('base64');
-  const ciphertext = randomBytes(16).toString('base64');
+  const ciphertext = randomBytes(17).toString('base64');
   session.addSecret([nonce, ciphertext]);
   const uploading = settle(session.request({
     method: 'POST',
