@@ -113,7 +113,7 @@ export async function expectCredentialReady(socket, pairing) {
     || frame?.type !== 'credential_ready'
     || frame.sessionId !== pairing.sessionID
     || frame.receiverId !== pairing.receiverID
-    || frame.expiresAt !== pairing.expiresAt
+    || Date.parse(frame.expiresAt) !== Date.parse(pairing.expiresAt)
   ) {
     throw new Error('Pairing notifications did not report activation and credential readiness');
   }
