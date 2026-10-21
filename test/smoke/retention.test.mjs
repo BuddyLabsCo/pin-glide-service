@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createFixturePlan } from './lib/fixtures.mjs';
-import { upload } from './lib/session_delivery_support.mjs';
+import { SmokeSession } from './lib/session.mjs';
+import { TARGET } from './lib/target.mjs';
 import {
   runScheduledCleanupProbe,
   jsonFromOutput,
@@ -42,7 +43,7 @@ test('scheduled cleanup probe waits for a committed run and tracks only its own 
   const result = await runScheduledCleanupProbe(session, {
     pollMs: 0,
     timeoutMs: 100,
-    sleep: async () => {},
+    sleepImpl: async () => {},
   });
   assert.equal(result.jobID, 23);
   assert.deepEqual(result.runIDs, [11]);
@@ -255,26 +256,37 @@ test('privacy verification records large Delivery payloads for redaction scans',
   const ciphertext = Buffer.alloc(700 * 1024, 7).toString('base64');
   const secrets = [];
   let request;
-  const session = {
-    addSecret(values) {
-      secrets.push(...values);
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http: {
+      async call(options) {
+        request = options;
+        return { status: 200, body: { results: [] } };
+      },
     },
-    token() {
-      return 'uploader-token';
+    evidence: {
+      addSecret(values) {
+        secrets.push(values);
+      },
     },
-    async request(options) {
-      request = options;
-      return { status: 200, body: { results: [] } };
-    },
-  };
+    plan: createFixturePlan({ runId: 'large-delivery-payload' }),
+  });
 
-  await upload(session, 'pair2', 'large-message', [{
-    receiverId: 'receiver-1',
-    pairingId: 'pairing-1',
-    cryptoVersion: 1,
-    nonce,
-    ciphertext,
-  }]);
+  await session.request({
+    method: 'POST',
+    path: '/v1/messages',
+    body: {
+      messageId: 'large-message',
+      items: [{
+        receiverId: 'receiver-1',
+        pairingId: 'pairing-1',
+        cryptoVersion: 1,
+        nonce,
+        ciphertext,
+      }],
+    },
+  });
 
   assert.deepEqual(secrets, [nonce, ciphertext]);
   assert.equal(request.body.items[0].ciphertext, ciphertext);
