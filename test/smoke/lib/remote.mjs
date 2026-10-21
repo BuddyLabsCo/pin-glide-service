@@ -131,7 +131,7 @@ export class RemoteEnvironment {
     return withBailianConnectivityFault(this, workspaceID, callback, options);
   }
 
-  async createStoppedSnapshot(version) {
+  async createStoppedSnapshot(version, { afterStop } = {}) {
     let prepared = false;
     let stopped = false;
     let failure;
@@ -142,6 +142,7 @@ export class RemoteEnvironment {
       prepared = true;
       await this.install('--stop-api', version);
       stopped = true;
+      if (afterStop) await afterStop();
       await this.assertNoExternalWriters();
       snapshotsBefore = new Set((await this.listSnapshots()).map(entry => entry.name));
       const writesBefore = await this.databaseWriteStats();
@@ -332,6 +333,41 @@ WHERE datname = current_database();
     ].join(' && '), { timeoutMs: 30_000 });
   }
 
+  apiLogsSince(since) {
+    const value = new Date(since);
+    if (!Number.isFinite(value.getTime())) throw new Error('Smoke service-log start time is invalid');
+    return this.ssh(
+      `${this.compose} logs --no-color --tail 10000 --since ${quote(value.toISOString())} api`,
+      { timeoutMs: 30_000 },
+    );
+  }
+
+  scheduledWorkState() {
+    return this.sqlJSON(`
+SELECT json_build_object(
+  'activeJobs', (
+    SELECT coalesce(json_agg(jobname ORDER BY jobname), '[]'::json)
+    FROM cron.job
+    WHERE active
+  ),
+  'runningRuns', (
+    SELECT count(*)
+    FROM cron.job_run_details
+    WHERE status = 'running'
+  ),
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
+  ),
+  'maxRunID', (
+    SELECT coalesce(max(runid), 0)
+    FROM cron.job_run_details
+  )
+);
+`);
+  }
+
   schemaAudits() {
     return this.sqlJSON(`
 SELECT json_build_object(
@@ -375,6 +411,16 @@ SELECT json_build_object(
       'command', command
     ) ORDER BY jobname), '[]'::json)
     FROM cron.job
+  ),
+  'runningCronJobs', (
+    SELECT count(*)
+    FROM cron.job_run_details
+    WHERE status = 'running'
+  ),
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
   ),
   'audits', (
     SELECT coalesce(json_object_agg(identity, exit_code), '{}'::json)

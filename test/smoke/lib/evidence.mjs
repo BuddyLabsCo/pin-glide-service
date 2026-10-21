@@ -35,6 +35,10 @@ export class Evidence {
     }
   }
 
+  secretValues() {
+    return [...this.secrets];
+  }
+
   record({ scenario, status, requestId = '', httpStatus, code = '', details = {} }) {
     if (!scenario) throw new Error('Smoke evidence needs a scenario name');
     if (!statuses.has(status)) throw new Error(`Smoke evidence status must be passed, failed or blocked, found ${status}`);

@@ -85,7 +85,7 @@ export function parseRanTests(output, references) {
   const ran = new Set([...output.matchAll(/^\s*--- PASS: (\w+)/gm)].map(match => match[1]));
   const missing = references.filter(item => !ran.has(item.test)).map(item => item.test);
   if (missing.length > 0) {
-    throw new Error(`deterministic Receiver tests did not run: ${missing.join(', ')}`);
+    throw new Error(`deterministic smoke tests did not run: ${missing.join(', ')}`);
   }
   return references.map(item => item.test);
 }
@@ -124,7 +124,7 @@ export async function runDeterministicTests(root, references, run = runProcess) 
       });
     }
   } catch (error) {
-    throw new SmokeBlocked(`deterministic Receiver tests need a working Docker: ${error.message}`);
+    throw new SmokeBlocked(`deterministic smoke tests need a working Docker: ${error.message}`);
   }
   const tests = [];
   for (const packagePath of packages) {
@@ -140,14 +140,14 @@ export async function runDeterministicTests(root, references, run = runProcess) 
     } catch (error) {
       // A missing toolchain is an unmet prerequisite, not a failed assertion.
       if (error.code === 'ENOENT') {
-        throw new SmokeBlocked(`deterministic Receiver tests need a Go toolchain: ${error.message}`);
+        throw new SmokeBlocked(`deterministic smoke tests need a Go toolchain: ${error.message}`);
       }
       const output = `${error.result?.stdout || ''}\n${error.result?.stderr || ''}`;
       const failed = failingTests(output, inPackage);
       const detail = failed.length > 0
         ? `: ${failed.join(', ')} failed`
         : `: ${error.message}`;
-      throw new Error(`deterministic Receiver tests failed in ${packagePath}${detail}`, { cause: error });
+      throw new Error(`deterministic smoke tests failed in ${packagePath}${detail}`, { cause: error });
     }
     tests.push(...parseRanTests(result.stdout, inPackage));
   }

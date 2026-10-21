@@ -29,6 +29,14 @@ type generatedSmokeSQL struct {
 	RevokeRegistration string `json:"revokeRegistration"`
 	SupersedeFamily    string `json:"supersedeFamily"`
 	InvalidateReceiver string `json:"invalidateReceiver"`
+	RetentionAging     string `json:"retentionAging"`
+	RetentionBoundary  string `json:"retentionBoundary"`
+	RetentionState     string `json:"retentionState"`
+	RetentionCall      string `json:"retentionCall"`
+	RetentionPrivacy   string `json:"retentionPrivacy"`
+	RetentionCleanup   string `json:"retentionCleanup"`
+	RetentionProbe     string `json:"retentionProbeCommand"`
+	ConfigurationProbe string `json:"configurationProbe"`
 	FirstSenderID      string `json:"firstSenderId"`
 	FirstAccountID     string `json:"firstAccountId"`
 	SecondAccountID    string `json:"secondAccountId"`
@@ -221,11 +229,22 @@ func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 import { pathToFileURL } from 'node:url';
 const fixtures = await import(pathToFileURL(process.env.FIXTURES).href);
 const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURES).href);
+const retentionFixtures = await import(pathToFileURL(process.env.RETENTION_FIXTURES).href);
+const retentionChecks = await import(pathToFileURL(process.env.RETENTION_CHECKS).href);
+const retentionSession = await import(pathToFileURL(process.env.RETENTION_SESSION).href);
 const remote = await import(pathToFileURL(process.env.REMOTE).href);
 const plan = fixtures.createFixturePlan({
   runId: 'integration-fixture',
   now: new Date('2026-10-20T00:00:00Z'),
 });
+const retention = {
+  referenceTime: '2026-10-21T04:00:00.000Z',
+  senderID: plan.senders[0].id,
+  receiverID: 'smoke-integration-retention-receiver',
+  pairingID: 'smoke-integration-retention-pairing',
+  jobID: 1,
+  liveTokenDigest: 'a'.repeat(64),
+};
 const scope = plan.senders.find(sender => sender.id.endsWith('-scope'));
 const permanent = plan.senders.find(sender => sender.id.endsWith('-permanent'));
 const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
@@ -245,6 +264,19 @@ process.stdout.write(JSON.stringify({
   supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
   invalidateReceiver: receiverFixtures.renderInvalidateReceiverCredentialSQL(
     plan, 'smoke-integration-fixture-receiver'),
+  retentionAging: retentionFixtures.renderRetentionAgingSQL(plan, retention),
+  retentionBoundary: retentionFixtures.renderRetentionBoundarySQL(plan, retention),
+  retentionState: retentionChecks.retentionStateQuery(plan, retention),
+  retentionCall: retentionChecks.cleanupCallSQL(retention.referenceTime),
+  retentionPrivacy: retentionChecks.runOwnedPrivacyQuery(plan, {
+    receiverIDs: [retention.receiverID],
+    requestIDs: ['smoke-integration-fixture-request'],
+    subjects: [retention.pairingID],
+  }),
+  retentionCleanup: retentionChecks.renderRetentionCleanupSQL(plan),
+  retentionProbeCommand: retentionSession.retentionProbeCommand(
+    'smoke-integration-retention-probe'),
+  configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
   secondAccountId: plan.accounts[1].id,
@@ -262,6 +294,9 @@ process.stdout.write(JSON.stringify({
 	command.Env = append(os.Environ(),
 		"FIXTURES="+filepath.Join(root, "test/smoke/lib/fixtures.mjs"),
 		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/lib/receiver_fixtures.mjs"),
+		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/lib/retention_fixtures.mjs"),
+		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/lib/retention_checks.mjs"),
+		"RETENTION_SESSION="+filepath.Join(root, "test/smoke/lib/session_retention.mjs"),
 		"REMOTE="+filepath.Join(root, "test/smoke/lib/remote.mjs"),
 	)
 	output, err := command.CombinedOutput()
@@ -346,6 +381,32 @@ func assertCount(t *testing.T, pool *sql.DB, want int, statement string, args ..
 	}
 	if got != want {
 		t.Fatalf("row count is %d, want %d for %s", got, want, strings.TrimSpace(statement))
+	}
+}
+
+func retentionState(t *testing.T, pool *sql.DB, statement string) map[string]any {
+	t.Helper()
+	var raw string
+	if err := pool.QueryRowContext(context.Background(), statement).Scan(&raw); err != nil {
+		t.Fatalf("read retention state: %v", err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode retention state: %v: %s", err, raw)
+	}
+	for _, section := range []string{"aging", "boundary", "live", "durable", "owned"} {
+		if _, ok := state[section].(map[string]any); !ok {
+			t.Fatalf("retention state has no %s object: %s", section, raw)
+		}
+	}
+	return state
+}
+
+func assertNestedCount(t *testing.T, state map[string]any, section, field string, want float64) {
+	t.Helper()
+	values := state[section].(map[string]any)
+	if got, ok := values[field]; !ok || got != want {
+		t.Fatalf("retention state %s.%s = %v, want %v", section, field, got, want)
 	}
 }
 

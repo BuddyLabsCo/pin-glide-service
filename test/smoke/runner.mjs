@@ -20,6 +20,8 @@ import { runDeliveryScenarios } from './lib/session_delivery.mjs';
 import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
 import { runReceiverScenarios } from './lib/session_receiver.mjs';
+import { unknownWriterBlocksSnapshot } from './lib/retention_runtime.mjs';
+import { runRetentionScenarios } from './lib/session_retention.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -40,7 +42,8 @@ function usage() {
     'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
     'exercises seeded Sender credential/session, Pairing, Delivery, Receiver and real',
-    'Bailian model journeys through the deployed service, then creates a',
+    'Bailian model journeys plus privacy and retention cleanup through the deployed',
+    'service, then creates a',
     'stopped-writer snapshot and restores it into a disposable database.',
     'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
   ].join('\n');
@@ -163,6 +166,17 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
   const snapshot = await recoverySnapshot(remote, { allowMissing: true });
   try {
     const config = await remote.composeConfig();
+    const apiEnvironment = config.services?.api?.environment || {};
+    const postgresEnvironment = config.services?.postgres?.environment || {};
+    for (const secret of [
+      apiEnvironment.PIN_GLIDE_DATABASE_URL,
+      apiEnvironment.PIN_GLIDE_WECHAT_APP_SECRET,
+      apiEnvironment.PIN_GLIDE_QQ_APP_KEY,
+      apiEnvironment.PIN_GLIDE_BAILIAN_API_KEY,
+      postgresEnvironment.POSTGRES_PASSWORD,
+    ]) {
+      evidence.addSecret(secret);
+    }
     const compose = summarizeCompose(config, target, target.release);
     evidence.record({
       scenario: 'target and Compose identity',
@@ -291,17 +305,50 @@ export async function verifyRecovery({
   checkResult,
   evidence,
   restore = restoreSnapshotToDisposableDatabase,
+  probeWriter = unknownWriterBlocksSnapshot,
 }) {
   const backupScenario = 'stopped-writer container snapshot';
   let artifact = checkResult.snapshot;
   let backupComplete = false;
   let newSnapshot;
+  let heldScheduledWork;
   try {
-    newSnapshot = await checkResult.remote.createStoppedSnapshot(checkResult.release.tag.slice(1));
+    newSnapshot = await checkResult.remote.createStoppedSnapshot(
+      checkResult.release.tag.slice(1),
+      {
+        afterStop: async () => {
+          const held = await checkResult.remote.scheduledWorkState();
+          if ((held.activeJobs || []).length > 0) {
+            throw new Error('Scheduled jobs remained active after the API stopped');
+          }
+          if (Number(held.runningRuns) !== 0 || Number(held.cronBackends) !== 0) {
+            throw new Error('Scheduled SQL had not drained after the API stopped');
+          }
+          const writerApplication = `smoke-${evidence.runId || randomBytes(6).toString('hex')}-writer`;
+          const writer = await probeWriter(checkResult.remote, writerApplication);
+          if (!writer?.blocked) throw new Error('The stopped recovery baseline accepted an external writer');
+          await new Promise(resolve => setTimeout(resolve, 250));
+          const later = await checkResult.remote.scheduledWorkState();
+          if (Number(later.maxRunID) !== Number(held.maxRunID)) {
+            throw new Error('New scheduled work started while the recovery baseline was held');
+          }
+          heldScheduledWork = {
+            activeJobs: held.activeJobs,
+            runningRuns: Number(held.runningRuns),
+            cronBackends: Number(held.cronBackends),
+            newRunsWhileHeld: Number(later.maxRunID) - Number(held.maxRunID),
+            unknownWriterBlocked: writer.blocked,
+          };
+        },
+      },
+    );
     const health = await checkResult.http.call({ path: '/health' });
     if (health.body?.status !== 'ok') throw new Error('API did not recover after the stopped snapshot');
     const liveFacts = await checkResult.remote.schemaAudits();
     const liveConfiguration = validateConfiguration(liveFacts, checkResult.model);
+    if (Number(liveFacts.runningCronJobs) !== 0 || Number(liveFacts.cronBackends) !== 0) {
+      throw new Error('Scheduled SQL was still running after the recovery snapshot completed');
+    }
     evidence.record({
       scenario: backupScenario,
       status: 'passed',
@@ -310,6 +357,9 @@ export async function verifyRecovery({
         writersStopped: true,
         healthRequestId: health.requestId,
         schedule: liveConfiguration.cron,
+        heldScheduledWork,
+        runningCronJobs: Number(liveFacts.runningCronJobs),
+        cronBackends: Number(liveFacts.cronBackends),
       },
     });
     backupComplete = true;
@@ -367,6 +417,7 @@ async function runSeededJourneys({ session, plan }) {
     pairing: pairingEvidence,
     delivery: await runDeliveryScenarios(session, context),
     receiver: await runReceiverScenarios(session, { root }),
+    retention: await runRetentionScenarios(session, { root }),
   };
 }
 
@@ -396,7 +447,7 @@ async function integration({
     const model = await runModel({ session, model: checkResult.model });
     const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
-      scenario: 'seeded Sender, Pairing, Delivery, Receiver and real Bailian smoke journey',
+      scenario: 'seeded Sender, Pairing, Delivery, Receiver, retention and real Bailian smoke journey',
       status: 'passed',
       details: {
         ...lifecycle,

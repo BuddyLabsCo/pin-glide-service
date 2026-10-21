@@ -190,6 +190,23 @@ test('remote SQL is sent through stdin and never embedded in the SSH command', a
   assert(!secret.includes(calls[0].args.at(-1)));
 });
 
+test('service logs are bounded to the run window without reading the deployment environment', async () => {
+  const calls = [];
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '{"level":"info"}\n', stderr: '' };
+    },
+  });
+  await remote.apiLogsSince('2026-10-21T04:00:00.000Z');
+  assert.equal(calls[0].command, 'ssh');
+  assert.match(calls[0].args.at(-1), /logs --no-color --tail 10000/);
+  assert.match(calls[0].args.at(-1), /--since '2026-10-21T04:00:00\.000Z'/);
+  assert.match(calls[0].args.at(-1), / api$/);
+  assert.doesNotMatch(calls[0].args.at(-1), /(?:cat|sed|source).*\.env/);
+});
+
 test('the external-writer guard excludes only the snapshot dump connection', async () => {
   const remote = new RemoteEnvironment({ target: TARGET, run: async () => ({ stdout: '' }) });
   let query = '';
@@ -277,7 +294,13 @@ test('a successful stopped snapshot returns its own archive and never infers ano
   remote.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
   remote.listSnapshots = async () => (++snapshots === 1 ? [{ name: old }] : [{ name: old }, { name: created }]);
   remote.makeSnapshot = async () => ({ stdout: `${created}\n` });
-  assert.equal(await remote.createStoppedSnapshot('1.2.3'), created);
+  let held = false;
+  assert.equal(await remote.createStoppedSnapshot('1.2.3', {
+    afterStop: async () => {
+      held = true;
+    },
+  }), created);
+  assert.equal(held, true);
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 
   const missing = new RemoteEnvironment({ target: TARGET });
@@ -287,6 +310,26 @@ test('a successful stopped snapshot returns its own archive and never infers ano
   missing.listSnapshots = async () => [{ name: old }];
   missing.makeSnapshot = async () => ({ stdout: '' });
   await assert.rejects(() => missing.createStoppedSnapshot('1.2.3'), /did not publish/);
+});
+
+test('a held-state check failure restarts the service before snapshotting', async () => {
+  const actions = [];
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async (action, version) => {
+    actions.push(`${action}:${version}`);
+  };
+  remote.makeSnapshot = async () => {
+    throw new Error('snapshot must not run');
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3', {
+      afterStop: async () => {
+        throw new Error('unknown writer state');
+      },
+    }),
+    /unknown writer state/,
+  );
+  assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 });
 
 test('recovery records snapshot and restore failures in their own scenarios', async () => {
@@ -325,11 +368,22 @@ test('recovery records snapshot and restore failures in their own scenarios', as
       active: true,
       command: cronCommand,
     }],
+    runningCronJobs: 0,
+    cronBackends: 0,
   };
   const checkResult = {
     remote: {
       target: TARGET,
-      createStoppedSnapshot: async () => 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump',
+      createStoppedSnapshot: async (_version, { afterStop }) => {
+        await afterStop();
+        return 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
+      },
+      scheduledWorkState: async () => ({
+        activeJobs: [],
+        runningRuns: 0,
+        cronBackends: 0,
+        maxRunID: 7,
+      }),
       schemaAudits: async () => facts,
     },
     release: { tag: 'v1.2.3', upgradeOrigin: '1.2.2' },
@@ -341,6 +395,7 @@ test('recovery records snapshot and restore failures in their own scenarios', as
   await assert.rejects(() => verifyRecovery({
     checkResult,
     evidence: { record: entry => after.push(entry) },
+    probeWriter: async () => ({ blocked: true }),
     restore: async (remote, snapshot) => {
       restoredSnapshot = snapshot;
       throw new Error('restore failed');
@@ -350,6 +405,8 @@ test('recovery records snapshot and restore failures in their own scenarios', as
     restoredSnapshot,
     `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T040000.000000002Z-2.dump`,
   );
-  assert(after.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'passed'));
+  const backup = after.find(entry => entry.scenario === 'stopped-writer container snapshot');
+  assert.equal(backup?.status, 'passed');
+  assert.equal(backup?.details?.heldScheduledWork?.unknownWriterBlocked, true);
   assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));
 });

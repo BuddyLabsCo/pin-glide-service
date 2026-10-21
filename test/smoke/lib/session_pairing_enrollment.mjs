@@ -86,6 +86,7 @@ export async function enrollReceiver(session, context) {
     }
 
     const senderInit = opaqueRelayPayload('hpke_init', 11);
+    session.addSecret(senderInit);
     senderSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
@@ -95,6 +96,7 @@ export async function enrollReceiver(session, context) {
     await expectRelay(receiverSocket, created, 'sender', senderInit);
 
     const receiverConfirmation = opaqueRelayPayload('key_confirmation', 21);
+    session.addSecret(receiverConfirmation);
     receiverSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
@@ -104,11 +106,13 @@ export async function enrollReceiver(session, context) {
     await expectRelay(senderSocket, created, 'receiver', receiverConfirmation);
 
     await receiverSocket.close();
+    const absentConfirmation = opaqueRelayPayload('key_confirmation', 31);
+    session.addSecret(absentConfirmation);
     senderSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
       sessionId: created.sessionID,
-      payload: opaqueRelayPayload('key_confirmation', 31),
+      payload: absentConfirmation,
     });
     const absentPeer = await senderSocket.next();
     if (
@@ -129,6 +133,7 @@ export async function enrollReceiver(session, context) {
     await expectNoFrame(receiverSocket, 'Pairing reconnect replayed handshake bytes');
 
     const liveAfterReconnect = opaqueRelayPayload('key_confirmation', 41);
+    session.addSecret(liveAfterReconnect);
     receiverSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',

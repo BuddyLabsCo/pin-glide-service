@@ -7,7 +7,9 @@ import {
   renderCleanupSQL,
   sqlTextArray,
 } from './fixtures.mjs';
+import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { SmokeProblem } from './http.mjs';
+import { renderRetentionCleanupSQL } from './retention_checks.mjs';
 import { openWebSocket } from './websocket.mjs';
 
 function credential(sender, scope) {
@@ -23,10 +25,13 @@ export class SmokeSession {
     this.http = http;
     this.evidence = evidence;
     this.plan = plan;
+    this.startedAt = new Date().toISOString();
     this.receivers = new Set();
     this.requestIds = [];
     this.subjects = new Set();
-    this.secrets = new Set();
+    this.secrets = new Set(evidence.secretValues?.() || []);
+    this.errorBodies = [];
+    this.retentionRunIDs = new Set();
   }
 
   static async create({ target, remote, http, evidence, plan }) {
@@ -47,6 +52,7 @@ export class SmokeSession {
           senders: rows.senders,
           activeCredentials: rows.active,
           ownership,
+          fixtureIdentity: 'synthetic-sql-not-provider-verified',
           requestIds: [...session.requestIds],
         },
       });
@@ -130,6 +136,7 @@ export class SmokeSession {
       return result;
     } catch (error) {
       this.trackRequestId(error);
+      if (error instanceof SmokeProblem && error.body) this.errorBodies.push(error.body);
       throw error;
     }
   }
@@ -454,10 +461,21 @@ SELECT json_build_object(
   }
 
   async cleanup() {
-    await this.remote.sql(renderCleanupSQL(this.plan, [...this.receivers], this.requestIds, [...this.subjects]));
+    await withFailureJoiningCleanup(
+      () => this.remote.sql(renderRetentionCleanupSQL(this.plan, [...this.retentionRunIDs])),
+      () => this.remote.sql(renderCleanupSQL(
+        this.plan,
+        [...this.receivers],
+        this.requestIds,
+        [...this.subjects],
+      )),
+      'Retention fixtures and the ordinary smoke fixture cleanup both failed',
+    );
     this.receivers.clear();
     this.subjects.clear();
     this.requestIds.length = 0;
+    this.errorBodies.length = 0;
+    this.retentionRunIDs.clear();
   }
 
   async close() {

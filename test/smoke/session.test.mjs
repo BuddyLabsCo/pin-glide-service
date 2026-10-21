@@ -218,6 +218,10 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 2,
     scannedRequestIds: 2,
     missingRequestIds: 0,
+    logsScanned: false,
+    artifactsScanned: 0,
+    errorBodiesScanned: 0,
+    databaseRowsScanned: 0,
   });
   assert.equal(reads, 2);
 
@@ -227,6 +231,10 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 1,
     scannedRequestIds: 1,
     missingRequestIds: 1,
+    logsScanned: false,
+    artifactsScanned: 0,
+    errorBodiesScanned: 0,
+    databaseRowsScanned: 0,
   });
 
   session.requestIds = ['request-1'];

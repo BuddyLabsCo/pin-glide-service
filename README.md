@@ -250,13 +250,28 @@ uploads Delivery batches through real Receiver sockets. Delivery evidence
 covers indexed envelope/item results, duplicate entries and concurrent
 retransmission, retained metadata, Receipt correlation and write/ACK outcomes,
 plus restart, PostgreSQL and storage uncertainty without payload recovery or
-resend. It writes redacted evidence, then runs the referenced deterministic unit
-and integration tests for race orderings and excluded recovery or
-global-revocation policy closes that the live smoke path cannot observe, and
-records them only when they pass, so the workstation running the integration
-mode also needs Go and Docker. The Bailian flow verifies strict text-only OTP
-and no-OTP inference plus controlled authority, configuration, parent-key and
-connectivity failures. It waits for the provider-reported temporary-key expiry
+resend.
+
+The runner executes the shipped retention function through pg_cron with
+run-owned old/fresh rows at every seven- and thirty-day target, checks strict
+cutoff boundaries and nullable cron history, proves live credential families
+and ordering guards survive, preserves durable authority and release ledgers,
+and verifies delayed deduplication, a lookup that does not extend lifetime,
+purge/404, the accepted repeat-send boundary and no replay after restart. The
+same run scans run-owned diagnostics, service logs, HTTP errors and public/SQL
+artifacts for seeded credentials, OTP/SMS text, ciphertext and deployment
+secrets. The stopped recovery baseline also proves a controlled external writer
+is rejected and no scheduled run starts while maintenance is held.
+
+The runner writes redacted evidence, then runs the referenced deterministic
+unit and integration tests for job lifecycle and retry semantics, race
+orderings and excluded recovery or global-revocation policy closes that the
+live smoke path cannot observe. It records those tests only when they pass, so
+the workstation running the integration mode also needs Go and Docker.
+
+The Bailian flow verifies strict text-only OTP and no-OTP inference plus
+controlled authority, configuration, parent-key and connectivity failures. It
+waits for the provider-reported temporary-key expiry
 (about eleven minutes) and briefly recreates the API container for the
 invalid-parent-key fault.
 After both releases are published, this command proves fresh installation and

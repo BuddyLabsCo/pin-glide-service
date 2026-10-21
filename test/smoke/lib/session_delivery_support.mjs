@@ -39,6 +39,12 @@ export function uploadBody(message, items) {
 }
 
 export async function upload(session, label, message, items) {
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    session.addSecret([item.nonce, item.ciphertext].filter(value => (
+      typeof value === 'string' && value.length <= 4_096
+    )));
+  }
   return session.request({
     method: 'POST',
     path: '/v1/messages',
