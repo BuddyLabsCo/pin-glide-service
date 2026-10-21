@@ -87,6 +87,7 @@ test('controlled provider faults restore the original Compose environment and ne
       return { stdout: '', stderr: '' };
     },
   });
+  remote.preserveApiLogs = async () => {};
 
   await assert.rejects(
     () => remote.withInvalidBailianKey(async () => {
@@ -148,6 +149,7 @@ test('invalid-key verification failure restores the original API environment', a
       return { stdout: '', stderr: '' };
     },
   });
+  remote.preserveApiLogs = async () => {};
 
   await assert.rejects(
     () => remote.withInvalidBailianKey(async () => {
@@ -260,6 +262,20 @@ test('service logs are bounded to the run window without reading the deployment 
   assert.match(calls[0].args.at(-1), /--since '2026-10-21T04:00:00\.000Z'/);
   assert.match(calls[0].args.at(-1), / api$/);
   assert.doesNotMatch(calls[0].args.at(-1), /(?:cat|sed|source).*\.env/);
+});
+
+test('preserved service logs remain scannable after the API container is replaced', async () => {
+  const startedAt = '2026-10-21T04:00:00.000Z';
+  let current = 'first container\n';
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async () => ({ stdout: current, stderr: '' }),
+  });
+  remote.smokeStartedAt = startedAt;
+  await remote.preserveApiLogs();
+  current = 'second container\n';
+  const logs = await remote.apiLogsSince(startedAt);
+  assert.equal(logs.stdout, 'first container\n\nsecond container\n');
 });
 
 test('the external-writer guard excludes only the snapshot dump connection', async () => {

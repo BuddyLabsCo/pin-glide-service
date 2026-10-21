@@ -151,9 +151,16 @@ exit "$restore_status"
 }
 
 export async function withInvalidBailianKey(remote, callback) {
+  await remote.preserveApiLogs();
   const paths = await startInvalidBailianKeyFault(remote);
   return withFailureJoiningCleanup(
-    callback,
+    async () => {
+      try {
+        return await callback();
+      } finally {
+        await remote.preserveApiLogs();
+      }
+    },
     () => stopInvalidBailianKeyFault(remote, paths),
     'Invalid parent-key fault and environment restoration both failed',
   );
@@ -168,6 +175,7 @@ export async function withBailianConnectivityFault(
   if (!/^[a-z0-9][a-z0-9-]*$/.test(workspaceID)) {
     throw new Error('Refusing a provider fault for an invalid workspace ID');
   }
+  await remote.preserveApiLogs();
   const marker = 'pin-glide-smoke-fault';
   const host = `${workspaceID}.cn-beijing.maas.aliyuncs.com`;
   const container = `id=$(${remote.compose} ps -q api); test -n "$id"`;
@@ -185,7 +193,13 @@ export async function withBailianConnectivityFault(
   }
 
   return withFailureJoiningCleanup(
-    callback,
+    async () => {
+      try {
+        return await callback();
+      } finally {
+        await remote.preserveApiLogs();
+      }
+    },
     () => {
       const restore = [
         remove,

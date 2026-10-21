@@ -1,7 +1,12 @@
 import { randomBytes } from 'node:crypto';
 
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import { cronCommand, cronJobs, retentionJobName } from './database.mjs';
+import {
+  cronCommand,
+  cronJobs,
+  cronTimezones,
+  retentionJobName,
+} from './database.mjs';
 import { escapeSQLString } from './fixtures.mjs';
 import { retentionStateQuery } from './retention_checks.mjs';
 import { retentionMarker } from './retention_fixtures.mjs';
@@ -14,6 +19,17 @@ function assertProbeName(probeName) {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(probeName || '')) {
     throw new Error('Retention probe job name is invalid');
   }
+}
+
+export function terminateApplicationBackendsSQL(application) {
+  if (typeof application !== 'string' || application === '' || application.length > 63) {
+    throw new Error('Unknown-writer application name must be 1 to 63 characters');
+  }
+  return `
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE application_name = ${escapeSQLString(application)};
+`;
 }
 
 export function assertRetentionCounts(state, expected) {
@@ -83,7 +99,8 @@ SELECT json_build_object(
   'username', username,
   'schedule', schedule,
   'command', command,
-  'active', active
+  'active', active,
+  'cronTimezone', current_setting('cron.timezone')
 ) AS job
 FROM cron.job
 WHERE jobname = ${escapeSQLString(stableJobName)};
@@ -95,16 +112,15 @@ WHERE jobname = ${escapeSQLString(stableJobName)};
     || job.schedule !== expected.schedule
     || job.command !== expected.command
     || job.active !== true
+    || !cronTimezones.has(job.cronTimezone)
   ) {
-    throw new Error('The deployed retention job does not match the adopted owner, schedule and command');
+    throw new Error('The deployed retention job does not match the adopted UTC schedule or owner');
   }
   return job;
 }
 
 export async function unknownWriterBlocksSnapshot(remote, application, sleepImpl = sleep) {
-  if (typeof application !== 'string' || application === '' || application.length > 63) {
-    throw new Error('Unknown-writer application name must be 1 to 63 characters');
-  }
+  const terminate = terminateApplicationBackendsSQL(application);
   const holder = remote.ssh(
     `${remote.compose} exec -T -e ${quote(`PGAPPNAME=${application}`)} postgres ` +
       `psql -X -v ON_ERROR_STOP=1 -U pin_glide -d pin_glide -c 'SELECT pg_sleep(20);'`,
@@ -135,11 +151,7 @@ WHERE application_name = ${escapeSQLString(application)};
       return { blocked: true, application };
     },
     async () => {
-      await remote.sql(`
-SELECT pg_terminate_backend(pid)
-FROM pg_stat_activity
-WHERE application_name = ${escapeSQLString(application)};
-`);
+      await remote.sql(terminate);
       await holder.catch(() => {});
       await remote.assertNoExternalWriters();
     },

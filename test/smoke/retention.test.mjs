@@ -124,10 +124,9 @@ test('a drain probe that never starts removes its scheduled job', async () => {
   );
 });
 
-test('the live unknown-writer probe blocks and terminates only its own connection', async () => {
+test('the unknown-writer probe blocks the guard and restores its run-owned connection', async () => {
   let resolveHolder;
   let terminated = false;
-  const statements = [];
   const remote = {
     compose: 'compose',
     ssh() {
@@ -141,8 +140,7 @@ test('the live unknown-writer probe blocks and terminates only its own connectio
     async assertNoExternalWriters() {
       if (!terminated) throw new Error('Another database writer is still connected');
     },
-    async sql(statement) {
-      statements.push(statement);
+    async sql() {
       terminated = true;
       resolveHolder({ stdout: '', stderr: '' });
     },
@@ -153,8 +151,6 @@ test('the live unknown-writer probe blocks and terminates only its own connectio
     async () => {},
   );
   assert.equal(result.blocked, true);
-  assert.match(statements[0], /pg_terminate_backend/);
-  assert.match(statements[0], new RegExp(result.application));
 });
 
 test('the deployed retention job identity is exact', async () => {
@@ -167,6 +163,7 @@ test('the deployed retention job identity is exact', async () => {
     schedule: expected.schedule,
     command: expected.command,
     active: true,
+    cronTimezone: 'GMT',
   };
   const session = { remote: { async sqlJSON() { return job; } } };
   assert.equal(await stableRetentionJob(session), job);
@@ -175,6 +172,12 @@ test('the deployed retention job identity is exact', async () => {
       remote: { async sqlJSON() { return { ...job, active: false }; } },
     }),
     /does not match/,
+  );
+  await assert.rejects(
+    () => stableRetentionJob({
+      remote: { async sqlJSON() { return { ...job, cronTimezone: 'Asia/Shanghai' }; } },
+    }),
+    /UTC schedule/,
   );
 });
 

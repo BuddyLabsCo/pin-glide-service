@@ -40,6 +40,7 @@ export {
   runScheduledCleanupProbe,
   stableRetentionJob,
   startRunningRetentionProbe,
+  terminateApplicationBackendsSQL,
   unknownWriterBlocksSnapshot,
 } from './retention_runtime.mjs';
 

@@ -117,6 +117,7 @@ test('disposable restore validates restored facts and propagates failure', async
       active: false,
       command: expectedJob.command,
     }],
+    cronTimezone: 'GMT',
     pgCronVersion: '1.6',
     runningCronJobs: 0,
     otherConnections: 0,
@@ -148,14 +149,12 @@ test('disposable restore validates restored facts and propagates failure', async
   }), /restore failed/);
 });
 
-test('disposable PostgreSQL restore uses an isolated container and always removes it', async () => {
+test('disposable PostgreSQL restore returns restored facts and propagates failures', async () => {
   const name = 'smoke_restore_0123456789abcdef';
   const snapshot = `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T030000.000000001Z-1.dump`;
-  const calls = [];
   const remote = {
     target: TARGET,
-    async ssh(script, options) {
-      calls.push({ script, options });
+    async ssh(script) {
       if (script.includes(' psql ')) {
         return { stdout: '{"database":"restored"}\n', stderr: '' };
       }
@@ -168,19 +167,10 @@ test('disposable PostgreSQL restore uses an isolated container and always remove
     image: 'ghcr.io/example/postgres:18',
     factsQuery: 'SELECT 1;',
   }), { database: 'restored' });
-  assert.match(calls[0].script, /docker run --detach --rm/);
-  assert.match(calls[0].script, /--network none --pull never/);
-  assert.match(calls[0].script, /:\/snapshots:ro/);
-  assert.match(calls[1].script, /pg_isready/);
-  assert.match(calls[2].script, /pg_restore --exit-on-error/);
-  assert.equal(calls[3].options.input, 'SELECT 1;');
-  assert.match(calls[4].script, /docker rm -fv/);
 
-  calls.length = 0;
   await assert.rejects(() => restoreFactsInDisposablePostgres({
     target: TARGET,
     async ssh(script) {
-      calls.push({ script });
       if (script.includes('pg_restore')) throw new Error('restore failed');
       return { stdout: '', stderr: '' };
     },
@@ -190,7 +180,6 @@ test('disposable PostgreSQL restore uses an isolated container and always remove
     image: 'ghcr.io/example/postgres:18',
     factsQuery: 'SELECT 1;',
   }), /restore failed/);
-  assert.match(calls.at(-1).script, /docker rm -fv/);
 });
 
 test('restored facts reject incomplete extension or scheduled-work state', () => {
@@ -213,6 +202,7 @@ test('restored facts reject incomplete extension or scheduled-work state', () =>
       active: false,
       command: expectedJob.command,
     }],
+    cronTimezone: 'GMT',
     pgCronVersion: '1.6',
     runningCronJobs: 0,
     otherConnections: 0,

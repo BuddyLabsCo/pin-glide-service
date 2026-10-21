@@ -122,6 +122,7 @@ test('recovery records snapshot and restore failures in their own scenarios', as
       active: true,
       command: cronCommand,
     }],
+    cronTimezone: 'GMT',
     runningCronJobs: 0,
     cronBackends: 0,
   };

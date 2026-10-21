@@ -1,5 +1,5 @@
 import { escapeSQLString, sqlTextArray } from './fixtures.mjs';
-import { cronJobs, retentionJobName } from './database.mjs';
+import { cronJobs, cronTimezones, retentionJobName } from './database.mjs';
 import {
   identifier,
   markerPattern,
@@ -196,6 +196,7 @@ SELECT json_build_object(
         AND database = ${escapeSQLString(expectedRetentionJob.database)}
         AND username = ${escapeSQLString(expectedRetentionJob.username)}
         AND schedule = ${escapeSQLString(expectedRetentionJob.schedule)}
+        AND current_setting('cron.timezone') = ANY(${sqlTextArray([...cronTimezones])})
         AND active
     )
   ),

@@ -26,6 +26,7 @@ export class SmokeSession {
     this.evidence = evidence;
     this.plan = plan;
     this.startedAt = new Date().toISOString();
+    this.remote.smokeStartedAt ||= this.startedAt;
     this.receivers = new Set();
     this.requestIds = [];
     this.subjects = new Set();

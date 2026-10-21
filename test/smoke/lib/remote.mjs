@@ -23,6 +23,8 @@ export class RemoteEnvironment {
   constructor({ target, run = runProcess }) {
     this.target = target;
     this.run = run;
+    this.preservedApiLogs = [];
+    this.smokeStartedAt = null;
     this.composeArgs = [
       'docker',
       'compose',
@@ -309,13 +311,40 @@ WHERE datname = current_database();
     ].join(' && '), { timeoutMs: 30_000 });
   }
 
-  apiLogsSince(since) {
+  rawApiLogsSince(since) {
     const value = new Date(since);
     if (!Number.isFinite(value.getTime())) throw new Error('Smoke service-log start time is invalid');
     return this.ssh(
       `${this.compose} logs --no-color --since ${quote(value.toISOString())} api`,
       { timeoutMs: 30_000 },
     );
+  }
+
+  async preserveApiLogs(since = this.smokeStartedAt) {
+    if (!since) throw new Error('Smoke service-log start time is unavailable');
+    const result = await this.rawApiLogsSince(since);
+    this.preservedApiLogs.push({
+      since: new Date(since).toISOString(),
+      stdout: result?.stdout || '',
+      stderr: result?.stderr || '',
+    });
+  }
+
+  async apiLogsSince(since) {
+    const value = new Date(since);
+    if (!Number.isFinite(value.getTime())) throw new Error('Smoke service-log start time is invalid');
+    const current = await this.rawApiLogsSince(since);
+    const preserved = this.preservedApiLogs.filter(
+      entry => Date.parse(entry.since) >= value.getTime(),
+    );
+    return {
+      stdout: [...preserved.map(entry => entry.stdout), current?.stdout || '']
+        .filter(Boolean)
+        .join('\n'),
+      stderr: [...preserved.map(entry => entry.stderr), current?.stderr || '']
+        .filter(Boolean)
+        .join('\n'),
+    };
   }
 
   scheduledWorkState() {
@@ -388,6 +417,7 @@ SELECT json_build_object(
     ) ORDER BY jobname), '[]'::json)
     FROM cron.job
   ),
+  'cronTimezone', current_setting('cron.timezone'),
   'runningCronJobs', (
     SELECT count(*)
     FROM cron.job_run_details

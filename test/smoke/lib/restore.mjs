@@ -158,6 +158,7 @@ SELECT json_build_object(
     ) ORDER BY jobname), '[]'::json)
     FROM cron.job
   ),
+  'cronTimezone', current_setting('cron.timezone'),
   'pgCronVersion', (
     SELECT extversion
     FROM pg_extension
