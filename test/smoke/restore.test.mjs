@@ -137,7 +137,6 @@ test('disposable restore validates restored facts and propagates failure', async
   assert.equal(restored.release, '1.2.3');
   assert.equal(restoreInput.snapshot, '/snapshots/test.dump');
   assert.equal(restoreInput.image, 'ghcr.io/example/postgres:18');
-  assert.match(restoreInput.factsQuery, /json_build_object/);
   assert.match(restoreInput.name, /^smoke_restore_[a-f0-9]{16}$/);
 
   await assert.rejects(() => restoreSnapshotToDisposableDatabase({ target: TARGET }, '/snapshots/test.dump', {

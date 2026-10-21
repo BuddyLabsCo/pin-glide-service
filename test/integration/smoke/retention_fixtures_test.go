@@ -78,10 +78,10 @@ VALUES ('smoke-integration-retention-pairing', $1,
         'smoke-integration-retention-receiver', '', 'active', now())`, sql.FirstSenderID)
 	execSQL(t, pool, `
 SELECT cron.schedule(
-    'pin-glide-retention-cleanup',
-    '0 19 * * *',
-    'SELECT pin_glide.pin_glide_fn_cleanup_expired_rows(now())'
-)`)
+    $1,
+    $2,
+    $3
+)`, sql.RetentionJobName, sql.RetentionSchedule, sql.RetentionCommand)
 	execSQL(t, pool, `
 INSERT INTO pin_glide.model_configurations (id, workspace_id, model, enabled)
 VALUES ('default', 'retention-workspace', 'qwen3.7-flash', true)`)
@@ -100,6 +100,7 @@ VALUES
 	execSQL(t, pool, sql.RetentionAging)
 	execSQL(t, pool, sql.RetentionBoundary)
 	state := retentionState(t, pool, sql.RetentionState)
+	assertNestedCount(t, state, "durable", "retentionJob", 1)
 	assertNestedCount(t, state, "aging", "deliveryOld", 1)
 	assertNestedCount(t, state, "aging", "deliveryFresh", 1)
 	assertNestedCount(t, state, "aging", "cronRunning", 1)

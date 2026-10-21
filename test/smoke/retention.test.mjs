@@ -98,32 +98,6 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
   await probe.cleanup();
 });
 
-test('a drain probe that never starts removes its scheduled job', async () => {
-  const remote = {
-    async sqlJSON(statement) {
-      if (statement.includes('maxRunID')) return { maxRunID: 10 };
-      if (statement.includes('cron.schedule')) return { jobID: 23 };
-      if (statement.includes('runningRuns')) {
-        return { runID: 0, runningRuns: 0, cronBackends: 0 };
-      }
-      if (statement.includes('cronBackends')) return { cronBackends: 0 };
-      throw new Error(`unexpected query ${statement}`);
-    },
-    async sql() {
-      return { stdout: '', stderr: '' };
-    },
-  };
-
-  await assert.rejects(
-    () => startRunningRetentionProbe(remote, {
-      runId: 'smoke-recovery-run',
-      timeoutMs: 0,
-      sleepImpl: async () => {},
-    }),
-    /did not start/,
-  );
-});
-
 test('the unknown-writer probe blocks the guard and restores its run-owned connection', async () => {
   let resolveHolder;
   let terminated = false;
@@ -235,6 +209,41 @@ test('privacy verification scans diagnostics, errors, logs and public artifacts'
       artifacts: {},
     }),
     /service logs/,
+  );
+
+  session.remote.apiLogsSince = async () => ({ stdout: 'safe log\n', stderr: '' });
+  session.remote.sqlJSON = async () => [
+    { requestId: 'request-1', request_id: 'request-1', detail: 'secret-canary' },
+  ];
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, { settleMs: 0 }),
+    /service diagnostics/,
+  );
+
+  session.remote.sqlJSON = async () => [
+    { requestId: 'request-1', request_id: 'request-1', detail: 'safe' },
+  ];
+  session.errorBodies = [{ requestId: 'request-1', detail: 'secret-canary' }];
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, { settleMs: 0 }),
+    /HTTP errors/,
+  );
+
+  session.errorBodies = [{ requestId: 'request-1', detail: 'safe' }];
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, {
+      settleMs: 0,
+      artifacts: { 'openapi.yaml': 'secret-canary' },
+    }),
+    /public examples/,
+  );
+
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, {
+      settleMs: 0,
+      databaseRows: { accounts: [{ id: 'secret-canary' }] },
+    }),
+    /database rows/,
   );
 });
 

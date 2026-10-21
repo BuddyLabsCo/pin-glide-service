@@ -107,6 +107,7 @@ export class SmokeSession {
   }
 
   abandonedRequest(options) {
+    this.trackPayloadSecrets(options.body);
     const { request, abort, aborted } = this.http.callAbandoned(options);
     return {
       request: request.then(result => {
@@ -128,7 +129,16 @@ export class SmokeSession {
     if (value?.requestId) this.requestIds.push(value.requestId);
   }
 
+  trackPayloadSecrets(body) {
+    if (!Array.isArray(body?.items)) return;
+    for (const item of body.items) {
+      if (!item || typeof item !== 'object') continue;
+      this.addSecret([item.nonce, item.ciphertext].filter(value => typeof value === 'string'));
+    }
+  }
+
   async send(options, dropped) {
+    this.trackPayloadSecrets(options.body);
     try {
       const result = dropped
         ? await this.http.callDropped(options)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cronCommand, retention } from './lib/database.mjs';
+import { cronJobs, retention, retentionJobName } from './lib/database.mjs';
 import { verifyRecovery } from './lib/recovery.mjs';
 import { TARGET } from './lib/target.mjs';
 
@@ -106,6 +106,7 @@ test('recovery records snapshot and restore failures in their own scenarios', as
 
   const after = [];
   const drainProbe = drainProbeFixture();
+  const expectedJob = cronJobs.get(retentionJobName);
   const model = { id: 'default', workspaceId: 'workspace', model: 'qwen3.7-flash', enabled: true };
   const facts = {
     database: 'pin_glide',
@@ -115,12 +116,12 @@ test('recovery records snapshot and restore failures in their own scenarios', as
       return { schema, table, days: value.days, column: value.column };
     }),
     cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
+      jobname: retentionJobName,
+      username: expectedJob.username,
+      database: expectedJob.database,
+      schedule: expectedJob.schedule,
       active: true,
-      command: cronCommand,
+      command: expectedJob.command,
     }],
     cronTimezone: 'GMT',
     runningCronJobs: 0,

@@ -38,6 +38,11 @@ type generatedSmokeSQL struct {
 	RetentionCleanup   string `json:"retentionCleanup"`
 	RetentionProbe     string `json:"retentionProbeCommand"`
 	ConfigurationProbe string `json:"configurationProbe"`
+	RetentionJobName   string `json:"retentionJobName"`
+	RetentionSchedule  string `json:"retentionSchedule"`
+	RetentionCommand   string `json:"retentionCommand"`
+	RetentionOwner     string `json:"retentionOwner"`
+	RetentionDatabase  string `json:"retentionDatabase"`
 	FirstSenderID      string `json:"firstSenderId"`
 	FirstAccountID     string `json:"firstAccountId"`
 	SecondAccountID    string `json:"secondAccountId"`
@@ -254,6 +259,7 @@ const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURE
 const retentionFixtures = await import(pathToFileURL(process.env.RETENTION_FIXTURES).href);
 const retentionChecks = await import(pathToFileURL(process.env.RETENTION_CHECKS).href);
 const retentionSession = await import(pathToFileURL(process.env.RETENTION_SESSION).href);
+const database = await import(pathToFileURL(process.env.DATABASE).href);
 const remote = await import(pathToFileURL(process.env.REMOTE).href);
 const plan = fixtures.createFixturePlan({
   runId: 'integration-fixture',
@@ -271,6 +277,7 @@ const retention = {
 const scope = plan.senders.find(sender => sender.id.endsWith('-scope'));
 const permanent = plan.senders.find(sender => sender.id.endsWith('-permanent'));
 const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
+const retentionJob = database.cronJobs.get(database.retentionJobName);
 process.stdout.write(JSON.stringify({
   bootstrap: fixtures.renderBootstrapSQL(plan),
   cleanup: fixtures.renderCleanupSQL(
@@ -302,6 +309,11 @@ process.stdout.write(JSON.stringify({
   retentionProbeCommand: retentionSession.retentionProbeCommand(
     'smoke-integration-retention-probe'),
   configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
+  retentionJobName: database.retentionJobName,
+  retentionSchedule: retentionJob.schedule,
+  retentionCommand: retentionJob.command,
+  retentionOwner: retentionJob.username,
+  retentionDatabase: retentionJob.database,
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
   secondAccountId: plan.accounts[1].id,
@@ -322,6 +334,7 @@ process.stdout.write(JSON.stringify({
 		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/lib/retention_fixtures.mjs"),
 		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/lib/retention_checks.mjs"),
 		"RETENTION_SESSION="+filepath.Join(root, "test/smoke/lib/session_retention.mjs"),
+		"DATABASE="+filepath.Join(root, "test/smoke/lib/database.mjs"),
 		"REMOTE="+filepath.Join(root, "test/smoke/lib/remote.mjs"),
 	)
 	output, err := command.CombinedOutput()

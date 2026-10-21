@@ -201,6 +201,53 @@ test('runner refresh checkpoints must match the persisted operation and attempt'
   await assert.rejects(() => verifyCheckpoints(session), /checkpoint is stale/);
 });
 
+test('direct and abandoned Delivery requests register payload secrets before transmission', async () => {
+  const plan = createFixturePlan({ runId: 'direct-delivery-secrets' });
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http: {
+      async call() {
+        return { status: 202, requestId: 'request-direct', body: { results: [] } };
+      },
+      callAbandoned() {
+        return {
+          request: Promise.resolve({ status: 202, requestId: 'request-abandoned' }),
+          abort() {},
+          aborted() {
+            return false;
+          },
+        };
+      },
+    },
+    evidence: { addSecret() {} },
+    plan,
+  });
+  await session.request({
+    method: 'POST',
+    path: '/v1/messages',
+    body: {
+      messageId: 'direct-message',
+      items: [{ nonce: 'direct-nonce', ciphertext: 'direct-ciphertext' }],
+    },
+  });
+  const abandoned = session.abandonedRequest({
+    method: 'POST',
+    path: '/v1/messages',
+    body: {
+      messageId: 'abandoned-message',
+      items: [{ nonce: 'abandoned-nonce', ciphertext: 'abandoned-ciphertext' }],
+    },
+  });
+  await abandoned.request;
+  assert.deepEqual([...session.secretValues()].sort(), [
+    'abandoned-ciphertext',
+    'abandoned-nonce',
+    'direct-ciphertext',
+    'direct-nonce',
+  ]);
+});
+
 test('service diagnostics settle and scan every available run-owned record', async () => {
   let reads = 0;
   const session = {
