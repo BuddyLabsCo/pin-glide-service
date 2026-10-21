@@ -31,7 +31,6 @@ contract or is identified as unintended scope.
 - Preserve existing behavior unless the specification explicitly changes it.
 - Review the final diff for design, correctness, simplicity, tests, naming,
   comments, style, and documentation.
-- After non-mechanical review fixes, review the final HEAD again.
 
 Review is complete when every changed execution path and applicable guideline
 category has been considered.
