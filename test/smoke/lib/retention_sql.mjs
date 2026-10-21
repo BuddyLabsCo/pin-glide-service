@@ -20,7 +20,7 @@ export function timestamp(value) {
   return `${escapeSQLString(parsed.toISOString())}::timestamptz`;
 }
 
-export function identifier(value, label) {
+export function sqlStringLiteral(value, label) {
   if (typeof value !== 'string' || value === '') throw new Error(`Retention ${label} is missing`);
   return escapeSQLString(value);
 }

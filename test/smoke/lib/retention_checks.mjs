@@ -3,7 +3,7 @@ import { retentionJobName } from './database.mjs';
 import {
   deleteOwnedBody,
   guardedTransaction,
-  identifier,
+  sqlStringLiteral,
   markerPattern,
   positiveInteger,
   retentionMarker,
@@ -62,8 +62,8 @@ export function renderDeliveryAgeSQL(plan, messageID) {
 UPDATE pin_glide.delivery_deliveries
 SET created_at = now() - interval '8 days',
     completed_at = now() - interval '8 days'
-WHERE sender_id = ${identifier(plan.senders.find(sender => sender.label === 'pair2').id, 'Sender')}
-  AND message_id = ${identifier(messageID, 'Message')}
+WHERE sender_id = ${sqlStringLiteral(plan.senders.find(sender => sender.label === 'pair2').id, 'Sender')}
+  AND message_id = ${sqlStringLiteral(messageID, 'Message')}
   AND message_id LIKE ${escapeSQLString(`${retentionMarker(plan)}%`)};
 `;
 }
@@ -84,22 +84,22 @@ SELECT json_build_object(
   ),
   'sender', (
     SELECT count(*) FROM pin_glide.identity_sender_registrations
-    WHERE id = ${identifier(senderID, 'Sender')}
+    WHERE id = ${sqlStringLiteral(senderID, 'Sender')}
       AND state = 'active'
   ),
   'receiver', (
     SELECT count(*) FROM pin_glide.identity_receiver_registrations
-    WHERE id = ${identifier(receiverID, 'Receiver')}
+    WHERE id = ${sqlStringLiteral(receiverID, 'Receiver')}
       AND state = 'active'
   ),
   'receiverCredential', (
     SELECT count(*) FROM pin_glide.identity_receiver_credentials
-    WHERE receiver_id = ${identifier(receiverID, 'Receiver')}
+    WHERE receiver_id = ${sqlStringLiteral(receiverID, 'Receiver')}
       AND revoked_at IS NULL
   ),
   'pairing', (
     SELECT count(*) FROM pin_glide.pairing_pairings
-    WHERE id = ${identifier(pairingID, 'Pairing')}
+    WHERE id = ${sqlStringLiteral(pairingID, 'Pairing')}
       AND state = 'active'
   ),
   'deliveryHistory', (
@@ -120,7 +120,7 @@ SELECT json_build_object(
   'retentionPolicies', (SELECT count(*) FROM pin_glide.retention_policies),
   'retentionJob', (
     SELECT count(*) FROM cron.job
-    WHERE jobname = ${identifier(retentionJob, 'retention job')}
+    WHERE jobname = ${sqlStringLiteral(retentionJob, 'retention job')}
   )
 ) AS configuration_probe;
 `, 'retention configuration probe', 'ROLLBACK');

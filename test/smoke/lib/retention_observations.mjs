@@ -1,7 +1,7 @@
 import { escapeSQLString, sqlTextArray } from './fixtures.mjs';
 import { cronJobs, cronTimezones, retentionJobName } from './database.mjs';
 import {
-  identifier,
+  sqlStringLiteral,
   markerPattern,
   retentionDigest,
   retentionMarker,
@@ -20,8 +20,8 @@ export function retentionStateQuery(plan, {
 }) {
   const marker = retentionMarker(plan);
   const pattern = markerPattern(plan);
-  const exact = suffix => identifier(`${marker}-${suffix}`, suffix);
-  const digest = suffix => identifier(retentionDigest(plan, suffix), `${suffix} digest`);
+  const exact = suffix => sqlStringLiteral(`${marker}-${suffix}`, suffix);
+  const digest = suffix => sqlStringLiteral(retentionDigest(plan, suffix), `${suffix} digest`);
   return `
 SELECT json_build_object(
   'aging', json_build_object(
@@ -148,13 +148,13 @@ SELECT json_build_object(
   'live', json_build_object(
     'credential', (
       SELECT count(*) FROM pin_glide.identity_credentials
-      WHERE token_digest = ${identifier(liveTokenDigest, 'live token digest')}
+      WHERE token_digest = ${sqlStringLiteral(liveTokenDigest, 'live token digest')}
         AND revoked_at IS NULL
     ),
     'guard', (
       SELECT count(*) FROM pin_glide.identity_refresh_operations
       WHERE operation_id = ${exact('operation-live')}
-        AND parent_digest = ${identifier(liveGuardDigest, 'live guard digest')}
+        AND parent_digest = ${sqlStringLiteral(liveGuardDigest, 'live guard digest')}
     )
   ),
   'durable', json_build_object(
@@ -169,17 +169,17 @@ SELECT json_build_object(
     ),
     'receiver', (
       SELECT count(*) FROM pin_glide.identity_receiver_registrations
-      WHERE id = ${identifier(receiverID, 'Receiver')}
+      WHERE id = ${sqlStringLiteral(receiverID, 'Receiver')}
         AND state = 'active'
     ),
     'receiverCredential', (
       SELECT count(*) FROM pin_glide.identity_receiver_credentials
-      WHERE receiver_id = ${identifier(receiverID, 'Receiver')}
+      WHERE receiver_id = ${sqlStringLiteral(receiverID, 'Receiver')}
         AND revoked_at IS NULL
     ),
     'pairing', (
       SELECT count(*) FROM pin_glide.pairing_pairings
-      WHERE id = ${identifier(pairingID, 'Pairing')}
+      WHERE id = ${sqlStringLiteral(pairingID, 'Pairing')}
         AND state = 'active'
     ),
     'model', (
@@ -192,7 +192,7 @@ SELECT json_build_object(
     'releaseMigrationScripts', (SELECT count(*) FROM release.release_migration_scripts),
     'retentionJob', (
       SELECT count(*) FROM cron.job
-      WHERE jobname = ${identifier(retentionJob, 'retention job')}
+      WHERE jobname = ${sqlStringLiteral(retentionJob, 'retention job')}
         AND database = ${escapeSQLString(expectedRetentionJob.database)}
         AND username = ${escapeSQLString(expectedRetentionJob.username)}
         AND schedule = ${escapeSQLString(expectedRetentionJob.schedule)}

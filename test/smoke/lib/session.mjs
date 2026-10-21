@@ -1,17 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
-  cleanupVerificationCategories,
   credentialLifetimeInterval,
   fixtureSender,
   renderBootstrapSQL,
-  renderCleanupSQL,
-  renderCleanupVerificationSQL,
   sqlTextArray,
 } from './fixtures.mjs';
-import { withFailureJoiningCleanup } from './cleanup.mjs';
+import { cleanupSession } from './fixture_cleanup.mjs';
 import { SmokeProblem } from './http.mjs';
-import { renderRetentionCleanupSQL } from './retention_checks.mjs';
 import { openWebSocket } from './websocket.mjs';
 
 function credential(sender, scope) {
@@ -477,41 +473,7 @@ SELECT json_build_object(
   }
 
   async cleanup() {
-    await withFailureJoiningCleanup(
-      () => this.remote.sql(renderRetentionCleanupSQL(this.plan, [...this.retentionRunIDs])),
-      () => this.remote.sql(renderCleanupSQL(
-        this.plan,
-        [...this.receivers],
-        this.requestIds,
-        [...this.subjects],
-      )),
-      'Retention fixtures and the ordinary smoke fixture cleanup both failed',
-    );
-    const remaining = await this.remote.sqlJSON(renderCleanupVerificationSQL(
-      this.plan,
-      [...this.receivers],
-      this.requestIds,
-      [...this.subjects],
-    ));
-    const actualCategories = Object.keys(remaining).sort();
-    const expectedCategories = [...cleanupVerificationCategories].sort();
-    if (
-      actualCategories.length !== expectedCategories.length
-      || actualCategories.some((category, index) => category !== expectedCategories[index])
-    ) {
-      throw new Error(
-        `Run-owned fixture cleanup returned an incomplete verification: ${actualCategories.join(', ')}`,
-      );
-    }
-    const leftovers = Object.entries(remaining).filter(([, count]) => Number(count) !== 0);
-    if (leftovers.length > 0) {
-      throw new Error(`Run-owned fixture cleanup left rows: ${JSON.stringify(remaining)}`);
-    }
-    this.receivers.clear();
-    this.subjects.clear();
-    this.requestIds.length = 0;
-    this.errorBodies.length = 0;
-    this.retentionRunIDs.clear();
+    await cleanupSession(this);
   }
 
   async close() {

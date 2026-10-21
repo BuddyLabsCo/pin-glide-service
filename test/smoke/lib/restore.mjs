@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { validateConfiguration, validateReleaseHistory } from './database.mjs';
+import { databaseConfigurationFactsQuery } from './database_facts.mjs';
 import { retentionDrainProbeSchedule } from './retention_runtime.mjs';
 import { quote, snapshotName } from './remote.mjs';
 
@@ -115,69 +116,7 @@ export async function recoverySnapshot(remote, { allowMissing = false } = {}) {
 }
 
 export function restoreFactsQuery() {
-  return `
-SELECT json_build_object(
-  'database', current_database(),
-  'release', (
-    SELECT release_version
-    FROM release.release_deploy_history
-    ORDER BY id DESC
-    LIMIT 1
-  ),
-  'history', (
-    SELECT coalesce(json_agg(release_version ORDER BY id), '[]'::json)
-    FROM release.release_deploy_history
-  ),
-  'model', (
-    SELECT json_build_object(
-      'id', id,
-      'workspaceId', workspace_id,
-      'model', model,
-      'enabled', enabled
-    )
-    FROM pin_glide.model_configurations
-    WHERE id = 'default'
-  ),
-  'retention', (
-    SELECT coalesce(json_agg(json_build_object(
-      'schema', schema_name,
-      'table', table_name,
-      'days', retention_days,
-      'column', date_column
-    ) ORDER BY schema_name, table_name), '[]'::json)
-    FROM pin_glide.retention_policies
-  ),
-  'cron', (
-    SELECT coalesce(json_agg(json_build_object(
-      'jobname', jobname,
-      'username', username,
-      'database', database,
-      'schedule', schedule,
-      'active', active,
-      'command', command
-    ) ORDER BY jobname), '[]'::json)
-    FROM cron.job
-  ),
-  'cronTimezone', current_setting('cron.timezone'),
-  'pgCronVersion', (
-    SELECT extversion
-    FROM pg_extension
-    WHERE extname = 'pg_cron'
-  ),
-  'runningCronJobs', (
-    SELECT count(*)
-    FROM cron.job_run_details
-    WHERE status = 'running'
-  ),
-  'otherConnections', (
-    SELECT count(*)
-    FROM pg_stat_activity
-    WHERE datname = current_database()
-      AND pid <> pg_backend_pid()
-      AND backend_type = 'client backend'
-  )
-);
-`;
+  return databaseConfigurationFactsQuery({ includeRestoreChecks: true });
 }
 
 export function validateRestoredFacts(facts, {

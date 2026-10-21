@@ -215,6 +215,7 @@ func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 	script := `
 import { pathToFileURL } from 'node:url';
 const fixtures = await import(pathToFileURL(process.env.FIXTURES).href);
+const fixtureCleanup = await import(pathToFileURL(process.env.FIXTURE_CLEANUP).href);
 const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURES).href);
 const retentionFixtures = await import(pathToFileURL(process.env.RETENTION_FIXTURES).href);
 const retentionChecks = await import(pathToFileURL(process.env.RETENTION_CHECKS).href);
@@ -276,13 +277,13 @@ process.stdout.write(JSON.stringify({
     'smoke-integration-retention-probe'),
   probeHistoryCleanup: retentionSession.retentionProbeHistoryCleanupSQL(
     'smoke-integration-retention-probe'),
-  cleanupVerification: fixtures.renderCleanupVerificationSQL(
+  cleanupVerification: fixtureCleanup.renderCleanupVerificationSQL(
     plan,
     ['smoke-integration-retention-receiver'],
     ['smoke-integration-fixture-request'],
     ['smoke-integration-retention-pairing'],
   ),
-  cleanupCategories: fixtures.cleanupVerificationCategories,
+  cleanupCategories: fixtureCleanup.cleanupVerificationCategories,
   configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
   retentionJobName: database.retentionJobName,
   retentionSchedule: retentionJob.schedule,
@@ -305,6 +306,7 @@ process.stdout.write(JSON.stringify({
 	command.Dir = root
 	command.Env = append(os.Environ(),
 		"FIXTURES="+filepath.Join(root, "test/smoke/lib/fixtures.mjs"),
+		"FIXTURE_CLEANUP="+filepath.Join(root, "test/smoke/lib/fixture_cleanup.mjs"),
 		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/lib/receiver_fixtures.mjs"),
 		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/lib/retention_fixtures.mjs"),
 		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/lib/retention_checks.mjs"),
