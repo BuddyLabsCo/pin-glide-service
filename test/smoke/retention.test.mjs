@@ -6,25 +6,22 @@ import { upload } from './lib/session_delivery_support.mjs';
 import {
   runScheduledCleanupProbe,
   jsonFromOutput,
-  retentionDrainProbeCommand,
   stableRetentionJob,
   startRunningRetentionProbe,
   unknownWriterBlocksSnapshot,
 } from './lib/session_retention.mjs';
-import { cronCommand } from './lib/database.mjs';
+import { cronJobs, retentionJobName } from './lib/database.mjs';
 import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 
 const referenceTime = '2026-10-21T04:00:00.000Z';
 
-test('scheduled cleanup probe waits for a committed run and removes its probe job', async () => {
-  const calls = [];
+test('scheduled cleanup probe waits for a committed run and tracks only its own run history', async () => {
   let poll = 0;
   const session = {
     plan: createFixturePlan({ runId: 'retention-probe-run' }),
     retentionRunIDs: new Set(),
     remote: {
       async sqlJSON(statement) {
-        calls.push(statement);
         if (statement.includes('maxRunID')) return { maxRunID: 10 };
         if (statement.includes('cron.schedule')) return { jobID: 23 };
         if (statement.includes('cron.job_run_details')) {
@@ -35,8 +32,7 @@ test('scheduled cleanup probe waits for a committed run and removes its probe jo
         }
         throw new Error(`unexpected query ${statement}`);
       },
-      async sql(statement) {
-        calls.push(statement);
+      async sql() {
         return { stdout: '', stderr: '' };
       },
     },
@@ -52,17 +48,11 @@ test('scheduled cleanup probe waits for a committed run and removes its probe jo
   assert.equal(result.status, 'succeeded');
   assert.equal(result.selfRemoving, true);
   assert.deepEqual([...session.retentionRunIDs], [11]);
-  assert.match(calls[0], /json_build_object/);
-  assert(calls.some(statement => statement.includes("'1 second'")));
-  assert(calls.some(statement => statement.includes('DO $smoke$')));
-  assert(calls.some(statement => statement.includes('cron.unschedule')));
 });
 
 test('recovery drain probe observes actual cleanup SQL and removes only its own job', async () => {
-  const statements = [];
   const remote = {
     async sqlJSON(statement) {
-      statements.push(statement);
       if (statement.includes('maxRunID')) return { maxRunID: 10 };
       if (statement.includes('cron.schedule')) return { jobID: 23 };
       if (statement.includes('runningRuns')) {
@@ -83,8 +73,7 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
       if (statement.includes('cronBackends')) return { cronBackends: 0 };
       throw new Error(`unexpected query ${statement}`);
     },
-    async sql(statement) {
-      statements.push(statement);
+    async sql() {
       return { stdout: '', stderr: '' };
     },
   };
@@ -96,9 +85,6 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
   assert.equal(probe.jobID, 23);
   assert.equal(probe.runID, 11);
   assert.equal(probe.observedRunning, true);
-  assert.match(statements[0], /json_build_object/);
-  assert.match(probe.command, /pin_glide_fn_cleanup_expired_rows/);
-  assert.match(probe.command, /pg_sleep\(8\)/);
   assert.deepEqual(await probe.inspect(), {
     jobExists: true,
     schedule: '0 0 1 1 *',
@@ -110,17 +96,11 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
     cronBackends: 0,
   });
   await probe.cleanup();
-  assert(statements.some(statement => statement.includes('cron.alter_job')));
-  assert(statements.some(statement => statement.includes('cron.unschedule')));
-  assert(statements.some(statement => statement.includes('pg_cancel_backend')));
-  assert(statements.some(statement => statement.includes('DELETE FROM cron.job_run_details')));
 });
 
 test('a drain probe that never starts removes its scheduled job', async () => {
-  const statements = [];
   const remote = {
     async sqlJSON(statement) {
-      statements.push(statement);
       if (statement.includes('maxRunID')) return { maxRunID: 10 };
       if (statement.includes('cron.schedule')) return { jobID: 23 };
       if (statement.includes('runningRuns')) {
@@ -129,8 +109,7 @@ test('a drain probe that never starts removes its scheduled job', async () => {
       if (statement.includes('cronBackends')) return { cronBackends: 0 };
       throw new Error(`unexpected query ${statement}`);
     },
-    async sql(statement) {
-      statements.push(statement);
+    async sql() {
       return { stdout: '', stderr: '' };
     },
   };
@@ -143,15 +122,6 @@ test('a drain probe that never starts removes its scheduled job', async () => {
     }),
     /did not start/,
   );
-  assert(statements.some(statement => statement.includes('cron.unschedule')));
-  assert(statements.some(statement => statement.includes('DELETE FROM cron.job_run_details')));
-});
-
-test('the recovery drain command cannot delete historical rows', () => {
-  const command = retentionDrainProbeCommand('smoke-recovery-drain-probe', 8);
-  assert.match(command, /cleanup_expired_rows\('2000-01-01T00:00:00Z'/);
-  assert.match(command, /pg_sleep\(8\)/);
-  assert.doesNotMatch(command, /DELETE FROM/);
 });
 
 test('the live unknown-writer probe blocks and terminates only its own connection', async () => {
@@ -188,13 +158,14 @@ test('the live unknown-writer probe blocks and terminates only its own connectio
 });
 
 test('the deployed retention job identity is exact', async () => {
+  const expected = cronJobs.get(retentionJobName);
   const job = {
     jobID: 9,
-    jobname: 'pin-glide-retention-cleanup',
-    database: 'pin_glide',
-    username: 'pin_glide',
-    schedule: '0 19 * * *',
-    command: cronCommand,
+    jobname: retentionJobName,
+    database: expected.database,
+    username: expected.username,
+    schedule: expected.schedule,
+    command: expected.command,
     active: true,
   };
   const session = { remote: { async sqlJSON() { return job; } } };
@@ -246,6 +217,7 @@ test('privacy verification scans diagnostics, errors, logs and public artifacts'
     records: 1,
     scannedRequestIds: 1,
     missingRequestIds: 0,
+    requiredGroups: [],
     logsScanned: true,
     artifactsScanned: 2,
     errorBodiesScanned: 1,

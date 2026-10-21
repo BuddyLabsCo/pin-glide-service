@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 
+import { withFailureJoiningCleanup } from './cleanup.mjs';
 import {
   renderRetentionCleanupSQL,
   runOwnedPrivacyQuery,
@@ -107,144 +108,149 @@ export async function runRetentionScenarios(session, { root } = {}) {
     .digest('hex');
   session.addSecret(fixture.liveToken);
   const scenarios = [];
-  try {
-    const job = await stableRetentionJob(session);
-    fixture.jobID = Number(job.jobID);
-    fixture.referenceTime = await databaseNow(session);
-    const before = await retentionState(session, plan, fixture);
-    assertDurableBaseline(before);
+  return withFailureJoiningCleanup(
+    async () => {
+      const job = await stableRetentionJob(session);
+      fixture.jobID = Number(job.jobID);
+      fixture.referenceTime = await databaseNow(session);
+      const before = await retentionState(session, plan, fixture);
+      assertDurableBaseline(before);
 
-    await session.remote.sql(renderRetentionAgingSQL(plan, fixture));
-    scenarios.push(await runScenario(
-      session,
-      'interrupted retention cleanup rolls back without a checkpoint',
-      () => interruptedCleanup(session, plan, fixture),
-    ));
-    const probe = await runScheduledCleanupProbe(session);
-    const afterProbe = await retentionState(session, plan, fixture);
-    assertRetentionCounts(afterProbe, zeroAging);
-    scenarios.push({
-      name: 'pg_cron executes configuration-driven retention with no Go fallback',
-      status: 'passed',
-      details: probe,
-    });
-    session.evidence.record({
-      scenario: 'pg_cron executes configuration-driven retention with no Go fallback',
-      status: 'passed',
-      details: {
-        job,
-        probe,
-        deletedOutsideWindows: afterProbe.aging,
-        nullableCronEndTimeRetained: afterProbe.aging.cronRunning,
-        noGoCleanupFallback: true,
-      },
-    });
+      await session.remote.sql(renderRetentionAgingSQL(plan, fixture));
+      scenarios.push(await runScenario(
+        session,
+        'interrupted retention cleanup rolls back without a checkpoint',
+        () => interruptedCleanup(session, plan, fixture),
+      ));
+      const probe = await runScheduledCleanupProbe(session);
+      const afterProbe = await retentionState(session, plan, fixture);
+      assertRetentionCounts(afterProbe, zeroAging);
+      scenarios.push({
+        name: 'pg_cron executes configuration-driven retention',
+        status: 'passed',
+        details: probe,
+      });
+      session.evidence.record({
+        scenario: 'pg_cron executes configuration-driven retention',
+        status: 'passed',
+        details: {
+          job,
+          probe,
+          deletedOutsideWindows: afterProbe.aging,
+          nullableCronEndTimeRetained: afterProbe.aging.cronRunning,
+          executionSource: 'pg_cron',
+        },
+      });
 
-    const boundary = await boundaryCleanup(session, plan, fixture);
-    const family = await proveSlidingFamily(session, plan, fixture);
-    const afterBoundary = await retentionState(session, plan, fixture);
-    assertDurableState(before, afterBoundary);
-    scenarios.push({
-      name: 'cutoff clocks preserve live credentials and ordering guards',
-      status: 'passed',
-      details: {
-        removedPastCutoff: boundary.removed,
-        cutoffRowsRetained: afterBoundary.boundary,
-        slidingFamily: family,
-      },
-    });
-    session.evidence.record({
-      scenario: 'cutoff clocks preserve live credentials and ordering guards',
-      status: 'passed',
-      details: {
-        removedPastCutoff: boundary.removed,
-        cutoffRowsRetained: afterBoundary.boundary,
-        slidingFamily: family,
-      },
-    });
+      const boundary = await boundaryCleanup(session, plan, fixture);
+      const family = await proveSlidingFamily(session, plan, fixture);
+      const afterBoundary = await retentionState(session, plan, fixture);
+      assertDurableState(before, afterBoundary);
+      scenarios.push({
+        name: 'cutoff clocks preserve live credentials and ordering guards',
+        status: 'passed',
+        details: {
+          removedPastCutoff: boundary.removed,
+          cutoffRowsRetained: afterBoundary.boundary,
+          slidingFamily: family,
+        },
+      });
+      session.evidence.record({
+        scenario: 'cutoff clocks preserve live credentials and ordering guards',
+        status: 'passed',
+        details: {
+          removedPastCutoff: boundary.removed,
+          cutoffRowsRetained: afterBoundary.boundary,
+          slidingFamily: family,
+        },
+      });
 
-    scenarios.push(await runScenario(
-      session,
-      'configuration deletion retains durable authority and historical rows',
-      () => configurationDeletionProbe(session, plan, fixture, before.durable),
-    ));
-    const lifetime = await deliveryLifetime(session, plan, fixture, pairing, socket);
-    await socket.close();
-    const restart = await restartWithoutPayload(
-      session,
-      pairing.receiverID,
-      pairing.receiverToken,
-      lifetime.message,
-    );
-    scenarios.push({
-      name: 'retained dedup ends only with scheduled row deletion',
-      status: 'passed',
-      details: { ...lifetime, restart },
-    });
-    session.evidence.record({
-      scenario: 'retained dedup ends only with scheduled row deletion',
-      status: 'passed',
-      details: { ...lifetime, restart },
-    });
+      scenarios.push(await runScenario(
+        session,
+        'configuration deletion retains durable authority and historical rows',
+        () => configurationDeletionProbe(session, plan, fixture, before.durable),
+      ));
+      const lifetime = await deliveryLifetime(session, plan, fixture, pairing, socket);
+      await socket.close();
+      const restart = await restartWithoutPayload(
+        session,
+        pairing.receiverID,
+        pairing.receiverToken,
+        lifetime.message,
+      );
+      scenarios.push({
+        name: 'retained dedup ends only with scheduled row deletion',
+        status: 'passed',
+        details: { ...lifetime, restart },
+      });
+      session.evidence.record({
+        scenario: 'retained dedup ends only with scheduled row deletion',
+        status: 'passed',
+        details: { ...lifetime, restart },
+      });
 
-    const artifacts = await loadArtifacts(root);
-    scenarios.push(await runScenario(
-      session,
-      'immutable retention job lifecycle and retry semantics have deterministic coverage',
-      async () => {
-        const deterministic = await runDeterministicTests(
-          root,
-          retentionDeterministicTestReferences,
-        );
-        return {
-          ...deterministic,
-          references: retentionDeterministicTestReferences.map(reference => ({
-            test: reference.test,
-            covers: reference.covers,
-            observes: reference.observes,
+      const artifacts = await loadArtifacts(root);
+      scenarios.push(await runScenario(
+        session,
+        'immutable retention job lifecycle and retry semantics have deterministic coverage',
+        async () => {
+          const deterministic = await runDeterministicTests(
+            root,
+            retentionDeterministicTestReferences,
+          );
+          return {
+            ...deterministic,
+            references: retentionDeterministicTestReferences.map(reference => ({
+              test: reference.test,
+              covers: reference.covers,
+              observes: reference.observes,
+            })),
+          };
+        },
+      ));
+      const databaseRows = await session.remote.sqlJSON(runOwnedPrivacyQuery(plan, {
+        receiverIDs: [...session.receivers],
+        requestIDs: [...new Set(session.requestIds)],
+        subjects: [...session.subjects],
+      }));
+      scenarios.push(await runScenario(
+        session,
+        'run-owned database, service logs and public artifacts retain no payload or credential',
+        async () => ({
+          ...(await verifyDiagnosticRedaction(session, {
+            includeLogs: true,
+            artifacts,
+            databaseRows,
+            requiredGroups: session.diagnosticGroups || {},
           })),
-        };
-      },
-    ));
-    const databaseRows = await session.remote.sqlJSON(runOwnedPrivacyQuery(plan, {
-      receiverIDs: [...session.receivers],
-      requestIDs: [...new Set(session.requestIds)],
-      subjects: [...session.subjects],
-    }));
-    scenarios.push(await runScenario(
-      session,
-      'run-owned database, service logs and public artifacts retain no payload or credential',
-      async () => ({
-        ...(await verifyDiagnosticRedaction(session, {
-          includeLogs: true,
-          artifacts,
-          databaseRows,
-        })),
-        fixtureIdentityVerified: false,
-      }),
-    ));
-    return {
-      scenarios,
-      accounts: plan.accounts.length,
-      senders: plan.senders.length,
-      receivers: session.receivers.size,
-      fixtureIdentity: 'synthetic-sql-not-provider-verified',
-      job: {
-        name: job.jobname,
-        schedule: job.schedule,
-        owner: job.username,
-        database: job.database,
-        active: job.active,
-      },
-      cleanupRuns: session.retentionRunIDs.size,
-      deterministicTestReferences: retentionDeterministicTestReferences,
-    };
-  } finally {
-    await socket.close().catch(() => {});
-    if (session.retentionRunIDs.size > 0) {
-      await session.remote.sql(renderRetentionCleanupSQL(plan, [...session.retentionRunIDs]));
-    } else {
-      await session.remote.sql(renderRetentionCleanupSQL(plan));
-    }
-  }
+          fixtureIdentityVerified: false,
+        }),
+      ));
+      return {
+        scenarios,
+        accounts: plan.accounts.length,
+        senders: plan.senders.length,
+        receivers: session.receivers.size,
+        fixtureIdentity: 'synthetic-sql-not-provider-verified',
+        job: {
+          name: job.jobname,
+          schedule: job.schedule,
+          owner: job.username,
+          database: job.database,
+          active: job.active,
+        },
+        cleanupRuns: session.retentionRunIDs.size,
+        deterministicTestReferences: retentionDeterministicTestReferences,
+      };
+    },
+    async () => {
+      await socket.close().catch(() => {});
+      if (session.retentionRunIDs.size > 0) {
+        await session.remote.sql(renderRetentionCleanupSQL(plan, [...session.retentionRunIDs]));
+      } else {
+        await session.remote.sql(renderRetentionCleanupSQL(plan));
+      }
+    },
+    'Retention scenarios and cleanup both failed',
+  );
 }

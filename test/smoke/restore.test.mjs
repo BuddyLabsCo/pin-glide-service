@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import test from 'node:test';
 
-import { cronCommand, retention } from './lib/database.mjs';
+import { cronJobs, retention, retentionJobName } from './lib/database.mjs';
 import {
   lastCompletedSnapshot,
   listLocalSnapshots,
@@ -99,6 +99,7 @@ test('integration recovery can start from an empty shared snapshot directory', a
 });
 
 test('disposable restore validates restored facts and propagates failure', async () => {
+  const expectedJob = cronJobs.get(retentionJobName);
   const facts = {
     database: 'smoke_restore_placeholder',
     release: '1.2.3',
@@ -109,12 +110,12 @@ test('disposable restore validates restored facts and propagates failure', async
       return { schema, table, days: value.days, column: value.column };
     }),
     cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
+      jobname: retentionJobName,
+      username: expectedJob.username,
+      database: expectedJob.database,
+      schedule: expectedJob.schedule,
       active: false,
-      command: cronCommand,
+      command: expectedJob.command,
     }],
     pgCronVersion: '1.6',
     runningCronJobs: 0,
@@ -193,6 +194,7 @@ test('disposable PostgreSQL restore uses an isolated container and always remove
 });
 
 test('restored facts reject incomplete extension or scheduled-work state', () => {
+  const expectedJob = cronJobs.get(retentionJobName);
   const facts = {
     database: 'smoke_restore_1',
     release: '1.2.3',
@@ -204,12 +206,12 @@ test('restored facts reject incomplete extension or scheduled-work state', () =>
       return { schema, table, days: value.days, column: value.column };
     }),
     cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
+      jobname: retentionJobName,
+      username: expectedJob.username,
+      database: expectedJob.database,
+      schedule: expectedJob.schedule,
       active: false,
-      command: cronCommand,
+      command: expectedJob.command,
     }],
     pgCronVersion: '1.6',
     runningCronJobs: 0,

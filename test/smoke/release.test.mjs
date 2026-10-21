@@ -342,8 +342,9 @@ test('published release checks refuse a dirty worktree before contacting the tar
   assert(!calls.some(([command]) => command === 'gh'));
 });
 
-test('published release checks require a clean worktree, matching commit and immutable assets', async () => {
+test('published release checks accept test-harness commits on a clean worktree while binding to the released source', async () => {
   const head = 'a'.repeat(40);
+  const releaseCommit = 'b'.repeat(40);
   const contracts = await contractBytes(process.cwd());
   const openapi = contracts['openapi.yaml'];
   const asyncapi = contracts['asyncapi.yaml'];
@@ -352,7 +353,7 @@ test('published release checks require a clean worktree, matching commit and imm
     calls.push([command, ...args]);
     if (command === 'git' && args[0] === 'rev-parse') return { stdout: `${head}\n`, stderr: '' };
     if (command === 'git' && args[0] === 'status') return { stdout: '', stderr: '' };
-    if (command === 'gh' && args[0] === 'api') return { stdout: `${head}\n`, stderr: '' };
+    if (command === 'gh' && args[0] === 'api') return { stdout: `${releaseCommit}\n`, stderr: '' };
     if (command === 'gh' && args[0] === 'release' && args[1] === 'list') {
       return { stdout: JSON.stringify([{ tagName: 'v0.1.5', isDraft: false, isPrerelease: false }]), stderr: '' };
     }
@@ -378,7 +379,8 @@ test('published release checks require a clean worktree, matching commit and imm
     run,
     runContracts: false,
   });
-  assert.equal(validated.sourceCommit, head);
+  assert.equal(validated.sourceCommit, releaseCommit);
+  assert.equal(validated.checkedOutCommit, head);
   assert.equal(validated.tag, 'v0.1.6');
   assert.equal(validated.upgradeOrigin, '0.1.5');
   assert(calls.some(call => call[0] === 'git' && call[1] === 'status'));

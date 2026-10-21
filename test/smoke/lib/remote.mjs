@@ -174,23 +174,12 @@ export class RemoteEnvironment {
       if (createdSnapshot && !added.includes(createdSnapshot)) {
         throw new Error('The stopped snapshot command reported an archive that is not present');
       }
-      if (!createdSnapshot && added.length === 1) createdSnapshot = added[0];
       if (!createdSnapshot) {
-        throw new Error('The stopped snapshot action did not publish an unambiguous archive');
+        throw new Error('The stopped snapshot action reported no archive');
       }
     } catch (error) {
       failure = error;
     } finally {
-      if (failure && !createdSnapshot && snapshotsBefore) {
-        try {
-          const added = (await this.listSnapshots())
-            .map(entry => entry.name)
-            .filter(name => !snapshotsBefore.has(name));
-          if (added.length === 1) createdSnapshot = added[0];
-        } catch (cleanupError) {
-          failure = new AggregateError([failure, cleanupError], 'Stopped snapshot cleanup discovery failed');
-        }
-      }
       if (failure && createdSnapshot) {
         try {
           await this.removeSnapshot(createdSnapshot);

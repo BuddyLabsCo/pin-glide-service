@@ -1,5 +1,5 @@
-import { sqlTextArray } from './fixtures.mjs';
-import { retentionJobName } from './database.mjs';
+import { escapeSQLString, sqlTextArray } from './fixtures.mjs';
+import { cronJobs, retentionJobName } from './database.mjs';
 import {
   identifier,
   markerPattern,
@@ -8,6 +8,8 @@ import {
 } from './retention_sql.mjs';
 
 const retentionJob = retentionJobName;
+const expectedRetentionJob = cronJobs.get(retentionJob);
+if (!expectedRetentionJob) throw new Error('The adopted retention job has no expected configuration');
 
 export function retentionStateQuery(plan, {
   senderID,
@@ -191,9 +193,9 @@ SELECT json_build_object(
     'retentionJob', (
       SELECT count(*) FROM cron.job
       WHERE jobname = ${identifier(retentionJob, 'retention job')}
-        AND database = 'pin_glide'
-        AND username = 'pin_glide'
-        AND schedule = '0 19 * * *'
+        AND database = ${escapeSQLString(expectedRetentionJob.database)}
+        AND username = ${escapeSQLString(expectedRetentionJob.username)}
+        AND schedule = ${escapeSQLString(expectedRetentionJob.schedule)}
         AND active
     )
   ),

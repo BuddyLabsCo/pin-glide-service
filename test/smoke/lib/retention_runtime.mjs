@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import { cronCommand, retentionJobName } from './database.mjs';
+import { cronCommand, cronJobs, retentionJobName } from './database.mjs';
 import { escapeSQLString } from './fixtures.mjs';
 import { retentionStateQuery } from './retention_checks.mjs';
 import { retentionMarker } from './retention_fixtures.mjs';
@@ -73,6 +73,8 @@ SELECT json_build_object('now', now()) AS database_time;
 }
 
 export async function stableRetentionJob(session) {
+  const expected = cronJobs.get(stableJobName);
+  if (!expected) throw new Error('The adopted retention job has no expected configuration');
   const job = await session.remote.sqlJSON(`
 SELECT json_build_object(
   'jobID', jobid,
@@ -88,10 +90,10 @@ WHERE jobname = ${escapeSQLString(stableJobName)};
 `);
   if (
     job?.jobname !== stableJobName
-    || job.database !== 'pin_glide'
-    || job.username !== 'pin_glide'
-    || job.schedule !== '0 19 * * *'
-    || job.command !== cronCommand
+    || job.database !== expected.database
+    || job.username !== expected.username
+    || job.schedule !== expected.schedule
+    || job.command !== expected.command
     || job.active !== true
   ) {
     throw new Error('The deployed retention job does not match the adopted owner, schedule and command');

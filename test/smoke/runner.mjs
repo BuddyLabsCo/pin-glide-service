@@ -153,6 +153,7 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     details: {
       tag: release.tag,
       sourceCommit: release.sourceCommit,
+      checkedOutCommit: release.checkedOutCommit,
       upgradeOrigin: release.upgradeOrigin,
       assets: release.assets,
     },
@@ -309,13 +310,25 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
 }
 
 async function runSeededJourneys({ session, plan }) {
+  const groups = session.diagnosticGroups;
+  let start = session.requestIds.length;
   const pairing = await runPairingScenarios(session);
+  groups.pairing = session.requestIds.slice(start);
   const { context, ...pairingEvidence } = pairing;
+  start = session.requestIds.length;
+  const credentials = await runSenderCredentialScenarios(session);
+  groups.credentials = session.requestIds.slice(start);
+  start = session.requestIds.length;
+  const delivery = await runDeliveryScenarios(session, context);
+  groups.delivery = session.requestIds.slice(start);
+  start = session.requestIds.length;
+  const receiver = await runReceiverScenarios(session, { root });
+  groups.receiver = session.requestIds.slice(start);
   return {
-    credentials: await runSenderCredentialScenarios(session),
+    credentials,
     pairing: pairingEvidence,
-    delivery: await runDeliveryScenarios(session, context),
-    receiver: await runReceiverScenarios(session, { root }),
+    delivery,
+    receiver,
     retention: await runRetentionScenarios(session, { root }),
   };
 }
@@ -343,7 +356,10 @@ async function integration({
       evidence,
       plan,
     });
+    session.diagnosticGroups = {};
+    const modelStart = session.requestIds.length;
     const model = await runModel({ session, model: checkResult.model });
+    session.diagnosticGroups.model = session.requestIds.slice(modelStart);
     const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
       scenario: 'seeded Sender, Pairing, Delivery, Receiver, retention and real Bailian smoke journey',

@@ -308,7 +308,7 @@ test('a stopped snapshot restarts the service when snapshotting fails', async ()
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 });
 
-test('a failed stopped snapshot removes only its newly published archive', async () => {
+test('a failed stopped snapshot removes only the archive reported by its command', async () => {
   const old = 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump';
   const created = 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
   const actions = [];
@@ -327,13 +327,36 @@ test('a failed stopped snapshot removes only its newly published archive', async
   remote.databaseWriteStats = async () => (++writes === 1
     ? { inserted: 0, updated: 0, deleted: 0 }
     : { inserted: 1, updated: 0, deleted: 0 });
-  remote.makeSnapshot = async () => ({ stdout: '' });
+  remote.makeSnapshot = async () => ({ stdout: `${created}\n` });
   remote.removeSnapshot = async name => {
     removed.push(name);
   };
   await assert.rejects(() => remote.createStoppedSnapshot('1.2.3'), /Database writes occurred/);
   assert.deepEqual(removed, [created]);
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
+});
+
+test('a failed stopped snapshot never infers ownership from a new shared-directory archive', async () => {
+  const old = 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump';
+  const unrelated = 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
+  const removed = [];
+  let snapshots = 0;
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async () => {};
+  remote.assertNoExternalWriters = async () => {};
+  remote.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
+  remote.listSnapshots = async () => (
+    ++snapshots === 1 ? [{ name: old }] : [{ name: old }, { name: unrelated }]
+  );
+  remote.makeSnapshot = async () => ({ stdout: '' });
+  remote.removeSnapshot = async name => {
+    removed.push(name);
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3'),
+    /reported no archive/,
+  );
+  assert.deepEqual(removed, []);
 });
 
 test('a successful stopped snapshot returns its own archive and never infers another run', async () => {
@@ -364,7 +387,7 @@ test('a successful stopped snapshot returns its own archive and never infers ano
   missing.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
   missing.listSnapshots = async () => [{ name: old }];
   missing.makeSnapshot = async () => ({ stdout: '' });
-  await assert.rejects(() => missing.createStoppedSnapshot('1.2.3'), /did not publish/);
+  await assert.rejects(() => missing.createStoppedSnapshot('1.2.3'), /reported no archive/);
 });
 
 test('a held-state check failure restarts the service before snapshotting', async () => {

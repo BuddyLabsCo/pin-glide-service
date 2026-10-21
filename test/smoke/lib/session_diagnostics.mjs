@@ -24,6 +24,7 @@ export async function verifyDiagnosticRedaction(
     includeLogs = false,
     artifacts = {},
     databaseRows = null,
+    requiredGroups = {},
   } = {},
 ) {
   const requestIds = [...new Set(session.requestIds)];
@@ -50,6 +51,14 @@ WHERE diagnostic.request_id = ANY(${sqlTextArray(requestIds)})
   if (records.length === 0) {
     throw new SmokeBlocked('No run-owned service diagnostics were available to inspect');
   }
+  const uncovered = Object.entries(requiredGroups)
+    .filter(([, ids]) => !ids.some(id => seen.has(id)))
+    .map(([name]) => name);
+  if (uncovered.length > 0) {
+    throw new SmokeBlocked(
+      `No run-owned service diagnostics covered required flows: ${uncovered.join(', ')}`,
+    );
+  }
   rejectSecrets(session, 'service diagnostics', records);
   rejectSecrets(session, 'HTTP errors', session.errorBodies || []);
   if (databaseRows) rejectSecrets(session, 'run-owned database rows', databaseRows);
@@ -68,6 +77,7 @@ WHERE diagnostic.request_id = ANY(${sqlTextArray(requestIds)})
     records: records.length,
     scannedRequestIds: requestIds.filter(requestId => seen.has(requestId)).length,
     missingRequestIds: missing.length,
+    requiredGroups: Object.keys(requiredGroups),
     logsScanned: includeLogs,
     artifactsScanned: Object.keys(artifacts).length,
     errorBodiesScanned: (session.errorBodies || []).length,

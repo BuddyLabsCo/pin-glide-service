@@ -220,6 +220,7 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 2,
     scannedRequestIds: 2,
     missingRequestIds: 0,
+    requiredGroups: [],
     logsScanned: false,
     artifactsScanned: 0,
     errorBodiesScanned: 0,
@@ -233,11 +234,25 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 1,
     scannedRequestIds: 1,
     missingRequestIds: 1,
+    requiredGroups: [],
     logsScanned: false,
     artifactsScanned: 0,
     errorBodiesScanned: 0,
     databaseRowsScanned: 0,
   });
+
+  session.requestIds = ['request-1', 'request-2'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'POST' }];
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, {
+      settleMs: 0,
+      requiredGroups: {
+        pairing: ['request-1'],
+        model: ['request-2'],
+      },
+    }),
+    error => error instanceof SmokeBlocked && /model/.test(error.message),
+  );
 
   session.requestIds = ['request-1'];
   session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
