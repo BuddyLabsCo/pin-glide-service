@@ -75,6 +75,7 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
           active: true,
           runID: 11,
           status: 'succeeded',
+          returnMessage: 'DO',
           endTime: referenceTime,
           cronBackends: 0,
         };
@@ -104,6 +105,7 @@ test('recovery drain probe observes actual cleanup SQL and removes only its own 
     active: true,
     runID: 11,
     status: 'succeeded',
+    returnMessage: 'DO',
     endTime: referenceTime,
     cronBackends: 0,
   });

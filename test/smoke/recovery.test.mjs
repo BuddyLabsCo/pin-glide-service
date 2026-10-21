@@ -5,7 +5,10 @@ import { cronCommand, retention } from './lib/database.mjs';
 import { verifyRecovery } from './lib/recovery.mjs';
 import { TARGET } from './lib/target.mjs';
 
-function drainProbeFixture() {
+function drainProbeFixture({
+  status = 'succeeded',
+  returnMessage = 'DO',
+} = {}) {
   let inspections = 0;
   let cleanups = 0;
   return {
@@ -19,7 +22,8 @@ function drainProbeFixture() {
         schedule: '0 0 1 1 *',
         active: inspections > 1,
         runID: 11,
-        status: 'succeeded',
+        status,
+        returnMessage,
         endTime: '2026-10-20T04:00:00.000Z',
         cronBackends: 0,
       };
@@ -39,7 +43,10 @@ function drainProbeFixture() {
 test('recovery rejects scheduled work that becomes active while held', async () => {
   let stateReads = 0;
   const recorded = [];
-  const drainProbe = drainProbeFixture();
+  const drainProbe = drainProbeFixture({
+    status: 'failed',
+    returnMessage: 'job canceled',
+  });
   await assert.rejects(
     () => verifyRecovery({
       checkResult: {

@@ -194,6 +194,11 @@ SELECT json_build_object(
     FROM cron.job_run_details
     WHERE jobid = ${probe.jobID} AND runid = ${probe.runID}
   ),
+  'returnMessage', (
+    SELECT return_message
+    FROM cron.job_run_details
+    WHERE jobid = ${probe.jobID} AND runid = ${probe.runID}
+  ),
   'endTime', (
     SELECT end_time
     FROM cron.job_run_details

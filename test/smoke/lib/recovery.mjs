@@ -24,10 +24,14 @@ function assertDrainProbe(state, { restored }) {
   if (restored && !state.active) {
     throw new Error('The run-owned retention drain job schedule was not restored');
   }
-  if (state.status !== 'succeeded' || !state.endTime || Number(state.cronBackends) !== 0) {
-    throw new Error('The run-owned retention SQL had not drained before the snapshot');
+  if (!state.endTime || Number(state.cronBackends) !== 0) {
+    throw new Error('The run-owned retention SQL had not exited before the snapshot');
   }
-  return state;
+  if (state.status === 'succeeded') return state;
+  if (state.status === 'failed' && state.returnMessage === 'job canceled') {
+    return state;
+  }
+  throw new Error(`The run-owned retention SQL ended unexpectedly: ${state.status || 'missing status'}`);
 }
 
 export async function verifyRecovery({
