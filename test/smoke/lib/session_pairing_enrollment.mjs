@@ -127,7 +127,7 @@ export async function enrollReceiver(session, context) {
 
     receiverSocket = await session.openSocket({ path: sessionPath(created), token: created.token });
     const reconnected = await expectPairingState(receiverSocket, created);
-    if (reconnected.session.expiresAt !== created.expiresAt) {
+    if (Date.parse(reconnected.session.expiresAt) !== Date.parse(created.expiresAt)) {
       throw new Error('Pairing reconnect extended the session lifetime');
     }
     await expectNoFrame(receiverSocket, 'Pairing reconnect replayed handshake bytes');
