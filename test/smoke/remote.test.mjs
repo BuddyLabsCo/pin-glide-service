@@ -425,3 +425,22 @@ test('a held-state check failure restarts the service before snapshotting', asyn
   );
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 });
+
+test('the snapshot path refuses a connected writer before invoking the dump', async () => {
+  const actions = [];
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async action => {
+    actions.push(action);
+  };
+  remote.assertNoExternalWriters = async () => {
+    throw new Error('Another database writer is still connected');
+  };
+  remote.makeSnapshot = async () => {
+    throw new Error('snapshot must not run with a writer');
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3'),
+    /Another database writer/,
+  );
+  assert.deepEqual(actions, ['--prep', '--stop-api', '--start-api']);
+});

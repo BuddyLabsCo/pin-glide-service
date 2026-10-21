@@ -120,7 +120,7 @@ export async function runRetentionScenarios(session, { root } = {}) {
       await session.remote.sql(renderRetentionAgingSQL(plan, fixture));
       scenarios.push(await runScenario(
         session,
-        'interrupted retention cleanup rolls back without a checkpoint',
+      'interrupted retention cleanup rolls back atomically',
         () => interruptedCleanup(session, plan, fixture),
       ));
       const probe = await runScheduledCleanupProbe(session);
@@ -139,7 +139,6 @@ export async function runRetentionScenarios(session, { root } = {}) {
           probe,
           deletedOutsideWindows: afterProbe.aging,
           nullableCronEndTimeRetained: afterProbe.aging.cronRunning,
-          executionSource: 'pg_cron',
         },
       });
 

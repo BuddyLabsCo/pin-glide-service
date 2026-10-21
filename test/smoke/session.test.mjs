@@ -546,3 +546,60 @@ test('a failed cleanup is recorded and an error after close never cleans up twic
   }), /evidence failed/);
   assert.equal(closeCount, 1);
 });
+
+test('fixture cleanup passes only after re-querying every run-owned resource class', async () => {
+  const plan = createFixturePlan({ runId: 'cleanup-verification-run' });
+  const empty = {
+    accounts: 0,
+    senders: 0,
+    credentials: 0,
+    refreshOperations: 0,
+    receivers: 0,
+    receiverCredentials: 0,
+    pairings: 0,
+    pairingSessions: 0,
+    deliveries: 0,
+    diagnostics: 0,
+    schemaAudits: 0,
+    cronJobs: 0,
+    cronRuns: 0,
+  };
+  let sqlJSONCalls = 0;
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {
+      async sql() {},
+      async sqlJSON() {
+        sqlJSONCalls++;
+        return empty;
+      },
+    },
+    http: {},
+    evidence: { addSecret() {} },
+    plan,
+  });
+  session.requestIds.push('request-cleanup');
+  session.subjects.add('pairing-cleanup');
+  session.receivers.add('receiver-cleanup');
+  session.retentionRunIDs.add(7);
+  await session.cleanup();
+  assert.equal(sqlJSONCalls, 1);
+  assert.equal(session.requestIds.length, 0);
+  assert.equal(session.subjects.size, 0);
+  assert.equal(session.receivers.size, 0);
+  assert.equal(session.retentionRunIDs.size, 0);
+
+  const dirty = new SmokeSession({
+    target: TARGET,
+    remote: {
+      async sql() {},
+      async sqlJSON() {
+        return { ...empty, deliveries: 1 };
+      },
+    },
+    http: {},
+    evidence: { addSecret() {} },
+    plan,
+  });
+  await assert.rejects(() => dirty.cleanup(), /left rows.*deliveries/);
+});

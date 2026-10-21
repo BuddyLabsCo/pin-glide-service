@@ -101,7 +101,7 @@ export async function interruptedCleanup(session, plan, fixture) {
     'aging.auditOld': 1,
     'aging.cronOld': 1,
   });
-  return { interruptedExitCode: result.code, checkpoint: false, partialRowsDeleted: 0 };
+  return { interruptedExitCode: result.code, partialRowsDeleted: 0 };
 }
 
 export async function boundaryCleanup(session, plan, fixture) {

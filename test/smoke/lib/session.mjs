@@ -5,6 +5,7 @@ import {
   fixtureSender,
   renderBootstrapSQL,
   renderCleanupSQL,
+  renderCleanupVerificationSQL,
   sqlTextArray,
 } from './fixtures.mjs';
 import { withFailureJoiningCleanup } from './cleanup.mjs';
@@ -485,6 +486,16 @@ SELECT json_build_object(
       )),
       'Retention fixtures and the ordinary smoke fixture cleanup both failed',
     );
+    const remaining = await this.remote.sqlJSON(renderCleanupVerificationSQL(
+      this.plan,
+      [...this.receivers],
+      this.requestIds,
+      [...this.subjects],
+    ));
+    const leftovers = Object.entries(remaining).filter(([, count]) => Number(count) !== 0);
+    if (leftovers.length > 0) {
+      throw new Error(`Run-owned fixture cleanup left rows: ${JSON.stringify(remaining)}`);
+    }
     this.receivers.clear();
     this.subjects.clear();
     this.requestIds.length = 0;
