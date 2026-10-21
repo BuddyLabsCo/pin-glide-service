@@ -106,7 +106,7 @@ export class RemoteEnvironment {
   }
 
   install(action, version) {
-    const command = `bash ${quote(`${this.target.deploymentDir}/install.sh`)}`;
+    const command = `sudo -n bash ${quote(`${this.target.deploymentDir}/install.sh`)}`;
     return this.ssh(
       `cd ${quote(this.target.deploymentDir)} && ${command} --version ${quote(version)} ${action}`,
       { timeoutMs: 600_000 },

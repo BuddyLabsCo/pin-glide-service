@@ -34,9 +34,11 @@ import {
 export {
   assertRetentionCounts,
   jsonFromOutput,
+  retentionDrainProbeCommand,
   retentionProbeCommand,
   runScheduledCleanupProbe,
   stableRetentionJob,
+  startRunningRetentionProbe,
   unknownWriterBlocksSnapshot,
 } from './retention_runtime.mjs';
 

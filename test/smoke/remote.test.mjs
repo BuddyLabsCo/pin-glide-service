@@ -7,12 +7,10 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { cronCommand, retention } from './lib/database.mjs';
 import { removeHostsLine, watchdogBody } from './lib/provider_faults.mjs';
 import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
 import { RemoteEnvironment } from './lib/remote.mjs';
 import { TARGET } from './lib/target.mjs';
-import { verifyRecovery } from './runner.mjs';
 
 test('the environment lock is shared and refuses a second concurrent run', async () => {
   const child = () => {
@@ -191,6 +189,23 @@ test('remote SQL is sent through stdin and never embedded in the SSH command', a
   assert(!secret.includes(calls[0].args.at(-1)));
 });
 
+test('release installer actions use noninteractive sudo', async () => {
+  const calls = [];
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '', stderr: '' };
+    },
+  });
+  await remote.install('--prep', '1.2.3');
+  assert.equal(calls[0].command, 'ssh');
+  assert.match(
+    calls[0].args.at(-1),
+    /^cd '\/srv\/pin-glide-dev' && sudo -n bash '\/srv\/pin-glide-dev\/install\.sh' --version '1\.2\.3' --prep$/,
+  );
+});
+
 test('service logs are bounded to the run window without reading the deployment environment', async () => {
   const calls = [];
   const remote = new RemoteEnvironment({
@@ -332,120 +347,4 @@ test('a held-state check failure restarts the service before snapshotting', asyn
     /unknown writer state/,
   );
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
-});
-
-test('recovery rejects scheduled work that becomes active while held', async () => {
-  let stateReads = 0;
-  const recorded = [];
-  await assert.rejects(
-    () => verifyRecovery({
-      checkResult: {
-        remote: {
-          target: TARGET,
-          createStoppedSnapshot: async (_version, { afterStop }) => {
-            await afterStop();
-            throw new Error('snapshot must not run');
-          },
-          scheduledWorkState: async () => {
-            stateReads++;
-            return stateReads === 1
-              ? { activeJobs: [], runningRuns: 0, cronBackends: 0, maxRunID: 7 }
-              : { activeJobs: ['new-job'], runningRuns: 0, cronBackends: 0, maxRunID: 7 };
-          },
-        },
-        release: { tag: 'v1.2.3' },
-        snapshot: null,
-        http: {},
-      },
-      evidence: {
-        runId: 'held-state-run',
-        record(entry) {
-          recorded.push(entry);
-        },
-      },
-      probeWriter: async () => ({ blocked: true }),
-      restore: async () => {},
-    }),
-    /became active/,
-  );
-  assert(recorded.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
-});
-
-test('recovery records snapshot and restore failures in their own scenarios', async () => {
-  const before = [];
-  await assert.rejects(() => verifyRecovery({
-    checkResult: {
-      remote: {
-        target: TARGET,
-        createStoppedSnapshot: async () => { throw new Error('snapshot command failed'); },
-      },
-      release: { tag: 'v1.2.3' },
-      snapshot: null,
-      http: {},
-    },
-    evidence: { record: entry => before.push(entry) },
-    listSnapshots: async () => [],
-    restore: async () => {},
-  }), /snapshot command failed/);
-  assert(before.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
-  assert(before.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'blocked'));
-
-  const after = [];
-  const model = { id: 'default', workspaceId: 'workspace', model: 'qwen3.7-flash', enabled: true };
-  const facts = {
-    database: 'pin_glide',
-    model,
-    retention: [...retention].map(([identity, value]) => {
-      const [schema, table] = identity.split('/');
-      return { schema, table, days: value.days, column: value.column };
-    }),
-    cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
-      active: true,
-      command: cronCommand,
-    }],
-    runningCronJobs: 0,
-    cronBackends: 0,
-  };
-  const checkResult = {
-    remote: {
-      target: TARGET,
-      createStoppedSnapshot: async (_version, { afterStop }) => {
-        await afterStop();
-        return 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
-      },
-      scheduledWorkState: async () => ({
-        activeJobs: [],
-        runningRuns: 0,
-        cronBackends: 0,
-        maxRunID: 7,
-      }),
-      schemaAudits: async () => facts,
-    },
-    release: { tag: 'v1.2.3', upgradeOrigin: '1.2.2' },
-    snapshot: null,
-    model,
-    http: { call: async () => ({ body: { status: 'ok' }, requestId: 'request-1' }) },
-  };
-  let restoredSnapshot;
-  await assert.rejects(() => verifyRecovery({
-    checkResult,
-    evidence: { record: entry => after.push(entry) },
-    probeWriter: async () => ({ blocked: true }),
-    restore: async (remote, snapshot) => {
-      restoredSnapshot = snapshot;
-      throw new Error('restore failed');
-    },
-  }), /restore failed/);
-  assert.equal(
-    restoredSnapshot,
-    `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T040000.000000002Z-2.dump`,
-  );
-  const backup = after.find(entry => entry.scenario === 'stopped-writer container snapshot');
-  assert.equal(backup?.status, 'passed');
-  assert.equal(backup?.details?.heldScheduledWork?.unknownWriterBlocked, true);
-  assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));
 });

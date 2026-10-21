@@ -8,6 +8,13 @@ import { retentionMarker } from './retention_fixtures.mjs';
 import { quote } from './shell.mjs';
 
 const stableJobName = retentionJobName;
+export const retentionDrainProbeSchedule = '0 0 1 1 *';
+
+function assertProbeName(probeName) {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(probeName || '')) {
+    throw new Error('Retention probe job name is invalid');
+  }
+}
 
 export function assertRetentionCounts(state, expected) {
   for (const [name, wanted] of Object.entries(expected)) {
@@ -19,15 +26,27 @@ export function assertRetentionCounts(state, expected) {
 }
 
 export function retentionProbeCommand(probeName) {
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(probeName || '')) {
-    throw new Error('Retention probe job name is invalid');
-  }
+  assertProbeName(probeName);
   return `DO $smoke$
 BEGIN
     PERFORM pin_glide.pin_glide_fn_cleanup_expired_rows(now());
     PERFORM cron.unschedule(${escapeSQLString(probeName)});
 END
 $smoke$;`;
+}
+
+export function retentionDrainProbeCommand(probeName, sleepSeconds = 8) {
+  assertProbeName(probeName);
+  if (!Number.isSafeInteger(sleepSeconds) || sleepSeconds < 1 || sleepSeconds > 50) {
+    throw new Error('Retention drain probe sleep must be between 1 and 50 seconds');
+  }
+  return `DO $smoke$
+BEGIN
+    PERFORM pin_glide.pin_glide_fn_cleanup_expired_rows('2000-01-01T00:00:00Z'::timestamptz);
+    PERFORM pg_sleep(${sleepSeconds});
+END
+$smoke$;
+-- ${probeName}`;
 }
 
 export function jsonFromOutput(result, label) {
@@ -125,6 +144,173 @@ WHERE application_name = ${escapeSQLString(application)};
     'Unknown-writer probe and writer restoration both failed',
   );
 }
+
+async function removeRetentionProbe(remote, { jobID, probeName }, {
+  pollMs,
+  timeoutMs,
+  sleepImpl,
+}) {
+  const pattern = escapeSQLString(`%${probeName}%`);
+  await remote.sql(`
+SELECT cron.unschedule(jobname)
+FROM cron.job
+WHERE jobid = ${Number(jobID)};
+SELECT pg_cancel_backend(pid)
+FROM pg_stat_activity
+WHERE application_name = 'pg_cron'
+  AND query LIKE ${pattern};
+`);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const remaining = await remote.sqlJSON(`
+SELECT json_build_object(
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
+      AND query LIKE ${pattern}
+  )
+);
+`);
+    if (Number(remaining.cronBackends) === 0) break;
+    if (Date.now() >= deadline) throw new Error('Retention drain probe SQL did not stop');
+    await sleepImpl(pollMs);
+  }
+  await remote.sql(`
+DELETE FROM cron.job_run_details
+WHERE command LIKE ${pattern};
+`);
+}
+
+function drainProbeStateQuery(probe) {
+  return `
+SELECT json_build_object(
+  'jobExists', EXISTS (SELECT 1 FROM cron.job WHERE jobid = ${probe.jobID}),
+  'schedule', (SELECT schedule FROM cron.job WHERE jobid = ${probe.jobID}),
+  'active', (SELECT active FROM cron.job WHERE jobid = ${probe.jobID}),
+  'runID', ${probe.runID},
+  'status', (
+    SELECT status
+    FROM cron.job_run_details
+    WHERE jobid = ${probe.jobID} AND runid = ${probe.runID}
+  ),
+  'endTime', (
+    SELECT end_time
+    FROM cron.job_run_details
+    WHERE jobid = ${probe.jobID} AND runid = ${probe.runID}
+  ),
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
+      AND query LIKE ${escapeSQLString(`%${probe.probeName}%`)}
+  )
+);
+`;
+}
+
+export async function startRunningRetentionProbe(remote, {
+  runId,
+  sleepSeconds = 8,
+  pollMs = 200,
+  timeoutMs = 30_000,
+  sleepImpl = sleep,
+} = {}) {
+  if (typeof runId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,35}$/.test(runId)) {
+    throw new Error('Recovery retention run ID is invalid');
+  }
+  const probeName = `${runId}-retention-drain-${randomBytes(3).toString('hex')}`;
+  assertProbeName(probeName);
+  const command = retentionDrainProbeCommand(probeName, sleepSeconds);
+  const baseline = await remote.sqlJSON(`
+SELECT json_build_object(
+  'maxRunID', coalesce(max(runid), 0)::bigint
+) AS baseline
+FROM cron.job_run_details;
+`);
+  let jobID;
+  try {
+    const scheduled = await remote.sqlJSON(`
+SELECT json_build_object(
+  'jobID', cron.schedule(
+    ${escapeSQLString(probeName)},
+    '1 second',
+    ${escapeSQLString(command)}
+  )
+) AS scheduled;
+`);
+    jobID = Number(scheduled.jobID);
+    if (!Number.isSafeInteger(jobID) || jobID <= 0) {
+      throw new Error('Retention drain probe returned no job ID');
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    let observedRunID;
+    for (;;) {
+      const observed = await remote.sqlJSON(`
+SELECT json_build_object(
+  'runID', coalesce(max(runid) FILTER (WHERE status = 'running'), 0),
+  'runningRuns', count(*) FILTER (WHERE status = 'running'),
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
+      AND query LIKE ${escapeSQLString(`%${probeName}%`)}
+  )
+)
+FROM cron.job_run_details
+WHERE jobid = ${jobID}
+  AND runid > ${Number(baseline.maxRunID)};
+`);
+      if (Number(observed.runningRuns) === 1 && Number(observed.cronBackends) === 1) {
+        observedRunID = Number(observed.runID);
+        break;
+      }
+      if (Date.now() >= deadline) throw new Error('Retention drain probe did not start');
+      await sleepImpl(pollMs);
+    }
+    await remote.sql(`
+SELECT cron.alter_job(
+  ${jobID},
+  schedule := ${escapeSQLString(retentionDrainProbeSchedule)}
+);
+`);
+    const probe = { jobID, probeName, runID: observedRunID };
+    return {
+      ...probe,
+      command,
+      observedRunning: true,
+      async inspect() {
+        return remote.sqlJSON(drainProbeStateQuery(probe));
+      },
+      cleanup: () => removeRetentionProbe(remote, probe, {
+        pollMs,
+        timeoutMs,
+        sleepImpl,
+      }),
+    };
+  } catch (error) {
+    if (jobID) {
+      try {
+        await removeRetentionProbe(remote, {
+          jobID,
+          probeName,
+        }, {
+          pollMs,
+          timeoutMs,
+          sleepImpl,
+        });
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Retention drain probe and its job cleanup both failed',
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 export async function retentionState(session, plan, fixture) {
   return session.remote.sqlJSON(retentionStateQuery(plan, fixture));
 }
@@ -142,7 +328,9 @@ export async function runScheduledCleanupProbe(session, {
   const probeName = `${retentionMarker(plan)}-probe-${randomBytes(4).toString('hex')}`;
   const probeCommand = retentionProbeCommand(probeName);
   const baseline = await session.remote.sqlJSON(`
-SELECT coalesce(max(runid), 0)::bigint AS "maxRunID"
+SELECT json_build_object(
+  'maxRunID', coalesce(max(runid), 0)::bigint
+) AS baseline
 FROM cron.job_run_details;
 `);
   const scheduled = await session.remote.sqlJSON(`

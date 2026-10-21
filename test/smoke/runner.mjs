@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateConfiguration, validateDatabaseFacts } from './lib/database.mjs';
+import { validateDatabaseFacts } from './lib/database.mjs';
 import { SmokeValidationError } from './lib/errors.mjs';
 import { Evidence } from './lib/evidence.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
@@ -14,14 +14,14 @@ import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
 import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
 import { RemoteEnvironment, repository } from './lib/remote.mjs';
-import { recoverySnapshot, restoreSnapshotToDisposableDatabase, verifySnapshotLocations } from './lib/restore.mjs';
+import { recoveryRestoreScenario, verifyRecovery } from './lib/recovery.mjs';
+import { recoverySnapshot, verifySnapshotLocations } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { runDeliveryScenarios } from './lib/session_delivery.mjs';
 import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
 import { runReceiverScenarios } from './lib/session_receiver.mjs';
-import { unknownWriterBlocksSnapshot } from './lib/retention_runtime.mjs';
 import { runRetentionScenarios } from './lib/session_retention.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
@@ -31,8 +31,6 @@ const exclusions = [
   'Owner-proof Sender security revocation',
   'Owner-proof recover_receiver authorization and credential replacement',
 ];
-const recoveryRestoreScenario = 'container-run development snapshot restore';
-
 function usage() {
   return [
     'Usage: node test/smoke/runner.mjs --check --release X.Y.Z',
@@ -299,120 +297,6 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
   } catch (error) {
     if (error instanceof SmokeProblem || error instanceof SmokeValidationError) throw error;
     throw new SmokeValidationError(error);
-  }
-}
-
-export async function verifyRecovery({
-  checkResult,
-  evidence,
-  restore = restoreSnapshotToDisposableDatabase,
-  probeWriter = unknownWriterBlocksSnapshot,
-}) {
-  const backupScenario = 'stopped-writer container snapshot';
-  let artifact = checkResult.snapshot;
-  let backupComplete = false;
-  let newSnapshot;
-  let heldScheduledWork;
-  try {
-    newSnapshot = await checkResult.remote.createStoppedSnapshot(
-      checkResult.release.tag.slice(1),
-      {
-        afterStop: async () => {
-          const held = await checkResult.remote.scheduledWorkState();
-          if ((held.activeJobs || []).length > 0) {
-            throw new Error('Scheduled jobs remained active after the API stopped');
-          }
-          if (Number(held.runningRuns) !== 0 || Number(held.cronBackends) !== 0) {
-            throw new Error('Scheduled SQL had not drained after the API stopped');
-          }
-          const writerApplication = `smoke-${evidence.runId || randomBytes(6).toString('hex')}-writer`;
-          const writer = await probeWriter(checkResult.remote, writerApplication);
-          if (!writer?.blocked) throw new Error('The stopped recovery baseline accepted an external writer');
-          await new Promise(resolve => setTimeout(resolve, 250));
-          const later = await checkResult.remote.scheduledWorkState();
-          if ((later.activeJobs || []).length > 0) {
-            throw new Error('Scheduled jobs became active while the recovery baseline was held');
-          }
-          if (Number(later.runningRuns) !== 0 || Number(later.cronBackends) !== 0) {
-            throw new Error('Scheduled SQL started while the recovery baseline was held');
-          }
-          if (Number(later.maxRunID) !== Number(held.maxRunID)) {
-            throw new Error('New scheduled work started while the recovery baseline was held');
-          }
-          heldScheduledWork = {
-            activeJobs: held.activeJobs,
-            runningRuns: Number(held.runningRuns),
-            cronBackends: Number(held.cronBackends),
-            newRunsWhileHeld: Number(later.maxRunID) - Number(held.maxRunID),
-            unknownWriterBlocked: writer.blocked,
-          };
-        },
-      },
-    );
-    const health = await checkResult.http.call({ path: '/health' });
-    if (health.body?.status !== 'ok') throw new Error('API did not recover after the stopped snapshot');
-    const liveFacts = await checkResult.remote.schemaAudits();
-    const liveConfiguration = validateConfiguration(liveFacts, checkResult.model);
-    if (Number(liveFacts.runningCronJobs) !== 0 || Number(liveFacts.cronBackends) !== 0) {
-      throw new Error('Scheduled SQL was still running after the recovery snapshot completed');
-    }
-    evidence.record({
-      scenario: backupScenario,
-      status: 'passed',
-      details: {
-        snapshot: newSnapshot,
-        writersStopped: true,
-        healthRequestId: health.requestId,
-        schedule: liveConfiguration.cron,
-        heldScheduledWork,
-        runningCronJobs: Number(liveFacts.runningCronJobs),
-        cronBackends: Number(liveFacts.cronBackends),
-      },
-    });
-    backupComplete = true;
-    artifact = {
-      name: newSnapshot,
-      remotePath: path.posix.join(checkResult.remote.target.snapshotDir, newSnapshot),
-      localPath: null,
-    };
-    const restored = await restore(
-      checkResult.remote,
-      artifact.remotePath,
-      {
-        release: checkResult.release.tag.slice(1),
-        origins: checkResult.release.origins,
-        upgradeOrigin: checkResult.release.upgradeOrigin,
-        model: checkResult.model,
-      },
-    );
-    evidence.record({
-      scenario: recoveryRestoreScenario,
-      status: 'passed',
-      details: {
-        snapshot: artifact.name,
-        ...restored,
-      },
-    });
-  } catch (error) {
-    if (backupComplete) {
-      evidence.record({
-        scenario: recoveryRestoreScenario,
-        status: 'failed',
-        details: { snapshot: artifact?.name || null, reason: error.message },
-      });
-    } else {
-      evidence.record({
-        scenario: backupScenario,
-        status: 'failed',
-        details: { snapshot: newSnapshot || null, reason: error.message },
-      });
-      evidence.record({
-        scenario: recoveryRestoreScenario,
-        status: 'blocked',
-        details: { reason: 'the stopped snapshot did not complete' },
-      });
-    }
-    throw error;
   }
 }
 
