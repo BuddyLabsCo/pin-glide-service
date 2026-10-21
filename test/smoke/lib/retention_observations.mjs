@@ -14,6 +14,7 @@ export function retentionStateQuery(plan, {
   receiverID,
   pairingID,
   liveTokenDigest,
+  liveGuardDigest,
 }) {
   const marker = retentionMarker(plan);
   const pattern = markerPattern(plan);
@@ -151,7 +152,7 @@ SELECT json_build_object(
     'guard', (
       SELECT count(*) FROM pin_glide.identity_refresh_operations
       WHERE operation_id = ${exact('operation-live')}
-        AND parent_digest = ${identifier(liveTokenDigest, 'live token digest')}
+        AND parent_digest = ${identifier(liveGuardDigest, 'live guard digest')}
     )
   ),
   'durable', json_build_object(

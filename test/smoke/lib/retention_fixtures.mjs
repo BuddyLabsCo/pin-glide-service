@@ -104,6 +104,7 @@ export function renderRetentionBoundarySQL(plan, {
   pairingID,
   jobID,
   liveTokenDigest,
+  liveGuardDigest,
 }) {
   const reference = timestamp(referenceTime);
   const sender = identifier(senderID, 'Sender');
@@ -112,6 +113,7 @@ export function renderRetentionBoundarySQL(plan, {
   const job = positiveInteger(jobID, 'cron job ID');
   const marker = retentionMarker(plan);
   const liveDigest = identifier(liveTokenDigest, 'live token digest');
+  const liveGuard = identifier(liveGuardDigest, 'live guard digest');
   return guardedTransaction(`
 DELETE FROM release.release_schema_audits
 WHERE executed_by = ${identifier(marker, 'audit owner')}
@@ -156,6 +158,11 @@ VALUES
         ${reference} - interval '7 days' - interval '1 second'),
     (${sender}, ${identifier(`${marker}-live`, 'live family')}, 'refresh',
         ${liveDigest}, ${reference}, ${reference} + interval '1 day');
+INSERT INTO pin_glide.identity_credentials
+    (sender_id, family_id, scope, token_digest, issued_at, expires_at)
+VALUES
+    (${sender}, ${identifier(`${marker}-live-guard`, 'live guard family')}, 'refresh',
+        ${liveGuard}, ${reference}, ${reference} + interval '1 day');
 
 INSERT INTO pin_glide.identity_refresh_operations
     (sender_id, operation_id, attempt, parent_digest, expires_at, committed_at)
@@ -167,7 +174,7 @@ VALUES
         ${identifier(retentionDigest(plan, 'operation-past-cutoff-parent'), 'operation digest')},
         ${reference} - interval '7 days' - interval '1 second', ${reference} - interval '8 days'),
     (${sender}, ${identifier(`${marker}-operation-live`, 'operation')}, 0,
-        ${liveDigest}, ${reference} + interval '1 day', ${reference});
+        ${liveGuard}, ${reference} + interval '1 day', ${reference});
 
 INSERT INTO pin_glide.pairing_sessions
     (id, mode, receiver_id, authorized_sender_id, state, token_digest, created_at,

@@ -244,6 +244,7 @@ const retention = {
   pairingID: 'smoke-integration-retention-pairing',
   jobID: 1,
   liveTokenDigest: 'a'.repeat(64),
+  liveGuardDigest: 'e'.repeat(64),
 };
 const scope = plan.senders.find(sender => sender.id.endsWith('-scope'));
 const permanent = plan.senders.find(sender => sender.id.endsWith('-permanent'));

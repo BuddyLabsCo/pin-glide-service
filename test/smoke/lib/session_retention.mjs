@@ -102,6 +102,9 @@ export async function runRetentionScenarios(session, { root } = {}) {
     liveToken: `smoke-${plan.runId}-retention-live-${randomBytes(24).toString('hex')}`,
   };
   fixture.liveTokenDigest = createHash('sha256').update(fixture.liveToken).digest('hex');
+  fixture.liveGuardDigest = createHash('sha256')
+    .update(`${fixture.liveToken}:guard`)
+    .digest('hex');
   session.addSecret(fixture.liveToken);
   const scenarios = [];
   try {
