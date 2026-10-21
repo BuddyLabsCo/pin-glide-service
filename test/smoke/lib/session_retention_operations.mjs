@@ -20,6 +20,7 @@ import {
 import { assertRetentionCounts } from './retention_runtime.mjs';
 import {
   deliveryItem,
+    deliveryRowQuery,
   expectMetadata,
   expectNoMessage,
   expectResult,
@@ -158,11 +159,12 @@ export async function deliveryLifetime(session, plan, fixture, pairing, socket) 
   }])[pairing.receiverID];
 
   await session.remote.sql(renderDeliveryAgeSQL(plan, message));
+  const aged = await session.remote.sqlJSON(deliveryRowQuery(session, 'pair2', message));
   const lookup = expectMetadata(await metadata(session, 'pair2', message), [{
     receiverID: pairing.receiverID,
     status: 'received',
-    createdAt: initial.createdAt,
-    completedAt: initial.completedAt,
+    createdAt: aged.createdAt,
+    completedAt: aged.completedAt,
   }])[pairing.receiverID];
   const duplicate = await upload(session, 'pair2', message, [
     deliveryItem(target, { ciphertext: Buffer.alloc(48, 71).toString('base64') }),
@@ -189,7 +191,8 @@ export async function deliveryLifetime(session, plan, fixture, pairing, socket) 
   return {
     message,
     deferredDuplicate: duplicate.body.results[0].status,
-    lookupDidNotExtendLifetime: lookup.createdAt === initial.createdAt,
+    lookupDidNotExtendLifetime: lookup.createdAt === aged.createdAt
+      && lookup.completedAt === aged.completedAt,
     scheduledProbe: probe,
     purged,
     acceptedRepeat: repeatedView.status,
