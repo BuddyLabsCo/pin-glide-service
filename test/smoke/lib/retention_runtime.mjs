@@ -167,10 +167,10 @@ WHERE application_name = ${escapeSQLString(application)};
   }
   return {
     application,
-    async cleanup() {
+    async cleanup({ verify = true } = {}) {
       await remote.sql(terminate);
       await holder.catch(() => {});
-      await remote.assertNoExternalWriters();
+      if (verify) await remote.assertNoExternalWriters();
     },
   };
 }

@@ -49,7 +49,7 @@ async function snapshotWriterGuard(remote, application, version) {
     }
     throw new Error('The snapshot action accepted a connected external writer');
   } finally {
-    await writer.cleanup();
+    await writer.cleanup({ verify: false });
   }
 }
 
