@@ -243,7 +243,8 @@ export async function deliverOnce(session, label, pairing, socket, tag) {
     if (first.outcome.error) throw first.outcome.error;
     const result = first.outcome.value.body?.results?.[0];
     throw new Error(
-      `live Delivery ended as ${first.outcome.value.status} ${result?.status || '(no result)'} before a frame`,
+      `live Delivery ended as ${first.outcome.value.status} ${result?.status || '(no result)'} ` +
+        `${result?.error?.code || '(no code)'} before a frame`,
     );
   }
   const { frame } = first;
