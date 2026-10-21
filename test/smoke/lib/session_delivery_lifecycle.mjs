@@ -83,8 +83,8 @@ export async function scenarioMixed(session, context) {
     throw new Error(`Mixed Delivery batch took ${batchElapsedMs}ms, beyond its 15-second budget`);
   }
   if (response.status !== 207) throw new Error(`Mixed upload returned ${response.status}`);
-  if (response.body.results.length !== 11) {
-    throw new Error(`Mixed upload returned ${response.body.results.length} results, want 11`);
+  if (!Array.isArray(response.body?.results) || response.body.results.length !== 11) {
+    throw new Error(`Mixed upload returned results ${JSON.stringify(response.body?.results)}, want 11`);
   }
 
   expectResult(response, 0, live.receiverID, 'received');
