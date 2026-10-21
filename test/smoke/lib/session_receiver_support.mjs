@@ -216,6 +216,7 @@ export async function deliverOnce(session, label, pairing, socket, tag) {
   const messageID = session.newOperationID(`receiver-delivery-${tag}`);
   const nonce = 'AAAAAAAAAAAAAAAA';
   const ciphertext = 'AQIDBAUGBwgJCgsMDQ4PEBESExQ=';
+  session.addSecret([nonce, ciphertext]);
   const uploading = settle(session.request({
     method: 'POST',
     path: '/v1/messages',

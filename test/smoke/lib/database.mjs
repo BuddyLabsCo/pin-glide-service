@@ -9,8 +9,9 @@ export const retention = new Map([
 ]);
 
 export const cronCommand = 'SELECT pin_glide.pin_glide_fn_cleanup_expired_rows(now())';
+export const retentionJobName = 'pin-glide-retention-cleanup';
 export const cronJobs = new Map([
-  ['pin-glide-retention-cleanup', {
+  [retentionJobName, {
     username: 'pin_glide',
     database: 'pin_glide',
     schedule: '0 19 * * *',

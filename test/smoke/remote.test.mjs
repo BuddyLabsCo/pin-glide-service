@@ -9,7 +9,8 @@ import test from 'node:test';
 
 import { cronCommand, retention } from './lib/database.mjs';
 import { removeHostsLine, watchdogBody } from './lib/provider_faults.mjs';
-import { acquireEnvironmentLock, RemoteEnvironment } from './lib/remote.mjs';
+import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
+import { RemoteEnvironment } from './lib/remote.mjs';
 import { TARGET } from './lib/target.mjs';
 import { verifyRecovery } from './runner.mjs';
 
@@ -201,7 +202,8 @@ test('service logs are bounded to the run window without reading the deployment 
   });
   await remote.apiLogsSince('2026-10-21T04:00:00.000Z');
   assert.equal(calls[0].command, 'ssh');
-  assert.match(calls[0].args.at(-1), /logs --no-color --tail 10000/);
+  assert.match(calls[0].args.at(-1), /logs --no-color --since/);
+  assert.doesNotMatch(calls[0].args.at(-1), /--tail/);
   assert.match(calls[0].args.at(-1), /--since '2026-10-21T04:00:00\.000Z'/);
   assert.match(calls[0].args.at(-1), / api$/);
   assert.doesNotMatch(calls[0].args.at(-1), /(?:cat|sed|source).*\.env/);
@@ -330,6 +332,43 @@ test('a held-state check failure restarts the service before snapshotting', asyn
     /unknown writer state/,
   );
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
+});
+
+test('recovery rejects scheduled work that becomes active while held', async () => {
+  let stateReads = 0;
+  const recorded = [];
+  await assert.rejects(
+    () => verifyRecovery({
+      checkResult: {
+        remote: {
+          target: TARGET,
+          createStoppedSnapshot: async (_version, { afterStop }) => {
+            await afterStop();
+            throw new Error('snapshot must not run');
+          },
+          scheduledWorkState: async () => {
+            stateReads++;
+            return stateReads === 1
+              ? { activeJobs: [], runningRuns: 0, cronBackends: 0, maxRunID: 7 }
+              : { activeJobs: ['new-job'], runningRuns: 0, cronBackends: 0, maxRunID: 7 };
+          },
+        },
+        release: { tag: 'v1.2.3' },
+        snapshot: null,
+        http: {},
+      },
+      evidence: {
+        runId: 'held-state-run',
+        record(entry) {
+          recorded.push(entry);
+        },
+      },
+      probeWriter: async () => ({ blocked: true }),
+      restore: async () => {},
+    }),
+    /became active/,
+  );
+  assert(recorded.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
 });
 
 test('recovery records snapshot and restore failures in their own scenarios', async () => {

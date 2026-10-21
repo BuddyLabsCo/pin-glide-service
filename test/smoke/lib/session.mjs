@@ -87,7 +87,7 @@ export class SmokeSession {
 
   addSecret(value) {
     for (const item of Array.isArray(value) ? value : [value]) {
-      if (!item) continue;
+      if (!item || this.secrets.has(item)) continue;
       this.secrets.add(item);
       this.evidence.addSecret(item);
     }
@@ -319,11 +319,13 @@ export class SmokeSession {
       });
       await socket.next();
       await senderSocket.next();
+      const relayPayload = Buffer.from(`smoke-${pairing.sessionID}`).toString('base64');
+      this.addSecret(relayPayload);
       socket.sendJSON({
         version: 1,
         type: 'pairing_relay',
         sessionId: pairing.sessionID,
-        payload: Buffer.from(`smoke-${pairing.sessionID}`).toString('base64'),
+        payload: relayPayload,
       });
       const relayed = await senderSocket.next();
       if (relayed.json?.type !== 'pairing_relay' || relayed.json?.side !== 'receiver') {

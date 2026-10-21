@@ -12,7 +12,8 @@ import { summarizeCompose } from './lib/installation.mjs';
 import { modelConfiguration } from './lib/configuration.mjs';
 import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
-import { RemoteEnvironment, acquireEnvironmentLock, repository } from './lib/remote.mjs';
+import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
+import { RemoteEnvironment, repository } from './lib/remote.mjs';
 import { recoverySnapshot, restoreSnapshotToDisposableDatabase, verifySnapshotLocations } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
@@ -329,6 +330,12 @@ export async function verifyRecovery({
           if (!writer?.blocked) throw new Error('The stopped recovery baseline accepted an external writer');
           await new Promise(resolve => setTimeout(resolve, 250));
           const later = await checkResult.remote.scheduledWorkState();
+          if ((later.activeJobs || []).length > 0) {
+            throw new Error('Scheduled jobs became active while the recovery baseline was held');
+          }
+          if (Number(later.runningRuns) !== 0 || Number(later.cronBackends) !== 0) {
+            throw new Error('Scheduled SQL started while the recovery baseline was held');
+          }
           if (Number(later.maxRunID) !== Number(held.maxRunID)) {
             throw new Error('New scheduled work started while the recovery baseline was held');
           }

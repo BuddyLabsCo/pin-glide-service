@@ -1,75 +1,15 @@
-import { createHash } from 'node:crypto';
+import { escapeSQLString } from './fixtures.mjs';
+import {
+  deleteOwnedBody,
+  guardedTransaction,
+  identifier,
+  positiveInteger,
+  retentionDigest,
+  retentionMarker,
+  timestamp,
+} from './retention_sql.mjs';
 
-import { escapeSQLString, sqlTextArray } from './fixtures.mjs';
-
-export function retentionMarker(plan) {
-  return `smoke-${plan.runId}-retention`;
-}
-
-function markerName(plan, suffix) {
-  return `${retentionMarker(plan)}-${suffix}`;
-}
-
-export function retentionDigest(plan, suffix) {
-  return createHash('sha256')
-    .update(`${retentionMarker(plan)}:${suffix}`)
-    .digest('hex');
-}
-
-function markerPattern(plan) {
-  return escapeSQLString(`${retentionMarker(plan)}%`);
-}
-
-function timestamp(value) {
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) throw new Error('Retention reference time is invalid');
-  return `${escapeSQLString(parsed.toISOString())}::timestamptz`;
-}
-
-function identifier(value, label) {
-  if (typeof value !== 'string' || value === '') throw new Error(`Retention ${label} is missing`);
-  return escapeSQLString(value);
-}
-
-function positiveInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Retention ${label} must be positive`);
-  return String(value);
-}
-
-function guardedTransaction(body) {
-  return `BEGIN;
-SET LOCAL lock_timeout = '10s';
-DO $$
-BEGIN
-    IF NOT (current_database() = 'pin_glide') THEN
-        RAISE EXCEPTION 'refusing smoke retention fixture outside pin_glide';
-    END IF;
-END
-$$;
-${body.trim()}
-COMMIT;
-`;
-}
-
-function deleteOwnedBody(plan) {
-  const pattern = markerPattern(plan);
-  return `
-DELETE FROM release.release_schema_audits
-WHERE executed_by LIKE ${pattern};
-DELETE FROM cron.job_run_details
-WHERE command LIKE ${pattern};
-DELETE FROM pin_glide.service_diagnostics
-WHERE request_id LIKE ${pattern};
-DELETE FROM pin_glide.pairing_sessions
-WHERE id LIKE ${pattern};
-DELETE FROM pin_glide.identity_refresh_operations
-WHERE operation_id LIKE ${pattern};
-DELETE FROM pin_glide.identity_credentials
-WHERE family_id LIKE ${pattern};
-DELETE FROM pin_glide.delivery_deliveries
-WHERE message_id LIKE ${pattern};
-`;
-}
+export { retentionDigest, retentionMarker } from './retention_sql.mjs';
 
 export function renderRetentionAgingSQL(plan, {
   referenceTime,

@@ -1,13 +1,13 @@
 import { randomBytes } from 'node:crypto';
 
 import { withFailureJoiningCleanup } from './cleanup.mjs';
-import { cronCommand } from './database.mjs';
+import { cronCommand, retentionJobName } from './database.mjs';
 import { escapeSQLString } from './fixtures.mjs';
 import { retentionStateQuery } from './retention_checks.mjs';
 import { retentionMarker } from './retention_fixtures.mjs';
 import { quote } from './shell.mjs';
 
-const stableJobName = 'pin-glide-retention-cleanup';
+const stableJobName = retentionJobName;
 
 export function assertRetentionCounts(state, expected) {
   for (const [name, wanted] of Object.entries(expected)) {

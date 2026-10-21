@@ -119,6 +119,7 @@ test('a live delivery is correlated and acknowledged before its replay check', a
   }];
   const receipts = [];
   const session = {
+    addSecret() {},
     newOperationID: () => 'message-1',
     sender: () => ({ id: 'sender-1' }),
     token: () => 'uploader-secret',

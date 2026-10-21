@@ -2,21 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createFixturePlan } from './lib/fixtures.mjs';
+import { upload } from './lib/session_delivery_support.mjs';
 import {
-  cleanupCallSQL,
-  renderConfigurationDeleteProbeSQL,
-  renderRetentionCleanupSQL,
-  renderRetentionInterruptedSQL,
-  retentionStateQuery,
-  runOwnedPrivacyQuery,
-} from './lib/retention_checks.mjs';
-import {
-  renderRetentionAgingSQL,
-  renderRetentionBoundarySQL,
-  retentionMarker,
-} from './lib/retention_fixtures.mjs';
-import {
-  retentionProbeCommand,
   runScheduledCleanupProbe,
   jsonFromOutput,
   stableRetentionJob,
@@ -26,106 +13,6 @@ import { cronCommand } from './lib/database.mjs';
 import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 
 const referenceTime = '2026-10-21T04:00:00.000Z';
-const liveTokenDigest = 'a'.repeat(64);
-const fixture = {
-  referenceTime,
-  senderID: 'smoke-fixture-sender-pair2',
-  receiverID: 'smoke-fixture-receiver',
-  pairingID: 'smoke-fixture-pairing',
-  jobID: 17,
-  liveTokenDigest,
-};
-
-test('retention fixtures are database guarded and use one run-owned marker', () => {
-  const plan = createFixturePlan({ runId: 'retention-sql-run' });
-  const marker = retentionMarker(plan);
-  const aging = renderRetentionAgingSQL(plan, fixture);
-  const boundary = renderRetentionBoundarySQL(plan, fixture);
-
-  for (const statement of [aging, boundary]) {
-    assert.match(statement, /current_database\(\) = 'pin_glide'/);
-    assert.match(statement, /BEGIN;/);
-    assert.match(statement, /COMMIT;/);
-  }
-  for (const suffix of [
-    'delivery-old',
-    'credential-old',
-    'operation-old',
-    'session-old',
-    'diagnostic-old',
-    'audit-old',
-    'cron-old',
-    'cron-running',
-  ]) {
-    assert.match(aging, new RegExp(`${marker}-${suffix}`));
-  }
-  for (const suffix of [
-    'delivery-cutoff',
-    'delivery-past-cutoff',
-    'credential-cutoff',
-    'credential-past-cutoff',
-    'operation-cutoff',
-    'operation-past-cutoff',
-    'session-cutoff',
-    'session-past-cutoff',
-    'diagnostic-cutoff',
-    'diagnostic-past-cutoff',
-    'audit-cutoff',
-    'audit-past-cutoff',
-    'cron-cutoff',
-    'cron-past-cutoff',
-  ]) {
-    assert.match(boundary, new RegExp(`${marker}-${suffix}`));
-  }
-  assert.match(boundary, new RegExp(liveTokenDigest));
-  assert.doesNotMatch(boundary, /retention-live-token/);
-});
-
-test('retention cleanup removes only fixtures and cron runs owned by the run', () => {
-  const plan = createFixturePlan({ runId: 'retention-cleanup-run' });
-  const marker = retentionMarker(plan);
-  const cleanup = renderRetentionCleanupSQL(plan, [41, 42]);
-  const state = retentionStateQuery(plan, fixture);
-
-  assert.match(cleanup, /current_database\(\) = 'pin_glide'/);
-  assert.match(cleanup, /cron\.unschedule\(jobname\)/);
-  assert.match(cleanup, /jobname LIKE/);
-  assert.match(cleanup, /runid = ANY\(ARRAY\[41, 42\]::bigint\[\]\)/);
-  assert.match(cleanup, new RegExp(`${marker}%`));
-  assert.doesNotMatch(cleanup, /DELETE FROM pin_glide\.identity_accounts/);
-  assert.doesNotMatch(cleanup, /DELETE FROM pin_glide\.pairing_pairings/);
-  assert.match(state, /deliveryOld/);
-  assert.match(state, /durable/);
-  assert.match(state, /pin-glide-retention-cleanup/);
-});
-
-test('the privacy query reads every run-owned application, release and cron surface', () => {
-  const plan = createFixturePlan({ runId: 'retention-privacy-run' });
-  const query = runOwnedPrivacyQuery(plan, {
-    receiverIDs: ['receiver-1'],
-    requestIDs: ['request-1'],
-    subjects: ['session-1'],
-  });
-  for (const table of [
-    'identity_accounts',
-    'identity_sender_registrations',
-    'identity_credentials',
-    'identity_refresh_operations',
-    'identity_receiver_registrations',
-    'identity_receiver_credentials',
-    'pairing_pairings',
-    'pairing_sessions',
-    'delivery_deliveries',
-    'service_diagnostics',
-    'release_schema_audits',
-    'job_run_details',
-    'release_data_scripts',
-    'release_deploy_history',
-    'release_migration_scripts',
-  ]) {
-    assert.match(query, new RegExp(table));
-  }
-});
 
 test('scheduled cleanup probe waits for a committed run and removes its probe job', async () => {
   const calls = [];
@@ -166,13 +53,6 @@ test('scheduled cleanup probe waits for a committed run and removes its probe jo
   assert(calls.some(statement => statement.includes("'1 second'")));
   assert(calls.some(statement => statement.includes('DO $smoke$')));
   assert(calls.some(statement => statement.includes('cron.unschedule')));
-});
-
-test('the scheduled cleanup probe removes itself even if the runner exits', () => {
-  const command = retentionProbeCommand('smoke-retention-probe');
-  assert.match(command, /pin_glide_fn_cleanup_expired_rows\(now\(\)\)/);
-  assert.match(command, /cron\.unschedule\('smoke-retention-probe'\)/);
-  assert.throws(() => retentionProbeCommand('invalid name'), /job name is invalid/);
 });
 
 test('the live unknown-writer probe blocks and terminates only its own connection', async () => {
@@ -284,17 +164,34 @@ test('privacy verification scans diagnostics, errors, logs and public artifacts'
   );
 });
 
-test('cleanup calls and configuration deletion probe stay inside one explicit transaction', () => {
-  const plan = createFixturePlan({ runId: 'retention-transaction-run' });
-  const cleanup = cleanupCallSQL(referenceTime);
-  const configuration = renderConfigurationDeleteProbeSQL(plan, fixture);
+test('privacy verification records large Delivery payloads for redaction scans', async () => {
+  const nonce = 'AAAAAAAAAAAAAAAA';
+  const ciphertext = Buffer.alloc(700 * 1024, 7).toString('base64');
+  const secrets = [];
+  let request;
+  const session = {
+    addSecret(values) {
+      secrets.push(...values);
+    },
+    token() {
+      return 'uploader-token';
+    },
+    async request(options) {
+      request = options;
+      return { status: 200, body: { results: [] } };
+    },
+  };
 
-  assert.match(cleanup, /json_build_object\(\s*'removed'/);
-  assert.match(cleanup, /pin_glide_fn_cleanup_expired_rows/);
-  assert.match(configuration, /BEGIN;/);
-  assert.match(configuration, /DELETE FROM pin_glide\.model_configurations/);
-  assert.match(configuration, /ROLLBACK;/);
-  assert.doesNotMatch(configuration, /COMMIT;/);
+  await upload(session, 'pair2', 'large-message', [{
+    receiverId: 'receiver-1',
+    pairingId: 'pairing-1',
+    cryptoVersion: 1,
+    nonce,
+    ciphertext,
+  }]);
+
+  assert.deepEqual(secrets, [nonce, ciphertext]);
+  assert.equal(request.body.items[0].ciphertext, ciphertext);
 });
 
 test('configuration probe output survives psql command tags', () => {

@@ -147,6 +147,23 @@ VALUES ('delivery-missed', $1, 'message-missed', $2, $3, 'offline', $4, $4)`,
 		t.Errorf("a rerun with nothing eligible removed %d rows, want a safe no-op", removed)
 	}
 
+	// A row that is still inside the window today becomes eligible on the next
+	// scheduled day. A fresh run with the advanced reference time must delete it
+	// without relying on state from the previous run.
+	environment.exec(t, `
+INSERT INTO pin_glide.delivery_deliveries
+    (id, sender_id, message_id, receiver_id, pairing_id, status, created_at, completed_at)
+VALUES ('delivery-next-day', $1, 'message-next-day', $2, $3, 'offline', $4, $4)`,
+		senderID, receiverID, pairingID, reference.AddDate(0, 0, -6).Add(-time.Second))
+	if removed := environment.runCleanup(t, reference.AddDate(0, 0, 1)); removed != 1 {
+		t.Errorf("the next day's cleanup removed %d rows, want the 1 newly eligible row", removed)
+	}
+	if kept := environment.count(t, `
+SELECT count(*) FROM pin_glide.delivery_deliveries
+WHERE id = 'delivery-next-day'`); kept != 0 {
+		t.Errorf("the next day's cleanup kept %d newly eligible rows", kept)
+	}
+
 	for name, query := range map[string]string{
 		"finished run inside its window": `
 SELECT count(*) FROM cron.job_run_details
