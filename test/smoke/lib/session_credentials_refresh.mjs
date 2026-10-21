@@ -220,6 +220,8 @@ export async function reuseIsolation(session) {
   ) {
     throw new Error('Refresh reuse did not revoke only its Sender family');
   }
+  // The scenario intentionally revoked this family, so it has no usable runner checkpoint.
+  session.sender('window').latestRefresh = undefined;
 
   return {
     outsideWindow,
