@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { deliveryRestoreWatchdog } from './lib/delivery_faults.mjs';
+import { deliveryRestoreWatchdog, withDeliveryBatchLock } from './lib/delivery_faults.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { runDeliveryScenario } from './lib/session_delivery_support.mjs';
 import { expectNoMessage } from './lib/socket_assertions.mjs';
@@ -93,6 +93,35 @@ printf '%s\\n' "$*" >> ${lockCalls}
   assert.equal(existsSync(`${guard}.sql`), false);
   assert.equal(readFileSync(calls, 'utf8').trim().split('\n').length, 2);
   assert.equal(readFileSync(lockCalls, 'utf8').trim(), '9');
+});
+
+test('a failed batch-lock acquisition waits for the holder before rejecting', async () => {
+  const order = [];
+  const remote = {
+    compose: "sudo -n docker compose --project-directory '/srv/pin-glide-dev'",
+    ssh() {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          order.push('holder');
+          resolve({ stdout: '' });
+        }, 20);
+      });
+    },
+    sqlJSON() {
+      if (!order.includes('holder')) {
+        order.push('poll');
+        throw new Error('transient poll failure');
+      }
+      return Promise.resolve({ held: 0 });
+    },
+  };
+  await assert.rejects(
+    () => withDeliveryBatchLock(remote, async () => {
+      order.push('callback');
+    }),
+    /transient poll failure/,
+  );
+  assert.deepEqual(order, ['poll', 'holder']);
 });
 
 test('Delivery evidence records published operations and messages with their source digests', async () => {
