@@ -106,6 +106,7 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, new RegExp(faultPaths.guard.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, new RegExp(faultPaths.watchdog.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, /rm -f/);
+  assert.match(calls.at(-1).script, /--force-recreate --wait api/);
 
   calls.length = 0;
   await assert.rejects(

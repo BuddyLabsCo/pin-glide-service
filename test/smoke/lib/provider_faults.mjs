@@ -192,8 +192,10 @@ export async function withBailianConnectivityFault(
         `! grep -F ${quote(marker)} /etc/hosts`,
       ].join('\n');
       return remote.ssh(
-        `${container} && sudo -n docker exec -u 0 "$id" sh -ec ${quote(restore)}`,
-        { timeoutMs: 30_000 },
+        `${container} && sudo -n docker exec -u 0 "$id" sh -ec ${quote(restore)} && ` +
+          `${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ` +
+          'up -d --no-deps --force-recreate --wait api',
+        { timeoutMs: 180_000 },
       );
     },
     'Provider-connectivity fault and network restoration both failed',
