@@ -82,9 +82,11 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     'resource_not_found',
   );
 
+  let online;
+  let unrelatedOnline;
   const delivery = await openDelivery(session, primaryToken);
   try {
-    const online = await sharedPresence(session, {
+    online = await sharedPresence(session, {
       'receiver-main': primary.pairingID,
       'receiver-shared': shared.pairingID,
     }, 'online', presenceWait);
@@ -105,7 +107,6 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     }
 
     const unrelatedSocket = await openDelivery(session, unrelated.receiverToken);
-    let unrelatedOnline;
     try {
       unrelatedOnline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'online', presenceWait);
       const sharedStillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online', presenceWait);
