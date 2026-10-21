@@ -234,7 +234,19 @@ export async function deliverOnce(session, label, pairing, socket, tag) {
       }],
     },
   }));
-  const frame = await socket.next(10_000);
+  const first = await Promise.race([
+    socket.next(10_000).then(frame => ({ frame }), error => ({ error })),
+    uploading.then(outcome => ({ outcome })),
+  ]);
+  if (first.error) throw first.error;
+  if (first.outcome) {
+    if (first.outcome.error) throw first.outcome.error;
+    const result = first.outcome.value.body?.results?.[0];
+    throw new Error(
+      `live Delivery ended as ${first.outcome.value.status} ${result?.status || '(no result)'} before a frame`,
+    );
+  }
+  const { frame } = first;
   if (
     frame.json?.type !== 'delivery'
     || frame.json.senderId !== session.sender(label).id
