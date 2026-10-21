@@ -113,6 +113,8 @@ test('an abandoned refresh response records an uncertain attempt without replaci
   const plan = createFixturePlan({ runId: 'refresh-dropped-run' });
   const sender = plan.senders.find(item => item.id.endsWith('-recover'));
   const original = sender.credentials.map(item => ({ ...item }));
+  sender.latestRefresh = { operationID: 'operation-authority', attempt: 0 };
+  const checkpoint = { ...sender.latestRefresh };
   const http = {
     async callDropped(request) {
       assert.equal(request.body.operationId, 'operation-dropped');
@@ -135,7 +137,7 @@ test('an abandoned refresh response records an uncertain attempt without replaci
   });
   assert.equal(result.requestId, 'request-dropped');
   assert.deepEqual(sender.pendingRefresh, { operationID: 'operation-dropped', attempt: 0 });
-  assert.equal(sender.latestRefresh, undefined);
+  assert.deepEqual(sender.latestRefresh, checkpoint);
   assert.deepEqual(sender.credentials, original);
 });
 
