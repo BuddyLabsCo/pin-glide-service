@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { runProcess } from './commands.mjs';
 import { SmokeBlocked, SmokeProblem } from './http.mjs';
@@ -214,8 +216,8 @@ export async function waitForHealth(session) {
 // frame and its Receipt, so a later reconnect can prove no payload was kept.
 export async function deliverOnce(session, label, pairing, socket, tag) {
   const messageID = session.newOperationID(`receiver-delivery-${tag}`);
-  const nonce = 'AAAAAAAAAAAAAAAA';
-  const ciphertext = 'AQIDBAUGBwgJCgsMDQ4PEBESExQ=';
+  const nonce = randomBytes(12).toString('base64');
+  const ciphertext = randomBytes(16).toString('base64');
   session.addSecret([nonce, ciphertext]);
   const uploading = settle(session.request({
     method: 'POST',
