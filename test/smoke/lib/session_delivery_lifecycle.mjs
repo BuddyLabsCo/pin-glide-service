@@ -57,9 +57,10 @@ export async function scenarioMixed(session, context) {
   let response;
   let responsePromise;
   const started = Date.now();
+  const liveItem = deliveryItem(live);
   try {
     responsePromise = upload(session, 'pair2', message, [
-      deliveryItem(live),
+      liveItem,
       deliveryItem(live, { receiverId: '', nonce: 'not-base64' }),
       deliveryItem(live, { receiverId: 'receiver-unknown' }),
       deliveryItem(foreign),
@@ -71,7 +72,7 @@ export async function scenarioMixed(session, context) {
       deliveryItem(duplicated),
       deliveryItem(duplicated, { ciphertext: Buffer.alloc(48, 33).toString('base64') }),
     ]);
-    const frame = await nextDelivery(socket, live);
+    const frame = await nextDelivery(socket, live, { messageId: message, item: liveItem });
     sendReceipt(socket, frame);
     response = await responsePromise;
   } finally {
@@ -159,14 +160,19 @@ export async function scenarioDuplicates(session, context) {
   const target = liveTarget(session, context);
   const socket = await openReceiver(session, target.receiverToken);
   const message = messageID(session, 'duplicate');
+  const firstItem = deliveryItem(target);
+  const secondItem = deliveryItem(target, {
+    ciphertext: Buffer.alloc(48, 91).toString('base64'),
+  });
   let first;
   let second;
   try {
-    first = upload(session, 'pair2', message, [deliveryItem(target)]);
-    second = upload(session, 'pair2', message, [
-      deliveryItem(target, { ciphertext: Buffer.alloc(48, 91).toString('base64') }),
+    first = upload(session, 'pair2', message, [firstItem]);
+    second = upload(session, 'pair2', message, [secondItem]);
+    const frame = await nextDelivery(socket, target, [
+      { messageId: message, item: firstItem },
+      { messageId: message, item: secondItem },
     ]);
-    const frame = await nextDelivery(socket, target);
     sendReceipt(socket, frame);
     const [left, right] = await Promise.all([first, second]);
     for (const response of [left, right]) {

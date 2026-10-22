@@ -29,7 +29,7 @@ import { targetFromOptions } from './lib/target.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const exclusions = [
   'Real QQ or WeChat authorization and provider identity verification',
-  'Owner-proof Sender security revocation',
+  'Owner-proof Sender or Receiver device-security revocation',
   'Owner-proof recover_receiver authorization and credential replacement',
 ];
 function usage() {

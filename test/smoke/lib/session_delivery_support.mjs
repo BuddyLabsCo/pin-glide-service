@@ -65,7 +65,7 @@ export function expectResult(response, index, receiverID, status, code = '') {
   return result;
 }
 
-export async function nextDelivery(socket, association) {
+export async function nextDelivery(socket, association, expected) {
   const message = await socket.next();
   const frame = message.json;
   if (
@@ -78,6 +78,18 @@ export async function nextDelivery(socket, association) {
       ? `${frame.type}/${frame.senderId}/${frame.receiverId}/${frame.pairingId}`
       : 'unreadable';
     throw new Error(`Delivery frame does not match ${association.pairingID}: ${observed}`);
+  }
+  if (expected) {
+    const candidates = Array.isArray(expected) ? expected : [expected];
+    const exact = candidates.some(({ messageId, item }) => (
+      frame.messageId === messageId
+      && frame.cryptoVersion === item.cryptoVersion
+      && frame.nonce === item.nonce
+      && frame.ciphertext === item.ciphertext
+    ));
+    if (!exact) {
+      throw new Error(`Delivery frame did not carry a submitted payload for ${association.pairingID}`);
+    }
   }
   return frame;
 }

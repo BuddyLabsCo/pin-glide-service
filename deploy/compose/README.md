@@ -169,7 +169,7 @@ node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.
 
 This command pulls through the existing workstation Docker credential context and removes both project volumes. Its `--check` mode validates the releases and support declaration without starting containers.
 
-Real QQ/WeChat authorization, fresh-owner Sender security revocation and fresh-owner `recover_receiver` remain outside unattended smoke coverage. The runner executes selected provider-fake integration tests for those paths and records them separately as deterministic evidence, never as real-provider login.
+Real QQ/WeChat authorization, fresh-owner Sender or Receiver device-security revocation and fresh-owner `recover_receiver` remain outside unattended smoke coverage. The runner executes selected provider-fake integration tests for those paths and records them separately as deterministic evidence, never as real-provider login.
 
 ## Menu and CLI
 

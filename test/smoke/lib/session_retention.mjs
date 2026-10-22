@@ -209,6 +209,7 @@ export async function runRetentionScenarios(session, { root } = {}) {
             })),
           };
         },
+        { evidenceType: 'deterministic' },
       ));
       const databaseRows = await session.remote.sqlJSON(runOwnedPrivacyQuery(plan, {
         receiverIDs: [...session.receivers],

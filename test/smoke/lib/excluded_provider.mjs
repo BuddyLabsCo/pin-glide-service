@@ -77,5 +77,6 @@ export async function runExcludedProviderEvidence({ session, root, run } = {}) {
         observes,
       })),
     }),
+    { evidenceType: 'deterministic' },
   );
 }

@@ -21,6 +21,11 @@ test('smoke evidence redacts every raw credential before serialization', () => {
   assert(!serialized.includes(secret));
   assert.match(serialized, /REDACTED/);
   assert.equal(evidence.report().scenarios[0].status, 'passed');
+  assert.equal(evidence.report().scenarios[0].evidenceType, 'smoke');
+  assert.throws(
+    () => evidence.record({ scenario: 'unknown evidence', status: 'passed', evidenceType: 'excluded' }),
+    /evidence type must be smoke or deterministic/,
+  );
 });
 
 test('fixture values escape SQL string boundaries', () => {

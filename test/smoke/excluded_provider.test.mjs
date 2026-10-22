@@ -38,6 +38,7 @@ test('excluded real-provider paths are reported only as deterministic evidence',
   assert.equal(outcome.status, 'passed');
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].status, 'passed');
+  assert.equal(recorded[0].evidenceType, 'deterministic');
   assert.equal(recorded[0].details.smokeStatus, 'excluded');
   assert.deepEqual(
     recorded[0].details.tests,
@@ -80,5 +81,6 @@ test('an unavailable deterministic prerequisite is blocked, not reported as a sm
   );
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].status, 'blocked');
+  assert.equal(recorded[0].evidenceType, 'deterministic');
   assert.match(recorded[0].scenario, /excluded real-provider/);
 });
