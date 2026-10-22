@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const sensitive = /^(?:authorization|token|refreshtoken|receivertoken|pairingtoken|api_?key|parent_?key|password|secret|wechatcode|qqcode)$/i;
 const statuses = new Set(['passed', 'failed', 'blocked']);
+const evidenceTypes = new Set(['smoke', 'deterministic']);
 
 function redact(value, secrets, key = '') {
   if (sensitive.test(key)) return '[REDACTED]';
@@ -39,12 +40,24 @@ export class Evidence {
     return [...this.secrets];
   }
 
-  record({ scenario, status, requestId = '', httpStatus, code = '', details = {} }) {
+  record({
+    scenario,
+    status,
+    evidenceType = 'smoke',
+    requestId = '',
+    httpStatus,
+    code = '',
+    details = {},
+  }) {
     if (!scenario) throw new Error('Smoke evidence needs a scenario name');
     if (!statuses.has(status)) throw new Error(`Smoke evidence status must be passed, failed or blocked, found ${status}`);
+    if (!evidenceTypes.has(evidenceType)) {
+      throw new Error(`Smoke evidence type must be smoke or deterministic, found ${evidenceType}`);
+    }
     this.scenarios.push({
       scenario,
       status,
+      evidenceType,
       requestId,
       ...(httpStatus === undefined ? {} : { httpStatus }),
       ...(code ? { code } : {}),

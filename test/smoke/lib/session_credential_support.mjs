@@ -14,13 +14,14 @@ export function settle(promise) {
   return promise.then(value => ({ value }), error => ({ error }));
 }
 
-export async function runScenario(session, name, callback) {
+export async function runScenario(session, name, callback, { evidenceType = 'smoke' } = {}) {
   const start = session.requestIds.length;
   try {
     const details = await callback();
     session.evidence.record({
       scenario: name,
       status: 'passed',
+      evidenceType,
       details: {
         ...details,
         requestIds: session.requestIds.slice(start),
@@ -32,6 +33,7 @@ export async function runScenario(session, name, callback) {
     session.evidence.record({
       scenario: name,
       status,
+      evidenceType,
       code: error instanceof SmokeProblem ? error.code : '',
       requestId: error instanceof SmokeProblem ? error.requestId : '',
       details: {

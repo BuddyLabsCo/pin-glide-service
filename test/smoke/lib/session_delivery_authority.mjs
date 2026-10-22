@@ -20,11 +20,12 @@ export async function scenarioAuthority(session, context) {
   const live = deliveryTarget(session, 'a2', dedicated);
   const socket = await openReceiver(session, live.receiverToken);
   const message = messageID(session, 'authority');
+  const acceptedItem = deliveryItem(live);
   let removal;
   let accepted;
   try {
-    accepted = upload(session, 'a2', message, [deliveryItem(live)]);
-    const frame = await nextDelivery(socket, live);
+    accepted = upload(session, 'a2', message, [acceptedItem]);
+    const frame = await nextDelivery(socket, live, { messageId: message, item: acceptedItem });
     const removed = await session.request({
       method: 'DELETE',
       path: `/v1/self/pairings/${encodeURIComponent(live.pairingID)}`,

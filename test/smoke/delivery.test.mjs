@@ -16,6 +16,7 @@ import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import {
   expectMetadata,
+  nextDelivery,
   runDeliveryScenario,
   waitForAdmitted,
 } from './lib/session_delivery_support.mjs';
@@ -51,6 +52,50 @@ test('Delivery metadata compares timestamp instants across wire formats', () => 
     createdAt: '2026-10-21T17:00:00.123456Z',
     completedAt: '2026-10-21T17:00:01.123456Z',
   }]);
+});
+
+test('Delivery frames must carry the exact submitted payload', async () => {
+  const item = {
+    receiverId: 'receiver-1',
+    pairingId: 'pairing-1',
+    cryptoVersion: 1,
+    nonce: 'nonce-1',
+    ciphertext: 'ciphertext-1',
+  };
+  const association = {
+    senderID: 'sender-1',
+    receiverID: item.receiverId,
+    pairingID: item.pairingId,
+  };
+  const frame = {
+    type: 'delivery',
+    senderId: association.senderID,
+    receiverId: association.receiverID,
+    pairingId: association.pairingID,
+    messageId: 'message-1',
+    cryptoVersion: item.cryptoVersion,
+    nonce: item.nonce,
+    ciphertext: item.ciphertext,
+  };
+  await nextDelivery({ next: async () => ({ json: frame }) }, association, {
+    messageId: frame.messageId,
+    item,
+  });
+  for (const replacement of [
+    { messageId: 'other-message' },
+    { cryptoVersion: 2 },
+    { nonce: 'other-nonce' },
+    { ciphertext: 'other-ciphertext' },
+  ]) {
+    await assert.rejects(
+      () => nextDelivery(
+        { next: async () => ({ json: { ...frame, ...replacement } }) },
+        association,
+        { messageId: frame.messageId, item },
+      ),
+      /did not carry a submitted payload/,
+    );
+  }
 });
 
 test('an unexpected Delivery frame is reported without its ciphertext', async () => {

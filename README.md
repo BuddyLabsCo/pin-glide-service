@@ -113,10 +113,10 @@ configuration from the environment:
 WeChat and QQ configuration is optional at startup. A missing or partial provider pair fails only when that provider is used. The API and database tools do not require either provider in any environment.
 
 Temporary model credentials come from that parent key plus the enabled non-secret `pin_glide.model_configurations` row. The release Data Script installs the approved Beijing Workspace and `qwen3.7-flash` model; see `deploy/compose/README.md` for verification and change control.
-The repository verifies that boundary with the fake in `test/fakes/bailian` and
-the adapter's own HTTP tests; confirming the real temporary-key endpoint, its
-lifetime parameter, its answer and the parent key's permissions is a separate
-request-driven acceptance step.
+The repository verifies the boundary with the fake in `test/fakes/bailian`, the
+adapter's own HTTP tests, and the request-driven deployed smoke runner. Platform
+cryptography, key storage, QR scanning, and Android or Windows UI behavior remain
+client acceptance work.
 
 ## Running the database tools
 
@@ -282,8 +282,9 @@ images:
 node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
 ```
 
-See `deploy/compose/README.md` for the target guards,
-upgrade-origin rule, evidence and provider-proof exclusions.
+See `test/smoke/README.md` for the acceptance baseline, coverage matrix,
+fixture lifecycle and evidence classes. See `deploy/compose/README.md` for the
+target guards, upgrade-origin rule and deployment procedures.
 
 The repository is implemented ticket by ticket, and the published descriptions
 describe only the surface delivered so far: the WSS definitions declare no

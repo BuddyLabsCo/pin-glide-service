@@ -198,6 +198,7 @@ test('Pairing evidence records the contract operations, messages and source comm
   assert.deepEqual(recorded, [{
     scenario: 'contract identity',
     status: 'passed',
+    evidenceType: 'smoke',
     details: {
       contract,
       exercised: true,
