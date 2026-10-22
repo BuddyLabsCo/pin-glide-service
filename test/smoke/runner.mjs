@@ -47,7 +47,6 @@ function usage() {
     'Bailian model journeys plus privacy and retention cleanup through the local',
     'service, then creates a',
     'stopped-writer snapshot and restores it into a disposable database.',
-    'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke.',
   ].join('\n');
 }
 
@@ -380,9 +379,6 @@ async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   const target = targetFor(options);
-  if (options.mode === 'integration-ready' && process.env.PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION !== target.project) {
-    throw new Error(`--integration-ready requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=${target.project}`);
-  }
   const runId = `smoke-${Date.now()}-${randomBytes(6).toString('hex')}`;
   const evidence = new Evidence({ runId, exclusions, redact: false });
   const evidencePath = process.env.PIN_GLIDE_SMOKE_EVIDENCE

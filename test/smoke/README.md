@@ -140,7 +140,6 @@ Guarded local journey:
 
 ```sh
 PIN_GLIDE_SMOKE_RELEASE=0.1.6 \
-PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
   node test/smoke/runner.mjs --integration-ready
 ```
 
