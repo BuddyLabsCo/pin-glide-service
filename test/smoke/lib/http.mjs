@@ -15,6 +15,7 @@ export class SmokeProblem extends Error {
     this.bodyRequestId = body?.requestId || '';
     this.bodyStatus = body?.status;
     this.detail = body?.detail || '';
+    this.body = body;
   }
 }
 

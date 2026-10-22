@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateConfiguration, validateDatabaseFacts } from './lib/database.mjs';
+import { validateDatabaseFacts } from './lib/database.mjs';
 import { SmokeValidationError } from './lib/errors.mjs';
 import { Evidence } from './lib/evidence.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
@@ -12,14 +12,17 @@ import { summarizeCompose } from './lib/installation.mjs';
 import { modelConfiguration } from './lib/configuration.mjs';
 import { runModelScenarios } from './lib/model.mjs';
 import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
-import { RemoteEnvironment, acquireEnvironmentLock, repository } from './lib/remote.mjs';
-import { recoverySnapshot, restoreSnapshotToDisposableDatabase, verifySnapshotLocations } from './lib/restore.mjs';
+import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
+import { RemoteEnvironment, repository } from './lib/remote.mjs';
+import { recoveryRestoreScenario, verifyRecovery } from './lib/recovery.mjs';
+import { recoverySnapshot, verifySnapshotLocations } from './lib/restore.mjs';
 import { SmokeSession } from './lib/session.mjs';
 import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
 import { runDeliveryScenarios } from './lib/session_delivery.mjs';
 import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
 import { runPairingScenarios } from './lib/session_pairing.mjs';
 import { runReceiverScenarios } from './lib/session_receiver.mjs';
+import { runRetentionScenarios } from './lib/session_retention.mjs';
 import { targetFromOptions } from './lib/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -28,8 +31,6 @@ const exclusions = [
   'Owner-proof Sender security revocation',
   'Owner-proof recover_receiver authorization and credential replacement',
 ];
-const recoveryRestoreScenario = 'container-run development snapshot restore';
-
 function usage() {
   return [
     'Usage: node test/smoke/runner.mjs --check --release X.Y.Z',
@@ -40,7 +41,8 @@ function usage() {
     'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
     'exercises seeded Sender credential/session, Pairing, Delivery, Receiver and real',
-    'Bailian model journeys through the deployed service, then creates a',
+    'Bailian model journeys plus privacy and retention cleanup through the deployed',
+    'service, then creates a',
     'stopped-writer snapshot and restores it into a disposable database.',
     'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
   ].join('\n');
@@ -151,6 +153,7 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     details: {
       tag: release.tag,
       sourceCommit: release.sourceCommit,
+      checkedOutCommit: release.checkedOutCommit,
       upgradeOrigin: release.upgradeOrigin,
       assets: release.assets,
     },
@@ -163,6 +166,17 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
   const snapshot = await recoverySnapshot(remote, { allowMissing: true });
   try {
     const config = await remote.composeConfig();
+    const apiEnvironment = config.services?.api?.environment || {};
+    const postgresEnvironment = config.services?.postgres?.environment || {};
+    for (const secret of [
+      apiEnvironment.PIN_GLIDE_DATABASE_URL,
+      apiEnvironment.PIN_GLIDE_WECHAT_APP_SECRET,
+      apiEnvironment.PIN_GLIDE_QQ_APP_KEY,
+      apiEnvironment.PIN_GLIDE_BAILIAN_API_KEY,
+      postgresEnvironment.POSTGRES_PASSWORD,
+    ]) {
+      evidence.addSecret(secret);
+    }
     const compose = summarizeCompose(config, target, target.release);
     evidence.record({
       scenario: 'target and Compose identity',
@@ -280,93 +294,42 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
       status: 'passed',
       details: database,
     });
-    return { remote, http, database, release, snapshot, model };
+    return {
+      remote,
+      http,
+      database,
+      release,
+      snapshot,
+      model,
+      postgresImage: running.postgres.reference,
+    };
   } catch (error) {
     if (error instanceof SmokeProblem || error instanceof SmokeValidationError) throw error;
     throw new SmokeValidationError(error);
   }
 }
 
-export async function verifyRecovery({
-  checkResult,
-  evidence,
-  restore = restoreSnapshotToDisposableDatabase,
-}) {
-  const backupScenario = 'stopped-writer container snapshot';
-  let artifact = checkResult.snapshot;
-  let backupComplete = false;
-  let newSnapshot;
-  try {
-    newSnapshot = await checkResult.remote.createStoppedSnapshot(checkResult.release.tag.slice(1));
-    const health = await checkResult.http.call({ path: '/health' });
-    if (health.body?.status !== 'ok') throw new Error('API did not recover after the stopped snapshot');
-    const liveFacts = await checkResult.remote.schemaAudits();
-    const liveConfiguration = validateConfiguration(liveFacts, checkResult.model);
-    evidence.record({
-      scenario: backupScenario,
-      status: 'passed',
-      details: {
-        snapshot: newSnapshot,
-        writersStopped: true,
-        healthRequestId: health.requestId,
-        schedule: liveConfiguration.cron,
-      },
-    });
-    backupComplete = true;
-    artifact = {
-      name: newSnapshot,
-      remotePath: path.posix.join(checkResult.remote.target.snapshotDir, newSnapshot),
-      localPath: null,
-    };
-    const restored = await restore(
-      checkResult.remote,
-      artifact.remotePath,
-      {
-        release: checkResult.release.tag.slice(1),
-        origins: checkResult.release.origins,
-        upgradeOrigin: checkResult.release.upgradeOrigin,
-        model: checkResult.model,
-      },
-    );
-    evidence.record({
-      scenario: recoveryRestoreScenario,
-      status: 'passed',
-      details: {
-        snapshot: artifact.name,
-        ...restored,
-      },
-    });
-  } catch (error) {
-    if (backupComplete) {
-      evidence.record({
-        scenario: recoveryRestoreScenario,
-        status: 'failed',
-        details: { snapshot: artifact?.name || null, reason: error.message },
-      });
-    } else {
-      evidence.record({
-        scenario: backupScenario,
-        status: 'failed',
-        details: { snapshot: newSnapshot || null, reason: error.message },
-      });
-      evidence.record({
-        scenario: recoveryRestoreScenario,
-        status: 'blocked',
-        details: { reason: 'the stopped snapshot did not complete' },
-      });
-    }
-    throw error;
-  }
-}
-
 async function runSeededJourneys({ session, plan }) {
+  const groups = session.diagnosticGroups;
+  let start = session.requestIds.length;
   const pairing = await runPairingScenarios(session);
+  groups.pairing = session.requestIds.slice(start);
   const { context, ...pairingEvidence } = pairing;
+  start = session.requestIds.length;
+  const credentials = await runSenderCredentialScenarios(session);
+  groups.credentials = session.requestIds.slice(start);
+  start = session.requestIds.length;
+  const delivery = await runDeliveryScenarios(session, context);
+  groups.delivery = session.requestIds.slice(start);
+  start = session.requestIds.length;
+  const receiver = await runReceiverScenarios(session, { root });
+  groups.receiver = session.requestIds.slice(start);
   return {
-    credentials: await runSenderCredentialScenarios({ session, plan }),
+    credentials,
     pairing: pairingEvidence,
-    delivery: await runDeliveryScenarios(session, context),
-    receiver: await runReceiverScenarios(session, { root }),
+    delivery,
+    receiver,
+    retention: await runRetentionScenarios(session, { root }),
   };
 }
 
@@ -393,10 +356,13 @@ async function integration({
       evidence,
       plan,
     });
+    session.diagnosticGroups = {};
+    const modelStart = session.requestIds.length;
     const model = await runModel({ session, model: checkResult.model });
+    session.diagnosticGroups.model = session.requestIds.slice(modelStart);
     const lifecycle = await runLifecycle({ session, plan });
     evidence.record({
-      scenario: 'seeded Sender, Pairing, Delivery, Receiver and real Bailian smoke journey',
+      scenario: 'seeded Sender, Pairing, Delivery, Receiver, retention and real Bailian smoke journey',
       status: 'passed',
       details: {
         ...lifecycle,

@@ -19,26 +19,44 @@ import (
 )
 
 type generatedSmokeSQL struct {
-	Bootstrap          string `json:"bootstrap"`
-	Cleanup            string `json:"cleanup"`
-	ExternalWriterSQL  string `json:"externalWriterSql"`
-	ExpireAccess       string `json:"expireAccess"`
-	ExpireRefresh      string `json:"expireRefresh"`
-	AgeOperation       string `json:"ageOperation"`
-	ExpireParent       string `json:"expireParent"`
-	RevokeRegistration string `json:"revokeRegistration"`
-	SupersedeFamily    string `json:"supersedeFamily"`
-	InvalidateReceiver string `json:"invalidateReceiver"`
-	FirstSenderID      string `json:"firstSenderId"`
-	FirstAccountID     string `json:"firstAccountId"`
-	SecondAccountID    string `json:"secondAccountId"`
-	ScopeSenderID      string `json:"scopeSenderId"`
-	ScopeParentDigest  string `json:"scopeParentDigest"`
-	RefreshLifetime    string `json:"refreshLifetime"`
-	PermanentSenderID  string `json:"permanentSenderId"`
-	SupersededSenderID string `json:"supersededSenderId"`
-	SenderCount        int    `json:"senderCount"`
-	CredentialCount    int    `json:"credentialCount"`
+	Bootstrap           string   `json:"bootstrap"`
+	Cleanup             string   `json:"cleanup"`
+	ExternalWriterSQL   string   `json:"externalWriterSql"`
+	TerminateWriterSQL  string   `json:"terminateWriterSql"`
+	ExpireAccess        string   `json:"expireAccess"`
+	ExpireRefresh       string   `json:"expireRefresh"`
+	AgeOperation        string   `json:"ageOperation"`
+	ExpireParent        string   `json:"expireParent"`
+	RevokeRegistration  string   `json:"revokeRegistration"`
+	SupersedeFamily     string   `json:"supersedeFamily"`
+	InvalidateReceiver  string   `json:"invalidateReceiver"`
+	RetentionAging      string   `json:"retentionAging"`
+	RetentionBoundary   string   `json:"retentionBoundary"`
+	RetentionState      string   `json:"retentionState"`
+	RetentionCall       string   `json:"retentionCall"`
+	RetentionPrivacy    string   `json:"retentionPrivacy"`
+	RetentionCleanup    string   `json:"retentionCleanup"`
+	RetentionProbe      string   `json:"retentionProbeCommand"`
+	ProbeCleanup        string   `json:"probeCleanup"`
+	ProbeHistoryCleanup string   `json:"probeHistoryCleanup"`
+	CleanupVerification string   `json:"cleanupVerification"`
+	CleanupCategories   []string `json:"cleanupCategories"`
+	ConfigurationProbe  string   `json:"configurationProbe"`
+	RetentionJobName    string   `json:"retentionJobName"`
+	RetentionSchedule   string   `json:"retentionSchedule"`
+	RetentionCommand    string   `json:"retentionCommand"`
+	RetentionOwner      string   `json:"retentionOwner"`
+	RetentionDatabase   string   `json:"retentionDatabase"`
+	FirstSenderID       string   `json:"firstSenderId"`
+	FirstAccountID      string   `json:"firstAccountId"`
+	SecondAccountID     string   `json:"secondAccountId"`
+	ScopeSenderID       string   `json:"scopeSenderId"`
+	ScopeParentDigest   string   `json:"scopeParentDigest"`
+	RefreshLifetime     string   `json:"refreshLifetime"`
+	PermanentSenderID   string   `json:"permanentSenderId"`
+	SupersededSenderID  string   `json:"supersededSenderId"`
+	SenderCount         int      `json:"senderCount"`
+	CredentialCount     int      `json:"credentialCount"`
 }
 
 func TestFixtureSQLBootstrapsAndCleansRunOwnedRows(t *testing.T) {
@@ -191,44 +209,36 @@ VALUES ('unrelated-integration-sender', 'unrelated-integration-account', 'active
 		WHERE id = 'unrelated-integration-sender'`)
 }
 
-func TestExternalWriterQueryExcludesOnlyPgDump(t *testing.T) {
-	postgres := harness.StartPostgres(t)
-	sql := generateSmokeSQL(t)
-	primary, err := db.Open(context.Background(), postgres.DSN)
-	if err != nil {
-		t.Fatalf("open primary connection: %v", err)
-	}
-	t.Cleanup(func() { _ = primary.Close() })
-
-	writer, writerConnection := heldConnection(t, postgres.DSN, "smoke-writer")
-	t.Cleanup(func() { _ = writer.Close() })
-	waitForConnections(t, primary, sql.ExternalWriterSQL, 1)
-	_ = writerConnection.Close()
-	_ = writer.Close()
-	waitForConnections(t, primary, sql.ExternalWriterSQL, 0)
-
-	dump, dumpConnection := heldConnection(t, postgres.DSN, "pg_dump")
-	t.Cleanup(func() { _ = dump.Close() })
-	assertConnections(t, primary, sql.ExternalWriterSQL, 0)
-	_ = dumpConnection.Close()
-	_ = dump.Close()
-}
-
 func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 	t.Helper()
 	root := repositoryRoot(t)
 	script := `
 import { pathToFileURL } from 'node:url';
 const fixtures = await import(pathToFileURL(process.env.FIXTURES).href);
+const fixtureCleanup = await import(pathToFileURL(process.env.FIXTURE_CLEANUP).href);
 const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURES).href);
+const retentionFixtures = await import(pathToFileURL(process.env.RETENTION_FIXTURES).href);
+const retentionChecks = await import(pathToFileURL(process.env.RETENTION_CHECKS).href);
+const retentionSession = await import(pathToFileURL(process.env.RETENTION_SESSION).href);
+const database = await import(pathToFileURL(process.env.DATABASE).href);
 const remote = await import(pathToFileURL(process.env.REMOTE).href);
 const plan = fixtures.createFixturePlan({
   runId: 'integration-fixture',
   now: new Date('2026-10-20T00:00:00Z'),
 });
+const retention = {
+  referenceTime: '2026-10-21T04:00:00.000Z',
+  senderID: plan.senders[0].id,
+  receiverID: 'smoke-integration-retention-receiver',
+  pairingID: 'smoke-integration-retention-pairing',
+  jobID: 1,
+  liveTokenDigest: 'a'.repeat(64),
+  liveGuardDigest: 'e'.repeat(64),
+};
 const scope = plan.senders.find(sender => sender.id.endsWith('-scope'));
 const permanent = plan.senders.find(sender => sender.id.endsWith('-permanent'));
 const superseded = plan.senders.find(sender => sender.id.endsWith('-superseded'));
+const retentionJob = database.cronJobs.get(database.retentionJobName);
 process.stdout.write(JSON.stringify({
   bootstrap: fixtures.renderBootstrapSQL(plan),
   cleanup: fixtures.renderCleanupSQL(
@@ -237,6 +247,8 @@ process.stdout.write(JSON.stringify({
     ['smoke-integration-fixture-request'],
   ),
   externalWriterSql: remote.externalWriterQuery,
+  terminateWriterSql: retentionSession.terminateApplicationBackendsSQL(
+    'smoke-integration-owned-writer'),
   expireAccess: fixtures.renderExpireAccessSQL(plan, 'scope'),
   expireRefresh: fixtures.renderExpireRefreshSQL(plan, 'scope'),
   ageOperation: fixtures.renderAgeRefreshOperationSQL(plan, 'scope', 'integration-operation'),
@@ -245,6 +257,39 @@ process.stdout.write(JSON.stringify({
   supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
   invalidateReceiver: receiverFixtures.renderInvalidateReceiverCredentialSQL(
     plan, 'smoke-integration-fixture-receiver'),
+  retentionAging: retentionFixtures.renderRetentionAgingSQL(plan, retention),
+  retentionBoundary: retentionFixtures.renderRetentionBoundarySQL(plan, retention),
+  retentionState: retentionChecks.retentionStateQuery(plan, retention),
+  retentionCall: retentionChecks.cleanupCallSQL(retention.referenceTime),
+  retentionPrivacy: retentionChecks.runOwnedPrivacyQuery(plan, {
+    receiverIDs: [retention.receiverID],
+    requestIDs: [
+      'smoke-integration-fixture-request',
+      'smoke-integration-fixture-retention-diagnostic-old',
+      'smoke-integration-fixture-retention-diagnostic-fresh',
+    ],
+    subjects: [retention.pairingID],
+  }),
+  retentionCleanup: retentionChecks.renderRetentionCleanupSQL(plan),
+  retentionProbeCommand: retentionSession.retentionProbeCommand(
+    'smoke-integration-retention-probe'),
+  probeCleanup: retentionSession.retentionProbeCleanupSQL(
+    'smoke-integration-retention-probe'),
+  probeHistoryCleanup: retentionSession.retentionProbeHistoryCleanupSQL(
+    'smoke-integration-retention-probe'),
+  cleanupVerification: fixtureCleanup.renderCleanupVerificationSQL(
+    plan,
+    ['smoke-integration-retention-receiver'],
+    ['smoke-integration-fixture-request'],
+    ['smoke-integration-retention-pairing'],
+  ),
+  cleanupCategories: fixtureCleanup.cleanupVerificationCategories,
+  configurationProbe: retentionChecks.renderConfigurationDeleteProbeSQL(plan, retention),
+  retentionJobName: database.retentionJobName,
+  retentionSchedule: retentionJob.schedule,
+  retentionCommand: retentionJob.command,
+  retentionOwner: retentionJob.username,
+  retentionDatabase: retentionJob.database,
   firstSenderId: plan.senders[0].id,
   firstAccountId: plan.accounts[0].id,
   secondAccountId: plan.accounts[1].id,
@@ -261,7 +306,12 @@ process.stdout.write(JSON.stringify({
 	command.Dir = root
 	command.Env = append(os.Environ(),
 		"FIXTURES="+filepath.Join(root, "test/smoke/lib/fixtures.mjs"),
+		"FIXTURE_CLEANUP="+filepath.Join(root, "test/smoke/lib/fixture_cleanup.mjs"),
 		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/lib/receiver_fixtures.mjs"),
+		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/lib/retention_fixtures.mjs"),
+		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/lib/retention_checks.mjs"),
+		"RETENTION_SESSION="+filepath.Join(root, "test/smoke/lib/session_retention.mjs"),
+		"DATABASE="+filepath.Join(root, "test/smoke/lib/database.mjs"),
 		"REMOTE="+filepath.Join(root, "test/smoke/lib/remote.mjs"),
 	)
 	output, err := command.CombinedOutput()
@@ -346,6 +396,32 @@ func assertCount(t *testing.T, pool *sql.DB, want int, statement string, args ..
 	}
 	if got != want {
 		t.Fatalf("row count is %d, want %d for %s", got, want, strings.TrimSpace(statement))
+	}
+}
+
+func retentionState(t *testing.T, pool *sql.DB, statement string) map[string]any {
+	t.Helper()
+	var raw string
+	if err := pool.QueryRowContext(context.Background(), statement).Scan(&raw); err != nil {
+		t.Fatalf("read retention state: %v", err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode retention state: %v: %s", err, raw)
+	}
+	for _, section := range []string{"aging", "boundary", "live", "durable", "owned"} {
+		if _, ok := state[section].(map[string]any); !ok {
+			t.Fatalf("retention state has no %s object: %s", section, raw)
+		}
+	}
+	return state
+}
+
+func assertNestedCount(t *testing.T, state map[string]any, section, field string, want float64) {
+	t.Helper()
+	values := state[section].(map[string]any)
+	if got, ok := values[field]; !ok || got != want {
+		t.Fatalf("retention state %s.%s = %v, want %v", section, field, got, want)
 	}
 }
 

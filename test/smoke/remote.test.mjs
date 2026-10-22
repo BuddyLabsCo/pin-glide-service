@@ -7,11 +7,10 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { cronCommand, retention } from './lib/database.mjs';
 import { removeHostsLine, watchdogBody } from './lib/provider_faults.mjs';
-import { acquireEnvironmentLock, RemoteEnvironment } from './lib/remote.mjs';
+import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
+import { RemoteEnvironment } from './lib/remote.mjs';
 import { TARGET } from './lib/target.mjs';
-import { verifyRecovery } from './runner.mjs';
 
 test('the environment lock is shared and refuses a second concurrent run', async () => {
   const child = () => {
@@ -88,6 +87,10 @@ test('controlled provider faults restore the original Compose environment and ne
       return { stdout: '', stderr: '' };
     },
   });
+  let preserved = 0;
+  remote.preserveApiLogs = async () => {
+    preserved++;
+  };
 
   await assert.rejects(
     () => remote.withInvalidBailianKey(async () => {
@@ -96,6 +99,7 @@ test('controlled provider faults restore the original Compose environment and ne
     /invalid parent key observed/,
   );
   assert.match(calls[0].script, /BAILIAN_API_KEY/);
+  assert.match(calls[0].script, /sudo -n docker compose/);
   assert.match(calls[0].script, /force-recreate/);
   assert.match(calls[0].script, /trap cleanup EXIT/);
   assert.match(calls[0].script, /\/srv\/pin-glide-dev\/\.env/);
@@ -106,6 +110,8 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, new RegExp(faultPaths.guard.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, new RegExp(faultPaths.watchdog.replaceAll('.', '\\.')));
   assert.match(calls.at(-1).script, /rm -f/);
+  assert.match(calls.at(-1).script, /--force-recreate --wait api/);
+  assert.equal(preserved, 2);
 
   calls.length = 0;
   await assert.rejects(
@@ -121,6 +127,44 @@ test('controlled provider faults restore the original Compose environment and ne
   assert.match(calls.at(-1).script, /\/etc\/hosts/);
   assert.match(calls.at(-1).script, /pin-glide-smoke-fault/);
   assert.doesNotMatch(calls.at(-1).script, /sed -i/);
+  assert.equal(preserved, 4);
+});
+
+test('invalid-key verification failure restores the original API environment', async () => {
+  const calls = [];
+  const faultPaths = {
+    environment: '/tmp/pin-glide-dev-smoke-bailian.abc123.env',
+    guard: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123',
+    watchdog: '/tmp/pin-glide-dev-smoke-bailian-watchdog.abc123.sh',
+  };
+  let callbackRan = false;
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args) => {
+      calls.push({ command, script: args.at(-1) });
+      if (calls.length === 1) {
+        return {
+          stdout: `${faultPaths.environment}|${faultPaths.guard}|${faultPaths.watchdog}\n`,
+          stderr: '',
+        };
+      }
+      if (args.at(-1).includes('docker inspect')) {
+        return { stdout: '["BAILIAN_API_KEY=restored"]\n', stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    },
+  });
+  remote.preserveApiLogs = async () => {};
+
+  await assert.rejects(
+    () => remote.withInvalidBailianKey(async () => {
+      callbackRan = true;
+    }),
+    /did not reach the running API/,
+  );
+  assert.equal(callbackRan, false);
+  assert.match(calls.at(-1).script, /--env-file/);
+  assert.match(calls.at(-1).script, /force-recreate/);
 });
 
 test('the connectivity cleanup removes only its own marker from a hosts file', async t => {
@@ -156,7 +200,7 @@ printf '%s\\n' "$*" >> ${JSON.stringify(composeLog)}
   const body = watchdogBody(
     { target: TARGET },
     { attempts: 1, intervalSeconds: 0.05 },
-  ).replaceAll('docker compose', JSON.stringify(fake));
+  ).replaceAll('sudo -n docker compose', JSON.stringify(fake));
   const script = path.join(directory, 'watchdog.sh');
   fs.writeFileSync(script, body, { mode: 0o700 });
   const child = spawn(script, [guard], {
@@ -188,6 +232,55 @@ test('remote SQL is sent through stdin and never embedded in the SSH command', a
   assert(!calls[0].args.at(-1).includes('token should stay in stdin'));
   assert.equal(calls[0].options.input, 'SELECT 1; -- token should stay in stdin');
   assert(!secret.includes(calls[0].args.at(-1)));
+});
+
+test('release installer actions use noninteractive sudo', async () => {
+  const calls = [];
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '', stderr: '' };
+    },
+  });
+  await remote.install('--prep', '1.2.3');
+  assert.equal(calls[0].command, 'ssh');
+  assert.match(
+    calls[0].args.at(-1),
+    /^cd '\/srv\/pin-glide-dev' && sudo -n bash '\/srv\/pin-glide-dev\/install\.sh' --version '1\.2\.3' --prep$/,
+  );
+});
+
+test('service logs are bounded to the run window without reading the deployment environment', async () => {
+  const calls = [];
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: '{"level":"info"}\n', stderr: '' };
+    },
+  });
+  await remote.apiLogsSince('2026-10-21T04:00:00.000Z');
+  assert.equal(calls[0].command, 'ssh');
+  assert.match(calls[0].args.at(-1), /logs --no-color --since/);
+  assert.doesNotMatch(calls[0].args.at(-1), /--tail/);
+  assert.match(calls[0].args.at(-1), /--since '2026-10-21T04:00:00\.000Z'/);
+  assert.match(calls[0].args.at(-1), / api$/);
+  assert.doesNotMatch(calls[0].args.at(-1), /(?:cat|sed|source).*\.env/);
+});
+
+test('preserved service logs remain scannable after the API container is replaced', async () => {
+  const startedAt = '2026-10-21T04:00:00.000Z';
+  let current = 'first container\n';
+  const remote = new RemoteEnvironment({
+    target: TARGET,
+    run: async () => ({ stdout: current, stderr: '' }),
+  });
+  remote.smokeStartedAt = startedAt;
+  await remote.preserveApiLogs();
+  current = 'second container\n';
+  const logs = await remote.apiLogsSince(startedAt);
+  assert.equal(logs.stdout, 'first container\n\nsecond container\n');
 });
 
 test('the external-writer guard excludes only the snapshot dump connection', async () => {
@@ -236,7 +329,7 @@ test('a stopped snapshot restarts the service when snapshotting fails', async ()
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 });
 
-test('a failed stopped snapshot removes only its newly published archive', async () => {
+test('a failed stopped snapshot removes only the archive reported by its command', async () => {
   const old = 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump';
   const created = 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
   const actions = [];
@@ -255,13 +348,36 @@ test('a failed stopped snapshot removes only its newly published archive', async
   remote.databaseWriteStats = async () => (++writes === 1
     ? { inserted: 0, updated: 0, deleted: 0 }
     : { inserted: 1, updated: 0, deleted: 0 });
-  remote.makeSnapshot = async () => ({ stdout: '' });
+  remote.makeSnapshot = async () => ({ stdout: `${created}\n` });
   remote.removeSnapshot = async name => {
     removed.push(name);
   };
   await assert.rejects(() => remote.createStoppedSnapshot('1.2.3'), /Database writes occurred/);
   assert.deepEqual(removed, [created]);
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
+});
+
+test('a failed stopped snapshot never infers ownership from a new shared-directory archive', async () => {
+  const old = 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump';
+  const unrelated = 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
+  const removed = [];
+  let snapshots = 0;
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async () => {};
+  remote.assertNoExternalWriters = async () => {};
+  remote.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
+  remote.listSnapshots = async () => (
+    ++snapshots === 1 ? [{ name: old }] : [{ name: old }, { name: unrelated }]
+  );
+  remote.makeSnapshot = async () => ({ stdout: '' });
+  remote.removeSnapshot = async name => {
+    removed.push(name);
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3'),
+    /reported no archive/,
+  );
+  assert.deepEqual(removed, []);
 });
 
 test('a successful stopped snapshot returns its own archive and never infers another run', async () => {
@@ -277,7 +393,13 @@ test('a successful stopped snapshot returns its own archive and never infers ano
   remote.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
   remote.listSnapshots = async () => (++snapshots === 1 ? [{ name: old }] : [{ name: old }, { name: created }]);
   remote.makeSnapshot = async () => ({ stdout: `${created}\n` });
-  assert.equal(await remote.createStoppedSnapshot('1.2.3'), created);
+  let held = false;
+  assert.equal(await remote.createStoppedSnapshot('1.2.3', {
+    afterStop: async () => {
+      held = true;
+    },
+  }), created);
+  assert.equal(held, true);
   assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
 
   const missing = new RemoteEnvironment({ target: TARGET });
@@ -286,70 +408,44 @@ test('a successful stopped snapshot returns its own archive and never infers ano
   missing.databaseWriteStats = async () => ({ inserted: 0, updated: 0, deleted: 0 });
   missing.listSnapshots = async () => [{ name: old }];
   missing.makeSnapshot = async () => ({ stdout: '' });
-  await assert.rejects(() => missing.createStoppedSnapshot('1.2.3'), /did not publish/);
+  await assert.rejects(() => missing.createStoppedSnapshot('1.2.3'), /reported no archive/);
 });
 
-test('recovery records snapshot and restore failures in their own scenarios', async () => {
-  const before = [];
-  await assert.rejects(() => verifyRecovery({
-    checkResult: {
-      remote: {
-        target: TARGET,
-        createStoppedSnapshot: async () => { throw new Error('snapshot command failed'); },
+test('a held-state check failure restarts the service before snapshotting', async () => {
+  const actions = [];
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async (action, version) => {
+    actions.push(`${action}:${version}`);
+  };
+  remote.makeSnapshot = async () => {
+    throw new Error('snapshot must not run');
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3', {
+      afterStop: async () => {
+        throw new Error('unknown writer state');
       },
-      release: { tag: 'v1.2.3' },
-      snapshot: null,
-      http: {},
-    },
-    evidence: { record: entry => before.push(entry) },
-    listSnapshots: async () => [],
-    restore: async () => {},
-  }), /snapshot command failed/);
-  assert(before.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
-  assert(before.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'blocked'));
-
-  const after = [];
-  const model = { id: 'default', workspaceId: 'workspace', model: 'qwen3.7-flash', enabled: true };
-  const facts = {
-    database: 'pin_glide',
-    model,
-    retention: [...retention].map(([identity, value]) => {
-      const [schema, table] = identity.split('/');
-      return { schema, table, days: value.days, column: value.column };
     }),
-    cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
-      active: true,
-      command: cronCommand,
-    }],
-  };
-  const checkResult = {
-    remote: {
-      target: TARGET,
-      createStoppedSnapshot: async () => 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump',
-      schemaAudits: async () => facts,
-    },
-    release: { tag: 'v1.2.3', upgradeOrigin: '1.2.2' },
-    snapshot: null,
-    model,
-    http: { call: async () => ({ body: { status: 'ok' }, requestId: 'request-1' }) },
-  };
-  let restoredSnapshot;
-  await assert.rejects(() => verifyRecovery({
-    checkResult,
-    evidence: { record: entry => after.push(entry) },
-    restore: async (remote, snapshot) => {
-      restoredSnapshot = snapshot;
-      throw new Error('restore failed');
-    },
-  }), /restore failed/);
-  assert.equal(
-    restoredSnapshot,
-    `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T040000.000000002Z-2.dump`,
+    /unknown writer state/,
   );
-  assert(after.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'passed'));
-  assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));
+  assert.deepEqual(actions, ['--prep:1.2.3', '--stop-api:1.2.3', '--start-api:1.2.3']);
+});
+
+test('the snapshot path refuses a connected writer before invoking the dump', async () => {
+  const actions = [];
+  const remote = new RemoteEnvironment({ target: TARGET });
+  remote.install = async action => {
+    actions.push(action);
+  };
+  remote.assertNoExternalWriters = async () => {
+    throw new Error('Another database writer is still connected');
+  };
+  remote.makeSnapshot = async () => {
+    throw new Error('snapshot must not run with a writer');
+  };
+  await assert.rejects(
+    () => remote.createStoppedSnapshot('1.2.3'),
+    /Another database writer/,
+  );
+  assert.deepEqual(actions, ['--prep', '--stop-api', '--start-api']);
 });

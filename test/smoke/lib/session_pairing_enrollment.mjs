@@ -29,6 +29,7 @@ export async function enrollReceiver(session, context) {
   }
 
   const other = await session.createPairingSession({ mode: 'new_receiver' });
+  const claimed = await session.claimPairing(label, created);
   const foreignClaim = await session.expectProblem(
     {
       method: 'POST',
@@ -36,10 +37,9 @@ export async function enrollReceiver(session, context) {
       token: session.token('foreign', 'user_session'),
       body: {},
     },
-    404,
-    'resource_not_found',
+    409,
+    'pairing_session_claimed',
   );
-  const claimed = await session.claimPairing(label, created);
   const secondClaim = await session.expectProblem(
     {
       method: 'POST',
@@ -86,6 +86,7 @@ export async function enrollReceiver(session, context) {
     }
 
     const senderInit = opaqueRelayPayload('hpke_init', 11);
+    session.addSecret(senderInit);
     senderSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
@@ -95,6 +96,7 @@ export async function enrollReceiver(session, context) {
     await expectRelay(receiverSocket, created, 'sender', senderInit);
 
     const receiverConfirmation = opaqueRelayPayload('key_confirmation', 21);
+    session.addSecret(receiverConfirmation);
     receiverSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
@@ -104,11 +106,13 @@ export async function enrollReceiver(session, context) {
     await expectRelay(senderSocket, created, 'receiver', receiverConfirmation);
 
     await receiverSocket.close();
+    const absentConfirmation = opaqueRelayPayload('key_confirmation', 31);
+    session.addSecret(absentConfirmation);
     senderSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',
       sessionId: created.sessionID,
-      payload: opaqueRelayPayload('key_confirmation', 31),
+      payload: absentConfirmation,
     });
     const absentPeer = await senderSocket.next();
     if (
@@ -123,12 +127,13 @@ export async function enrollReceiver(session, context) {
 
     receiverSocket = await session.openSocket({ path: sessionPath(created), token: created.token });
     const reconnected = await expectPairingState(receiverSocket, created);
-    if (reconnected.session.expiresAt !== created.expiresAt) {
+    if (Date.parse(reconnected.session.expiresAt) !== Date.parse(created.expiresAt)) {
       throw new Error('Pairing reconnect extended the session lifetime');
     }
     await expectNoFrame(receiverSocket, 'Pairing reconnect replayed handshake bytes');
 
     const liveAfterReconnect = opaqueRelayPayload('key_confirmation', 41);
+    session.addSecret(liveAfterReconnect);
     receiverSocket.sendJSON({
       version: 1,
       type: 'pairing_relay',

@@ -108,10 +108,10 @@ export function expectMetadata(response, deliveries) {
         `Delivery metadata for ${wanted.receiverID} = ${JSON.stringify(item)}, want ${wanted.status}`,
       );
     }
-    if (wanted.createdAt && item.createdAt !== wanted.createdAt) {
+    if (wanted.createdAt && Date.parse(item.createdAt) !== Date.parse(wanted.createdAt)) {
       throw new Error(`Delivery ${wanted.receiverID} admission time changed`);
     }
-    if (wanted.completedAt && item.completedAt !== wanted.completedAt) {
+    if (wanted.completedAt && Date.parse(item.completedAt) !== Date.parse(wanted.completedAt)) {
       throw new Error(`Delivery ${wanted.receiverID} terminal time changed`);
     }
   }
@@ -193,7 +193,9 @@ WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
 
 export async function waitForAdmitted(session, label, messages, expected = messages.length, timeoutMs = 5_000) {
   const query = `
-SELECT count(*)::int AS count
+SELECT json_build_object(
+  'count', count(*)::int
+) AS admitted
 FROM pin_glide.delivery_deliveries
 WHERE sender_id = ${escapeSQLString(fixtureSender(session.plan, label).id)}
   AND message_id = ANY(${sqlTextArray(messages)});

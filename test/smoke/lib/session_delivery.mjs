@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { withDeliveryBatchLock, withDeliveryStorageFault } from './delivery_faults.mjs';
 import {
@@ -45,8 +47,8 @@ async function scenarioSendFailed(session, context) {
       'pair2',
       message,
       [deliveryItem(target, {
-        nonce: Buffer.alloc(12, index).toString('base64'),
-        ciphertext: Buffer.alloc(700 * 1024, 7).toString('base64'),
+        nonce: randomBytes(12).toString('base64'),
+        ciphertext: randomBytes(700 * 1024).toString('base64'),
       })],
     ).then(response => ({ response, message, elapsedMs: Date.now() - started })));
     // One claimed row is enough to prove storage admission; the rest may

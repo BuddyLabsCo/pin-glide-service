@@ -8,7 +8,6 @@ import { SmokeSession } from './lib/session.mjs';
 import { runScenario, verifyCheckpoints } from './lib/session_credential_support.mjs';
 import { verifyDiagnosticRedaction } from './lib/session_diagnostics.mjs';
 import { TARGET } from './lib/target.mjs';
-import { integration } from './runner.mjs';
 
 test('fixture authority proves scope and Account/Sender ownership through refresh', async () => {
   const plan = createFixturePlan({ runId: 'refresh-authority-run' });
@@ -113,6 +112,8 @@ test('an abandoned refresh response records an uncertain attempt without replaci
   const plan = createFixturePlan({ runId: 'refresh-dropped-run' });
   const sender = plan.senders.find(item => item.id.endsWith('-recover'));
   const original = sender.credentials.map(item => ({ ...item }));
+  sender.latestRefresh = { operationID: 'operation-authority', attempt: 0 };
+  const checkpoint = { ...sender.latestRefresh };
   const http = {
     async callDropped(request) {
       assert.equal(request.body.operationId, 'operation-dropped');
@@ -135,7 +136,7 @@ test('an abandoned refresh response records an uncertain attempt without replaci
   });
   assert.equal(result.requestId, 'request-dropped');
   assert.deepEqual(sender.pendingRefresh, { operationID: 'operation-dropped', attempt: 0 });
-  assert.equal(sender.latestRefresh, undefined);
+  assert.deepEqual(sender.latestRefresh, checkpoint);
   assert.deepEqual(sender.credentials, original);
 });
 
@@ -199,6 +200,61 @@ test('runner refresh checkpoints must match the persisted operation and attempt'
   await assert.rejects(() => verifyCheckpoints(session), /checkpoint is stale/);
 });
 
+test('direct and abandoned Delivery requests register payload secrets before transmission', async () => {
+  const plan = createFixturePlan({ runId: 'direct-delivery-secrets' });
+  const session = new SmokeSession({
+    target: TARGET,
+    remote: {},
+    http: {
+      async call() {
+        return { status: 202, requestId: 'request-direct', body: { results: [] } };
+      },
+      callAbandoned() {
+        return {
+          request: Promise.reject(new SmokeProblem(
+            500,
+            { code: 'delivery_unavailable', detail: 'abandoned-body' },
+            'request-abandoned',
+          )),
+          abort() {},
+          aborted() {
+            return false;
+          },
+        };
+      },
+    },
+    evidence: { addSecret() {} },
+    plan,
+  });
+  await session.request({
+    method: 'POST',
+    path: '/v1/messages',
+    body: {
+      messageId: 'direct-message',
+      items: [{ nonce: 'direct-nonce', ciphertext: 'direct-ciphertext' }],
+    },
+  });
+  const abandoned = session.abandonedRequest({
+    method: 'POST',
+    path: '/v1/messages',
+    body: {
+      messageId: 'abandoned-message',
+      items: [{ nonce: 'abandoned-nonce', ciphertext: 'abandoned-ciphertext' }],
+    },
+  });
+  await assert.rejects(() => abandoned.request, /HTTP 500/);
+  assert.deepEqual(session.errorBodies, [{
+    code: 'delivery_unavailable',
+    detail: 'abandoned-body',
+  }]);
+  assert.deepEqual([...session.secretValues()].sort(), [
+    'abandoned-ciphertext',
+    'abandoned-nonce',
+    'direct-ciphertext',
+    'direct-nonce',
+  ]);
+});
+
 test('service diagnostics settle and scan every available run-owned record', async () => {
   let reads = 0;
   const session = {
@@ -218,6 +274,11 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 2,
     scannedRequestIds: 2,
     missingRequestIds: 0,
+    requiredGroups: [],
+    logsScanned: false,
+    artifactsScanned: 0,
+    errorBodiesScanned: 0,
+    databaseRowsScanned: 0,
   });
   assert.equal(reads, 2);
 
@@ -227,7 +288,25 @@ test('service diagnostics settle and scan every available run-owned record', asy
     records: 1,
     scannedRequestIds: 1,
     missingRequestIds: 1,
+    requiredGroups: [],
+    logsScanned: false,
+    artifactsScanned: 0,
+    errorBodiesScanned: 0,
+    databaseRowsScanned: 0,
   });
+
+  session.requestIds = ['request-1', 'request-2'];
+  session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'POST' }];
+  await assert.rejects(
+    () => verifyDiagnosticRedaction(session, {
+      settleMs: 0,
+      requiredGroups: {
+        pairing: ['request-1'],
+        model: ['request-2'],
+      },
+    }),
+    error => error instanceof SmokeBlocked && /model/.test(error.message),
+  );
 
   session.requestIds = ['request-1'];
   session.remote.sqlJSON = async () => [{ requestId: 'request-1', subject: null, method: 'raw-secret' }];
@@ -252,217 +331,4 @@ test('unavailable service diagnostics are recorded as blocked evidence', async (
     error => error instanceof SmokeBlocked,
   );
   assert.equal(recorded[0].status, 'blocked');
-});
-
-test('ordinary Pairing creates, claims, relays through both peers and redeems only for its Receiver', async () => {
-  const requests = [];
-  const messages = {
-    sender: [
-      { json: { type: 'pairing_state', session: { sessionId: 'session-1' } } },
-      { json: { type: 'pairing_relay', side: 'receiver', payload: 'AAAA' } },
-    ],
-    receiver: [{ json: { type: 'pairing_state', session: { sessionId: 'session-1' } } }],
-  };
-  const socket = side => ({
-    async next() {
-      const result = messages[side].shift();
-      assert(result, `${side} socket has no queued message`);
-      return result;
-    },
-    sendJSON(value) {
-      requests.push({ side, value });
-    },
-    async close() {},
-  });
-  const plan = createFixturePlan({ runId: 'pairing-run' });
-  const session = new SmokeSession({
-    target: TARGET,
-    remote: {},
-    evidence: { addSecret() {} },
-    plan,
-    http: {
-      async call(request) {
-        requests.push(request);
-        if (request.path === '/v1/pairing-sessions') {
-          return {
-            status: 201,
-            body: {
-              session: {
-                sessionId: 'session-1',
-                mode: 'new_receiver',
-                receiverId: 'receiver-1',
-                state: 'awaiting_authorization',
-                expiresAt: '2026-10-21T00:05:00Z',
-              },
-              pairingToken: 'restricted',
-              pairingTokenExpiresAt: '2026-10-21T00:05:00Z',
-            },
-          };
-        }
-        if (request.path.endsWith('/authorize')) {
-          return {
-            body: {
-              sessionId: 'session-1',
-              mode: 'new_receiver',
-              receiverId: 'receiver-1',
-              pairingId: 'pairing-1',
-              state: 'awaiting_confirmation',
-            },
-          };
-        }
-        if (request.path.endsWith('/complete')) return { body: { state: 'completed' } };
-        if (request.path.endsWith('/receiver-token')) {
-          return {
-            cacheControl: 'no-store',
-            body: { receiverId: 'receiver-1', receiverToken: 'receiver-secret' },
-          };
-        }
-        throw new Error(`unexpected request ${request.path}`);
-      },
-    },
-  });
-  session.openSocket = ({ token }) => socket(token === 'restricted' ? 'receiver' : 'sender');
-
-  const pairing = await session.createPairing('a1');
-  assert.equal(pairing.pairingID, 'pairing-1');
-  await session.completePairing('a1', pairing);
-  const issued = await session.redeemReceiver(pairing);
-  assert.equal(issued.receiverId, 'receiver-1');
-  assert.equal(session.receivers.has('receiver-1'), true);
-  assert.equal(requests.find(request => request.path === '/v1/pairing-sessions').body.mode, 'new_receiver');
-  const relay = requests.find(request => request.value?.type === 'pairing_relay');
-  assert.equal(relay.side, 'receiver');
-  assert.equal(relay.value.version, 1);
-  let cleaned = false;
-  session.cleanup = async () => {
-    cleaned = true;
-  };
-  await session.close();
-  assert.equal(cleaned, true);
-});
-
-test('pairing peers are closed when the relay journey fails', async () => {
-  const closed = [];
-  const plan = createFixturePlan({ runId: 'pairing-close-run' });
-  const session = new SmokeSession({
-    target: TARGET,
-    remote: {},
-    evidence: { addSecret() {} },
-    plan,
-    http: {},
-  });
-  const socket = {
-    async next() {
-      return { json: { type: 'pairing_state' } };
-    },
-    sendJSON() {},
-    async close() {
-      closed.push('receiver');
-    },
-  };
-  session.openSocket = async () => ({
-    async next() {
-      throw new Error('sender relay failed');
-    },
-    async close() {
-      closed.push('sender');
-    },
-  });
-  await assert.rejects(
-    () => session.completePairing('a1', { sessionID: 'session-1', token: 'restricted' }, socket),
-    /sender relay failed/,
-  );
-  assert.deepEqual(closed.sort(), ['receiver', 'sender']);
-});
-
-test('failed lifecycle work still runs its cleanup and records that outcome', async () => {
-  const plan = createFixturePlan({ runId: 'pairing-failure-run' });
-  const recorded = [];
-  const order = [];
-  let closes = 0;
-  const session = {
-    requestIds: [],
-    async close() {
-      closes++;
-    },
-  };
-  await assert.rejects(() => integration({
-    target: TARGET,
-    checkResult: { remote: {} },
-    evidence: { record(entry) { recorded.push(entry); } },
-    plan,
-    repairDeliveryStorage: async () => {
-      order.push('repair');
-    },
-    createSession: async () => {
-      order.push('create');
-      return session;
-    },
-    runModel: async () => ({ provider: 'bailian' }),
-    runLifecycle: async () => {
-      order.push('lifecycle');
-      throw new Error('authorization failed');
-    },
-  }), /authorization failed/);
-  assert.deepEqual(order, ['repair', 'create', 'lifecycle']);
-  assert.equal(closes, 1);
-  assert.equal(recorded.at(-1).scenario, 'run-owned fixture cleanup');
-  assert.equal(recorded.at(-1).status, 'passed');
-});
-
-test('a failed cleanup is recorded and an error after close never cleans up twice', async () => {
-  const plan = createFixturePlan({ runId: 'cleanup-failure-run' });
-  const recorded = [];
-  const order = [];
-  let closes = 0;
-  const session = {
-    requestIds: [],
-    async close() {
-      closes++;
-      throw new Error('cleanup failed');
-    },
-  };
-  await assert.rejects(() => integration({
-    target: TARGET,
-    checkResult: { remote: {} },
-    evidence: { record(entry) { recorded.push(entry); } },
-    plan,
-    repairDeliveryStorage: async () => {
-      order.push('repair');
-    },
-    createSession: async () => {
-      order.push('create');
-      return session;
-    },
-    runModel: async () => ({ provider: 'bailian' }),
-    runLifecycle: async () => {
-      throw new Error('authorization failed');
-    },
-  }), /authorization failed/);
-  assert.deepEqual(order, ['repair', 'create']);
-  assert.equal(closes, 1);
-  assert.equal(recorded.at(-1).status, 'failed');
-  assert.match(recorded.at(-1).details.reason, /cleanup failed/);
-
-  let closeCount = 0;
-  const successful = {
-    requestIds: [],
-    async close() { closeCount++; },
-  };
-  const evidence = {
-    addSecret() {},
-    record(entry) {
-      if (entry.scenario === 'run-owned fixture cleanup') throw new Error('evidence failed');
-    },
-  };
-  await assert.rejects(() => integration({
-    target: TARGET,
-    checkResult: {},
-    evidence,
-    plan,
-    createSession: async () => successful,
-    runModel: async () => ({ provider: 'bailian' }),
-    runLifecycle: async () => ({ scenarios: [] }),
-  }), /evidence failed/);
-  assert.equal(closeCount, 1);
 });

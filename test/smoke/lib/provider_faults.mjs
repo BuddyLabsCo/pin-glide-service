@@ -3,10 +3,11 @@ import { quote } from './shell.mjs';
 
 const watchdogAttempts = 24;
 const watchdogIntervalSeconds = 5;
+export const invalidParentKey = 'sk-smoke-invalid-parent-key';
 
 function compose(remote, envFileArgument) {
   return [
-    'docker compose',
+    'sudo -n docker compose',
     `--project-directory ${quote(remote.target.deploymentDir)}`,
     `--env-file ${envFileArgument}`,
     `-f ${quote(`${remote.target.deploymentDir}/docker-compose.yml`)}`,
@@ -69,10 +70,8 @@ cleanup() {
             ${compose(remote, quote(envFile))} up -d --no-deps --force-recreate --wait api || true
         fi
     fi
-    if [ "$status" -eq 0 ]; then
-        [ -z "$watchdog" ] || rm -f -- "$watchdog"
-        [ -z "$guard" ] || rm -f -- "$guard"
-    fi
+    [ -z "$watchdog" ] || rm -f -- "$watchdog"
+    [ -z "$guard" ] || rm -f -- "$guard"
     [ -z "$temporary" ] || rm -f -- "$temporary"
     exit "$status"
 }
@@ -85,9 +84,9 @@ chmod 700 "$watchdog"
 nohup "$watchdog" "$guard" >/dev/null 2>&1 &
 cp -- ${quote(envFile)} "$temporary"
 if grep -q '^BAILIAN_API_KEY=' "$temporary"; then
-    sed -i 's|^BAILIAN_API_KEY=.*$|BAILIAN_API_KEY=sk-smoke-invalid-parent-key|' "$temporary"
+    sed -i 's|^BAILIAN_API_KEY=.*$|BAILIAN_API_KEY=${invalidParentKey}|' "$temporary"
 else
-    printf '%s\\n' 'BAILIAN_API_KEY=sk-smoke-invalid-parent-key' >> "$temporary"
+    printf '%s\\n' 'BAILIAN_API_KEY=${invalidParentKey}' >> "$temporary"
 fi
 fault_active=true
 ${compose(remote, '"$temporary"')} up -d --no-deps --force-recreate --wait api
@@ -108,12 +107,24 @@ printf '%s|%s|%s\\n' "$temporary" "$guard" "$watchdog"
   ) {
     throw new Error('Invalid parent-key fault did not report its restoration state');
   }
-  const runningEnvironment = await remote.ssh(
-    `sudo -n docker inspect "$(${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ps -q api)" --format '{{json .Config.Env}}'`,
-    { timeoutMs: 30_000 },
-  );
-  if (!runningEnvironment.stdout.includes('BAILIAN_API_KEY=sk-smoke-invalid-parent-key')) {
-    throw new Error('Invalid parent-key fault did not reach the running API');
+  try {
+    const runningEnvironment = await remote.ssh(
+      `sudo -n docker inspect "$(${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ps -q api)" --format '{{json .Config.Env}}'`,
+      { timeoutMs: 30_000 },
+    );
+    if (!runningEnvironment.stdout.includes(`BAILIAN_API_KEY=${invalidParentKey}`)) {
+      throw new Error('Invalid parent-key fault did not reach the running API');
+    }
+  } catch (error) {
+    try {
+      await stopInvalidBailianKeyFault(remote, { temporaryEnv, guard, watchdog });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Invalid parent-key fault verification and restoration both failed',
+      );
+    }
+    throw error;
   }
   return { temporaryEnv, guard, watchdog };
 }
@@ -141,9 +152,16 @@ exit "$restore_status"
 }
 
 export async function withInvalidBailianKey(remote, callback) {
+  await remote.preserveApiLogs();
   const paths = await startInvalidBailianKeyFault(remote);
   return withFailureJoiningCleanup(
-    callback,
+    async () => {
+      try {
+        return await callback();
+      } finally {
+        await remote.preserveApiLogs();
+      }
+    },
     () => stopInvalidBailianKeyFault(remote, paths),
     'Invalid parent-key fault and environment restoration both failed',
   );
@@ -158,6 +176,7 @@ export async function withBailianConnectivityFault(
   if (!/^[a-z0-9][a-z0-9-]*$/.test(workspaceID)) {
     throw new Error('Refusing a provider fault for an invalid workspace ID');
   }
+  await remote.preserveApiLogs();
   const marker = 'pin-glide-smoke-fault';
   const host = `${workspaceID}.cn-beijing.maas.aliyuncs.com`;
   const container = `id=$(${remote.compose} ps -q api); test -n "$id"`;
@@ -175,15 +194,23 @@ export async function withBailianConnectivityFault(
   }
 
   return withFailureJoiningCleanup(
-    callback,
+    async () => {
+      try {
+        return await callback();
+      } finally {
+        await remote.preserveApiLogs();
+      }
+    },
     () => {
       const restore = [
         remove,
         `! grep -F ${quote(marker)} /etc/hosts`,
       ].join('\n');
       return remote.ssh(
-        `${container} && sudo -n docker exec -u 0 "$id" sh -ec ${quote(restore)}`,
-        { timeoutMs: 30_000 },
+        `${container} && sudo -n docker exec -u 0 "$id" sh -ec ${quote(restore)} && ` +
+          `${compose(remote, quote(`${remote.target.deploymentDir}/.env`))} ` +
+          'up -d --no-deps --force-recreate --wait api',
+        { timeoutMs: 180_000 },
       );
     },
     'Provider-connectivity fault and network restoration both failed',

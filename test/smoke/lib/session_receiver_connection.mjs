@@ -82,9 +82,13 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     'resource_not_found',
   );
 
+  let online;
+  let unrelatedOnline;
+  let duplicate;
+  let unrelatedOffline;
   const delivery = await openDelivery(session, primaryToken);
   try {
-    const online = await sharedPresence(session, {
+    online = await sharedPresence(session, {
       'receiver-main': primary.pairingID,
       'receiver-shared': shared.pairingID,
     }, 'online', presenceWait);
@@ -95,7 +99,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
       throw new Error('Receiver online stateChangedAt did not advance');
     }
 
-    const duplicate = await rejectedUpgrade(session, {
+    duplicate = await rejectedUpgrade(session, {
       path: '/v1/receiver/events',
       token: primaryToken,
     }, 409, 'receiver_already_connected');
@@ -105,7 +109,6 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     }
 
     const unrelatedSocket = await openDelivery(session, unrelated.receiverToken);
-    let unrelatedOnline;
     try {
       unrelatedOnline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'online', presenceWait);
       const sharedStillOnline = await waitForPresence(session, 'receiver-main', primary.pairingID, 'online', presenceWait);
@@ -116,7 +119,7 @@ export async function receiverSurface(session, primary, shared, unrelated) {
     } finally {
       await unrelatedSocket.close();
     }
-    const unrelatedOffline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'offline', presenceWait);
+    unrelatedOffline = await waitForPresence(session, 'receiver-other', unrelated.pairingID, 'offline', presenceWait);
     if (!(Date.parse(unrelatedOffline.stateChangedAt) > Date.parse(unrelatedOnline.stateChangedAt))) {
       throw new Error('unrelated Receiver offline stateChangedAt did not follow its online state');
     }

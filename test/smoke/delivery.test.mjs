@@ -12,10 +12,46 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { deliveryRestoreWatchdog, withDeliveryBatchLock } from './lib/delivery_faults.mjs';
+import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import { runDeliveryScenario } from './lib/session_delivery_support.mjs';
+import {
+  expectMetadata,
+  runDeliveryScenario,
+  waitForAdmitted,
+} from './lib/session_delivery_support.mjs';
 import { expectNoMessage } from './lib/socket_assertions.mjs';
 import { TARGET } from './lib/target.mjs';
+
+test('Delivery admission polling accepts a committed count after retrying', async () => {
+  const session = {
+    plan: createFixturePlan({ runId: 'delivery-admission' }),
+    remote: {
+      async sqlJSON() {
+        return { count: 1 };
+      },
+    },
+  };
+  await waitForAdmitted(session, 'pair2', ['message-1'], 1, 100);
+});
+
+test('Delivery metadata compares timestamp instants across wire formats', () => {
+  expectMetadata({
+    status: 200,
+    body: {
+      deliveries: [{
+        receiverId: 'receiver-1',
+        status: 'received',
+        createdAt: '2026-10-21T17:00:00.123456+00:00',
+        completedAt: '2026-10-21T17:00:01.123456+00:00',
+      }],
+    },
+  }, [{
+    receiverID: 'receiver-1',
+    status: 'received',
+    createdAt: '2026-10-21T17:00:00.123456Z',
+    completedAt: '2026-10-21T17:00:01.123456Z',
+  }]);
+});
 
 test('an unexpected Delivery frame is reported without its ciphertext', async () => {
   const socket = {

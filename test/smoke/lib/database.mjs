@@ -9,8 +9,10 @@ export const retention = new Map([
 ]);
 
 export const cronCommand = 'SELECT pin_glide.pin_glide_fn_cleanup_expired_rows(now())';
+export const retentionJobName = 'pin-glide-retention-cleanup';
+export const cronTimezones = new Set(['GMT', 'UTC', 'Etc/UTC']);
 export const cronJobs = new Map([
-  ['pin-glide-retention-cleanup', {
+  [retentionJobName, {
     username: 'pin_glide',
     database: 'pin_glide',
     schedule: '0 19 * * *',
@@ -63,6 +65,9 @@ export function validateConfiguration(facts, model, { cronActive = true } = {}) 
   }
 
   if (!Array.isArray(facts.cron)) throw new Error('Scheduled job inventory is not an array');
+  if (!cronTimezones.has(facts.cronTimezone)) {
+    throw new Error(`pg_cron timezone ${facts.cronTimezone || '(missing)'} is not UTC`);
+  }
   const actualJobs = facts.cron;
   const currentJobs = uniqueMap(actualJobs, row => row.jobname, 'scheduled job');
   if (currentJobs.size !== cronJobs.size) throw new Error('Scheduled job inventory is incomplete or unapproved');
@@ -77,6 +82,7 @@ export function validateConfiguration(facts, model, { cronActive = true } = {}) 
   }
   return {
     retentionPolicies: policies.size,
+    cronTimezone: facts.cronTimezone,
     cron: actualJobs.map(job => ({ ...job })),
   };
 }

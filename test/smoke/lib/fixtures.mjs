@@ -31,6 +31,10 @@ export function sqlTextArray(values) {
   return `ARRAY[${values.map(escapeSQLString).join(', ')}]::text[]`;
 }
 
+export function retentionMarker(plan) {
+  return `smoke-${plan.runId}-retention`;
+}
+
 export function fixtureSender(plan, label) {
   const sender = plan.senders.find(item => item.label === label);
   if (!sender) throw new Error(`Unknown smoke Sender ${label}`);

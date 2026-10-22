@@ -4,9 +4,9 @@ import {
   credentialLifetimeInterval,
   fixtureSender,
   renderBootstrapSQL,
-  renderCleanupSQL,
   sqlTextArray,
 } from './fixtures.mjs';
+import { cleanupSession } from './fixture_cleanup.mjs';
 import { SmokeProblem } from './http.mjs';
 import { openWebSocket } from './websocket.mjs';
 
@@ -23,10 +23,14 @@ export class SmokeSession {
     this.http = http;
     this.evidence = evidence;
     this.plan = plan;
+    this.startedAt = new Date().toISOString();
+    this.remote.smokeStartedAt ||= this.startedAt;
     this.receivers = new Set();
     this.requestIds = [];
     this.subjects = new Set();
-    this.secrets = new Set();
+    this.secrets = new Set(evidence.secretValues?.() || []);
+    this.errorBodies = [];
+    this.retentionRunIDs = new Set();
   }
 
   static async create({ target, remote, http, evidence, plan }) {
@@ -47,6 +51,7 @@ export class SmokeSession {
           senders: rows.senders,
           activeCredentials: rows.active,
           ownership,
+          fixtureIdentity: 'synthetic-sql-not-provider-verified',
           requestIds: [...session.requestIds],
         },
       });
@@ -81,7 +86,7 @@ export class SmokeSession {
 
   addSecret(value) {
     for (const item of Array.isArray(value) ? value : [value]) {
-      if (!item) continue;
+      if (!item || this.secrets.has(item)) continue;
       this.secrets.add(item);
       this.evidence.addSecret(item);
     }
@@ -100,6 +105,7 @@ export class SmokeSession {
   }
 
   abandonedRequest(options) {
+    this.trackPayloadSecrets(options.body);
     const { request, abort, aborted } = this.http.callAbandoned(options);
     return {
       request: request.then(result => {
@@ -107,6 +113,7 @@ export class SmokeSession {
         return result;
       }, error => {
         this.trackRequestId(error);
+        if (error instanceof SmokeProblem && error.body) this.errorBodies.push(error.body);
         // The caller's own abort is what proves cancellation; a timeout or
         // service failure is a different outcome.
         error.aborted = aborted();
@@ -121,7 +128,16 @@ export class SmokeSession {
     if (value?.requestId) this.requestIds.push(value.requestId);
   }
 
+  trackPayloadSecrets(body) {
+    if (!Array.isArray(body?.items)) return;
+    for (const item of body.items) {
+      if (!item || typeof item !== 'object') continue;
+      this.addSecret([item.nonce, item.ciphertext].filter(value => typeof value === 'string'));
+    }
+  }
+
   async send(options, dropped) {
+    this.trackPayloadSecrets(options.body);
     try {
       const result = dropped
         ? await this.http.callDropped(options)
@@ -130,6 +146,7 @@ export class SmokeSession {
       return result;
     } catch (error) {
       this.trackRequestId(error);
+      if (error instanceof SmokeProblem && error.body) this.errorBodies.push(error.body);
       throw error;
     }
   }
@@ -312,11 +329,13 @@ export class SmokeSession {
       });
       await socket.next();
       await senderSocket.next();
+      const relayPayload = Buffer.from(`smoke-${pairing.sessionID}`).toString('base64');
+      this.addSecret(relayPayload);
       socket.sendJSON({
         version: 1,
         type: 'pairing_relay',
         sessionId: pairing.sessionID,
-        payload: Buffer.from(`smoke-${pairing.sessionID}`).toString('base64'),
+        payload: relayPayload,
       });
       const relayed = await senderSocket.next();
       if (relayed.json?.type !== 'pairing_relay' || relayed.json?.side !== 'receiver') {
@@ -454,10 +473,7 @@ SELECT json_build_object(
   }
 
   async cleanup() {
-    await this.remote.sql(renderCleanupSQL(this.plan, [...this.receivers], this.requestIds, [...this.subjects]));
-    this.receivers.clear();
-    this.subjects.clear();
-    this.requestIds.length = 0;
+    await cleanupSession(this);
   }
 
   async close() {

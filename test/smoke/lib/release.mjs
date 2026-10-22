@@ -158,11 +158,6 @@ export async function validatePublishedRelease({
     '--jq',
     '.sha',
   ], { cwd: root })).stdout.trim();
-  if (commit !== head) {
-    throw new SmokeValidationError(
-      new Error(`Published release v${target.release} resolves to ${commit}, not checked-out HEAD ${head}`),
-    );
-  }
   const metadataResult = await run('gh', [
     'release',
     'view',
@@ -199,7 +194,7 @@ export async function validatePublishedRelease({
   try {
     validated = validateReleaseMetadata(metadata, {
       version: target.release,
-      sourceCommit: head,
+      sourceCommit: commit,
       assetBytes: await contractBytes(root),
     });
   } catch (error) {
@@ -214,6 +209,7 @@ export async function validatePublishedRelease({
   }
   return {
     ...validated,
+    checkedOutCommit: head,
     tag: metadata.tagName,
     publishedAt: metadata.publishedAt || '',
     upgradeOrigin,

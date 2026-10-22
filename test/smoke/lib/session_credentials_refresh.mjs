@@ -110,6 +110,7 @@ async function orderedAttempts(session) {
 
 export async function droppedResponseRecovery(session) {
   const initial = snapshot(session.sender('recover'));
+  const checkpoint = session.sender('recover').latestRefresh;
   const operationID = session.newOperationID('recover-lost-response');
   const dropped = await session.refresh('recover', {
     operationID,
@@ -118,8 +119,12 @@ export async function droppedResponseRecovery(session) {
   });
   if (dropped.status !== 200) throw new Error(`Dropped refresh returned ${dropped.status}`);
   if (dropped.cacheControl !== 'no-store') throw new Error('Dropped refresh response was cacheable');
-  if (session.sender('recover').latestRefresh !== undefined) {
-    throw new Error('An uncertain refresh response advanced the runner checkpoint');
+  if (JSON.stringify(session.sender('recover').latestRefresh) !== JSON.stringify(checkpoint)) {
+    throw new Error(
+      `An uncertain refresh response changed the runner checkpoint: ${JSON.stringify(
+        session.sender('recover').latestRefresh,
+      )}`,
+    );
   }
   const recovered = await session.refresh('recover', {
     operationID,
@@ -215,6 +220,8 @@ export async function reuseIsolation(session) {
   ) {
     throw new Error('Refresh reuse did not revoke only its Sender family');
   }
+  // The scenario intentionally revoked this family, so it has no usable runner checkpoint.
+  session.sender('window').latestRefresh = undefined;
 
   return {
     outsideWindow,

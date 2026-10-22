@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { modelConfiguration } from './lib/configuration.mjs';
-import { cronCommand, retention, validateDatabaseFacts } from './lib/database.mjs';
+import {
+  cronCommand,
+  cronJobs,
+  retention,
+  retentionJobName,
+  validateDatabaseFacts,
+} from './lib/database.mjs';
 import { SmokeValidationError } from './lib/errors.mjs';
 import { validateReleaseMetadata } from './lib/installation.mjs';
 import {
@@ -58,6 +64,7 @@ test('release identity requires a published exact commit and both immutable cont
 });
 
 test('database facts require the selected release, approved model, complete ledgers and scheduled cleanup state', () => {
+  const expectedJob = cronJobs.get(retentionJobName);
   const checksum = 'b'.repeat(64);
   const model = {
     id: 'default',
@@ -85,13 +92,14 @@ test('database facts require the selected release, approved model, complete ledg
       { schema: 'cron', table: 'job_run_details', days: 30, column: 'end_time' },
     ],
     cron: [{
-      jobname: 'pin-glide-retention-cleanup',
-      username: 'pin_glide',
-      database: 'pin_glide',
-      schedule: '0 19 * * *',
+      jobname: retentionJobName,
+      username: expectedJob.username,
+      database: expectedJob.database,
+      schedule: expectedJob.schedule,
       active: true,
-      command: 'SELECT pin_glide.pin_glide_fn_cleanup_expired_rows(now())',
+      command: cronCommand,
     }],
+    cronTimezone: 'GMT',
     audits: {
       'release:apply': 0,
       'release:check': 0,
@@ -119,6 +127,16 @@ test('database facts require the selected release, approved model, complete ledg
   });
   assert.equal(summary.release, '1.2.3');
   assert.equal(summary.model.workspaceId, 'ws-kea2u5v9va6wsdvh');
+
+  const wrongTimezone = structuredClone(facts);
+  wrongTimezone.cronTimezone = 'Asia/Shanghai';
+  assert.throws(() => validateDatabaseFacts(wrongTimezone, {
+    release: '1.2.3',
+    scripts: expectedScripts,
+    origins,
+    upgradeOrigin: '1.2.2',
+    model,
+  }), /timezone.*not UTC/);
 
   const wrongModel = structuredClone(facts);
   wrongModel.model.model = 'another-model';
@@ -342,8 +360,9 @@ test('published release checks refuse a dirty worktree before contacting the tar
   assert(!calls.some(([command]) => command === 'gh'));
 });
 
-test('published release checks require a clean worktree, matching commit and immutable assets', async () => {
+test('published release checks accept test-harness commits on a clean worktree while binding to the released source', async () => {
   const head = 'a'.repeat(40);
+  const releaseCommit = 'b'.repeat(40);
   const contracts = await contractBytes(process.cwd());
   const openapi = contracts['openapi.yaml'];
   const asyncapi = contracts['asyncapi.yaml'];
@@ -352,7 +371,7 @@ test('published release checks require a clean worktree, matching commit and imm
     calls.push([command, ...args]);
     if (command === 'git' && args[0] === 'rev-parse') return { stdout: `${head}\n`, stderr: '' };
     if (command === 'git' && args[0] === 'status') return { stdout: '', stderr: '' };
-    if (command === 'gh' && args[0] === 'api') return { stdout: `${head}\n`, stderr: '' };
+    if (command === 'gh' && args[0] === 'api') return { stdout: `${releaseCommit}\n`, stderr: '' };
     if (command === 'gh' && args[0] === 'release' && args[1] === 'list') {
       return { stdout: JSON.stringify([{ tagName: 'v0.1.5', isDraft: false, isPrerelease: false }]), stderr: '' };
     }
@@ -378,7 +397,8 @@ test('published release checks require a clean worktree, matching commit and imm
     run,
     runContracts: false,
   });
-  assert.equal(validated.sourceCommit, head);
+  assert.equal(validated.sourceCommit, releaseCommit);
+  assert.equal(validated.checkedOutCommit, head);
   assert.equal(validated.tag, 'v0.1.6');
   assert.equal(validated.upgradeOrigin, '0.1.5');
   assert(calls.some(call => call[0] === 'git' && call[1] === 'status'));

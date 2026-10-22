@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process';
-
 import { runProcess } from './commands.mjs';
 import { withFailureJoiningCleanup } from './cleanup.mjs';
+import { databaseConfigurationFactsQuery } from './database_facts.mjs';
 import {
   withBailianConnectivityFault,
   withInvalidBailianKey,
@@ -25,6 +24,8 @@ export class RemoteEnvironment {
   constructor({ target, run = runProcess }) {
     this.target = target;
     this.run = run;
+    this.preservedApiLogs = [];
+    this.smokeStartedAt = null;
     this.composeArgs = [
       'docker',
       'compose',
@@ -96,19 +97,8 @@ export class RemoteEnvironment {
     }
   }
 
-  restoreDump(database, snapshot, options = {}) {
-    if (!/^[a-z][a-z0-9_]{0,62}$/.test(database)) throw new Error('Invalid smoke database name');
-    const script = `cat ${quote(snapshot)} | ${this.composeArgs.join(' ')} exec -T postgres pg_restore --exit-on-error --username=pin_glide --dbname=${quote(database)}`;
-    return this.ssh(`sudo -n bash -ec ${quote(script)}`, options);
-  }
-
-  restoreList(snapshot, options = {}) {
-    const script = `cat ${quote(snapshot)} | ${this.composeArgs.join(' ')} exec -T postgres pg_restore --list`;
-    return this.ssh(`sudo -n bash -ec ${quote(script)}`, options);
-  }
-
   install(action, version) {
-    const command = `bash ${quote(`${this.target.deploymentDir}/install.sh`)}`;
+    const command = `sudo -n bash ${quote(`${this.target.deploymentDir}/install.sh`)}`;
     return this.ssh(
       `cd ${quote(this.target.deploymentDir)} && ${command} --version ${quote(version)} ${action}`,
       { timeoutMs: 600_000 },
@@ -131,7 +121,7 @@ export class RemoteEnvironment {
     return withBailianConnectivityFault(this, workspaceID, callback, options);
   }
 
-  async createStoppedSnapshot(version) {
+  async createStoppedSnapshot(version, { afterStop } = {}) {
     let prepared = false;
     let stopped = false;
     let failure;
@@ -142,6 +132,7 @@ export class RemoteEnvironment {
       prepared = true;
       await this.install('--stop-api', version);
       stopped = true;
+      if (afterStop) await afterStop();
       await this.assertNoExternalWriters();
       snapshotsBefore = new Set((await this.listSnapshots()).map(entry => entry.name));
       const writesBefore = await this.databaseWriteStats();
@@ -186,23 +177,12 @@ export class RemoteEnvironment {
       if (createdSnapshot && !added.includes(createdSnapshot)) {
         throw new Error('The stopped snapshot command reported an archive that is not present');
       }
-      if (!createdSnapshot && added.length === 1) createdSnapshot = added[0];
       if (!createdSnapshot) {
-        throw new Error('The stopped snapshot action did not publish an unambiguous archive');
+        throw new Error('The stopped snapshot action reported no archive');
       }
     } catch (error) {
       failure = error;
     } finally {
-      if (failure && !createdSnapshot && snapshotsBefore) {
-        try {
-          const added = (await this.listSnapshots())
-            .map(entry => entry.name)
-            .filter(name => !snapshotsBefore.has(name));
-          if (added.length === 1) createdSnapshot = added[0];
-        } catch (cleanupError) {
-          failure = new AggregateError([failure, cleanupError], 'Stopped snapshot cleanup discovery failed');
-        }
-      }
       if (failure && createdSnapshot) {
         try {
           await this.removeSnapshot(createdSnapshot);
@@ -332,144 +312,74 @@ WHERE datname = current_database();
     ].join(' && '), { timeoutMs: 30_000 });
   }
 
-  schemaAudits() {
+  rawApiLogsSince(since) {
+    const value = new Date(since);
+    if (!Number.isFinite(value.getTime())) throw new Error('Smoke service-log start time is invalid');
+    return this.ssh(
+      `${this.compose} logs --no-color --since ${quote(value.toISOString())} api`,
+      { timeoutMs: 30_000 },
+    );
+  }
+
+  async preserveApiLogs(since = this.smokeStartedAt) {
+    if (!since) throw new Error('Smoke service-log start time is unavailable');
+    const result = await this.rawApiLogsSince(since);
+    this.preservedApiLogs.push({
+      since: new Date(since).toISOString(),
+      stdout: result?.stdout || '',
+      stderr: result?.stderr || '',
+    });
+  }
+
+  async apiLogsSince(since) {
+    const value = new Date(since);
+    if (!Number.isFinite(value.getTime())) throw new Error('Smoke service-log start time is invalid');
+    const current = await this.rawApiLogsSince(since);
+    const preserved = this.preservedApiLogs.filter(
+      entry => Date.parse(entry.since) >= value.getTime(),
+    );
+    return {
+      stdout: [...preserved.map(entry => entry.stdout), current?.stdout || '']
+        .filter(Boolean)
+        .join('\n'),
+      stderr: [...preserved.map(entry => entry.stderr), current?.stderr || '']
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  scheduledWorkState() {
     return this.sqlJSON(`
 SELECT json_build_object(
-  'database', current_database(),
-  'release', (
-    SELECT release_version
-    FROM release.release_deploy_history
-    ORDER BY id DESC
-    LIMIT 1
-  ),
-  'history', (
-    SELECT coalesce(json_agg(release_version ORDER BY id), '[]'::json)
-    FROM release.release_deploy_history
-  ),
-  'model', (
-    SELECT json_build_object(
-      'id', id,
-      'workspaceId', workspace_id,
-      'model', model,
-      'enabled', enabled
-    )
-    FROM pin_glide.model_configurations
-    WHERE id = 'default'
-  ),
-  'retention', (
-    SELECT coalesce(json_agg(json_build_object(
-      'schema', schema_name,
-      'table', table_name,
-      'days', retention_days,
-      'column', date_column
-    ) ORDER BY schema_name, table_name), '[]'::json)
-    FROM pin_glide.retention_policies
-  ),
-  'cron', (
-    SELECT coalesce(json_agg(json_build_object(
-      'jobname', jobname,
-      'username', username,
-      'database', database,
-      'schedule', schedule,
-      'active', active,
-      'command', command
-    ) ORDER BY jobname), '[]'::json)
+  'activeJobs', (
+    SELECT coalesce(json_agg(jobname ORDER BY jobname), '[]'::json)
     FROM cron.job
+    WHERE active
   ),
-  'audits', (
-    SELECT coalesce(json_object_agg(identity, exit_code), '{}'::json)
-    FROM (
-      SELECT DISTINCT ON (target_schema, operation)
-        target_schema || ':' || operation AS identity,
-        exit_code
-      FROM release.release_schema_audits
-      ORDER BY target_schema, operation, id DESC
-    ) latest
+  'runningRuns', (
+    SELECT count(*)
+    FROM cron.job_run_details
+    WHERE status = 'running'
   ),
-  'dataScripts', (
-    SELECT coalesce(json_agg(json_build_object(
-      'filename', filename,
-      'checksum', checksum
-    ) ORDER BY filename), '[]'::json)
-    FROM release.release_data_scripts
+  'cronBackends', (
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name = 'pg_cron'
   ),
-  'migrationScripts', (
-    SELECT coalesce(json_agg(json_build_object(
-      'schema', target_schema,
-      'filename', filename,
-      'checksum', checksum
-    ) ORDER BY target_schema, filename), '[]'::json)
-    FROM release.release_migration_scripts
+  'maxRunID', (
+    SELECT coalesce(max(runid), 0)
+    FROM cron.job_run_details
   )
 );
 `);
   }
-}
 
-export async function acquireEnvironmentLock({ target, spawnImpl = spawn, timeoutMs = 10_000 }) {
-  const marker = 'PIN_GLIDE_SMOKE_LOCK_ACQUIRED';
-  const child = spawnImpl('ssh', [
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=10',
-    target.sshHost,
-    `flock -n /tmp/pin-glide-dev-smoke.lock -c 'printf "${marker}\\n"; cat >/dev/null'`,
-  ], { stdio: ['pipe', 'pipe', 'pipe'] });
-  let output = '';
-  let errorOutput = '';
-  let acquired = false;
-  let exited = false;
-  let settled = false;
-  const finish = (resolve, reject, error) => {
-    if (settled) return;
-    settled = true;
-    if (error) reject(error);
-    else resolve();
-  };
-  const terminate = () => {
-    if (!exited) child.kill('SIGKILL');
-    child.stdin.destroy();
-  };
-  // A failed pipe write must not surface as an unhandled error after cancellation.
-  child.stdin.on('error', () => {});
-  child.stderr.on('data', chunk => {
-    errorOutput += chunk.toString();
-  });
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      terminate();
-      finish(resolve, reject, new Error('timed out acquiring the shared smoke environment lock'));
-    }, timeoutMs);
-    child.stdout.on('data', chunk => {
-      output += chunk.toString();
-      if (!settled && !acquired && output.includes(marker)) {
-        acquired = true;
-        clearTimeout(timer);
-        finish(resolve, reject);
-      }
-    });
-    child.once('error', error => {
-      clearTimeout(timer);
-      terminate();
-      finish(resolve, reject, error);
-    });
-    child.once('exit', code => {
-      exited = true;
-      if (!settled && !acquired) {
-        clearTimeout(timer);
-        finish(resolve, reject, new Error(`another smoke run holds the environment lock${code ? ` (exit ${code})` : ''}${errorOutput ? `: ${errorOutput.trim()}` : ''}`));
-      }
-    });
-  });
-  return {
-    async release() {
-      if (!exited) child.stdin.end();
-      if (exited) return;
-      const term = setTimeout(() => child.kill('SIGKILL'), 2_000);
-      term.unref();
-      await new Promise(resolve => child.once('exit', resolve));
-      clearTimeout(term);
-    },
-  };
+  schemaAudits() {
+    return this.sqlJSON(databaseConfigurationFactsQuery({
+      includeReleaseLedgers: true,
+      includeCronBackends: true,
+    }));
+  }
 }
 
 function snapshotFromOutput(stdout = '') {

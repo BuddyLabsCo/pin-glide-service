@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { withFailureJoiningCleanup } from './cleanup.mjs';
 import { runProcess } from './commands.mjs';
 import { SmokeBlocked, SmokeProblem } from './http.mjs';
@@ -85,7 +87,7 @@ export function parseRanTests(output, references) {
   const ran = new Set([...output.matchAll(/^\s*--- PASS: (\w+)/gm)].map(match => match[1]));
   const missing = references.filter(item => !ran.has(item.test)).map(item => item.test);
   if (missing.length > 0) {
-    throw new Error(`deterministic Receiver tests did not run: ${missing.join(', ')}`);
+    throw new Error(`deterministic smoke tests did not run: ${missing.join(', ')}`);
   }
   return references.map(item => item.test);
 }
@@ -124,7 +126,7 @@ export async function runDeterministicTests(root, references, run = runProcess) 
       });
     }
   } catch (error) {
-    throw new SmokeBlocked(`deterministic Receiver tests need a working Docker: ${error.message}`);
+    throw new SmokeBlocked(`deterministic smoke tests need a working Docker: ${error.message}`);
   }
   const tests = [];
   for (const packagePath of packages) {
@@ -140,14 +142,14 @@ export async function runDeterministicTests(root, references, run = runProcess) 
     } catch (error) {
       // A missing toolchain is an unmet prerequisite, not a failed assertion.
       if (error.code === 'ENOENT') {
-        throw new SmokeBlocked(`deterministic Receiver tests need a Go toolchain: ${error.message}`);
+        throw new SmokeBlocked(`deterministic smoke tests need a Go toolchain: ${error.message}`);
       }
       const output = `${error.result?.stdout || ''}\n${error.result?.stderr || ''}`;
       const failed = failingTests(output, inPackage);
       const detail = failed.length > 0
         ? `: ${failed.join(', ')} failed`
         : `: ${error.message}`;
-      throw new Error(`deterministic Receiver tests failed in ${packagePath}${detail}`, { cause: error });
+      throw new Error(`deterministic smoke tests failed in ${packagePath}${detail}`, { cause: error });
     }
     tests.push(...parseRanTests(result.stdout, inPackage));
   }
@@ -212,10 +214,18 @@ export async function waitForHealth(session) {
 
 // deliverOnce uploads one synthetic ciphertext and waits for the live delivery
 // frame and its Receipt, so a later reconnect can prove no payload was kept.
-export async function deliverOnce(session, label, pairing, socket, tag) {
+export async function deliverOnce(
+  session,
+  label,
+  pairing,
+  socket,
+  tag,
+  {
+    nonce = randomBytes(12).toString('base64'),
+    ciphertext = randomBytes(17).toString('base64'),
+  } = {},
+) {
   const messageID = session.newOperationID(`receiver-delivery-${tag}`);
-  const nonce = 'AAAAAAAAAAAAAAAA';
-  const ciphertext = 'AQIDBAUGBwgJCgsMDQ4PEBESExQ=';
   const uploading = settle(session.request({
     method: 'POST',
     path: '/v1/messages',
@@ -231,7 +241,20 @@ export async function deliverOnce(session, label, pairing, socket, tag) {
       }],
     },
   }));
-  const frame = await socket.next(10_000);
+  const first = await Promise.race([
+    socket.next(10_000).then(frame => ({ frame }), error => ({ error })),
+    uploading.then(outcome => ({ outcome })),
+  ]);
+  if (first.error) throw first.error;
+  if (first.outcome) {
+    if (first.outcome.error) throw first.outcome.error;
+    const result = first.outcome.value.body?.results?.[0];
+    throw new Error(
+      `live Delivery ended as ${first.outcome.value.status} ${result?.status || '(no result)'} ` +
+        `${result?.error?.code || '(no code)'} before a frame`,
+    );
+  }
+  const { frame } = first;
   if (
     frame.json?.type !== 'delivery'
     || frame.json.senderId !== session.sender(label).id
