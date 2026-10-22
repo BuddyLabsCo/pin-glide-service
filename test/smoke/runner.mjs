@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateDatabaseFacts } from './lib/database.mjs';
 import { SmokeValidationError } from './lib/errors.mjs';
 import { Evidence } from './lib/evidence.mjs';
+import { runExcludedProviderEvidence } from './lib/excluded_provider.mjs';
 import { createFixturePlan } from './lib/fixtures.mjs';
 import { SmokeBlocked, SmokeHttp, SmokeProblem } from './lib/http.mjs';
 import { summarizeCompose } from './lib/installation.mjs';
@@ -324,12 +325,15 @@ async function runSeededJourneys({ session, plan }) {
   start = session.requestIds.length;
   const receiver = await runReceiverScenarios(session, { root });
   groups.receiver = session.requestIds.slice(start);
+  const retention = await runRetentionScenarios(session, { root });
+  const excludedProvider = await runExcludedProviderEvidence({ session, root });
   return {
     credentials,
     pairing: pairingEvidence,
     delivery,
     receiver,
-    retention: await runRetentionScenarios(session, { root }),
+    retention,
+    excludedProvider,
   };
 }
 

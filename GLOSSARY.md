@@ -8,6 +8,10 @@ Pin Glide connects an Account's Android Senders and Windows Receivers to deliver
 A user identity verified by one configured WeChat or QQ application, to which Sender and Receiver devices belong. An Account may have multiple Senders and Receivers.
 _Avoid_: Sending account, receiving account
 
+**Synthetic Smoke Identity**:
+An Account, registration or credential inserted directly into the selected development-acceptance database to exercise service behavior. It does not represent successful provider verification.
+_Avoid_: Real-provider account, verified login
+
 **Sender**:
 An Android app installation registered to an Account that originates verification messages and manages its own Receiver associations.
 _Avoid_: Phone, uploader
