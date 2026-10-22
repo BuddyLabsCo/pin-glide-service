@@ -7,14 +7,6 @@ import { quote, snapshotName } from './local.mjs';
 
 const restoreContainer = /^smoke_restore_[a-f0-9]{16}$/;
 
-// The smoke environment owns this directory, so it only has to be a directory.
-export async function verifySnapshotLocations(remote) {
-  const result = await remote.exec(
-    `test -d ${quote(remote.target.snapshotDir)} && test -w ${quote(remote.target.snapshotDir)}`,
-    { timeoutMs: 30_000 },
-  );
-  return result;
-}
 export function restoreFactsQuery() {
   return databaseConfigurationFactsQuery({ includeRestoreChecks: true });
 }

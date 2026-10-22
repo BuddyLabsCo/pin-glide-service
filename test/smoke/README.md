@@ -30,8 +30,9 @@ test/smoke/
 
 - `harness/` owns session state, fixtures, HTTP/WSS peers, evidence, contract
   checks, diagnostics, and deterministic test runners.
-- `environment/` owns the local Compose installation, release validation,
-  database facts, snapshot recovery, provider faults, and writer guards.
+- `environment/` owns local provisioning, the Compose installation, release
+  validation, database facts, snapshot recovery, provider faults, and writer
+  guards.
 - `support/` owns process execution, shell quoting, JSON, SQL literal escaping,
   path validation, errors, and cleanup composition.
 - A domain may import `harness/`, `environment/`, and `support/`. `harness/` and

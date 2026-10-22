@@ -17,7 +17,6 @@ import { acquireEnvironmentLock } from './environment/local-lock.mjs';
 import { LocalEnvironment, repository } from './environment/local.mjs';
 import { ensureSmokeDeployment } from './environment/provision.mjs';
 import { verifyRecovery } from './environment/recovery.mjs';
-import { verifySnapshotLocations } from './environment/restore.mjs';
 import { SmokeSession } from './harness/session.mjs';
 import { runSenderCredentialScenarios } from './credentials/index.mjs';
 import { runDeliveryScenarios } from './delivery/index.mjs';
@@ -160,14 +159,13 @@ async function check({ target, evidence, onPreflight = () => {} }) {
 
   const remote = new LocalEnvironment({ target });
   try {
+    onPreflight();
     const installation = await ensureSmokeDeployment(remote, {
       root,
       release: target.release,
       origins: release.origins[target.release],
     });
     const deployment = await remote.verifyDeployment();
-    await verifySnapshotLocations(remote);
-    onPreflight();
     const config = await remote.composeConfig();
     const apiEnvironment = config.services?.api?.environment || {};
     const postgresEnvironment = config.services?.postgres?.environment || {};
