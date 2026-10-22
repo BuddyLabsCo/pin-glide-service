@@ -58,8 +58,9 @@ The runner refuses any other origin, project, deployment directory, database,
 snapshot directory, or undeclared release transition. Installation commands run
 locally through passwordless `sudo`; SSH is not used.
 
-The smoke installation `.env` must set `COMPOSE_PROJECT_NAME=pin-glide-smoke`,
-`PIN_GLIDE_API_BIND=127.0.0.1`, and
+The deployment `.env.example` keeps the real-deploy snapshot path. For smoke,
+override the copied smoke installation `.env` to set
+`COMPOSE_PROJECT_NAME=pin-glide-smoke`, `PIN_GLIDE_API_BIND=127.0.0.1`, and
 `PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`. The runner clears inherited
 Compose and service variables before invoking Compose and verifies those three
 resolved values, so a stray shell export cannot retarget or re-expose the
