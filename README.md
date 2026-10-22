@@ -12,13 +12,14 @@ Go service for Sender authentication, Pairing, model credentials, and encrypted 
 ## Checks
 
 ```sh
-make build
-make test
-make format-check
-make lint
-make lint-sql
-make check-contracts
-make generate
+make build           # compile every Go package
+make test            # node helper tests, then go test ./...
+make generate        # Jet types and both published descriptions
+make check-contracts # pinned protocol validators, then the contract tests
+make format-check    # gofmt check over handwritten Go sources
+make lint            # pinned golangci-lint, then the source-size check
+make lint-sql        # disposable PostgreSQL load, catalog, Schemalint, SQLFluff
+make format-sql      # SQLFluff fixes for the desired schemas
 ```
 
 PostgreSQL integration tests use a disposable local database:
@@ -31,14 +32,14 @@ go test -tags=integration ./test/integration/...
 
 ```sh
 export PIN_GLIDE_SNAPSHOT_PATH=/path/to/pin-glide-snapshots
-make dev
+make dev            # rebuild local data from the newest snapshot, mask, then run the api
 ```
 
-`make dev` rebuilds this checkout's local database, restores the newest snapshot, migrates, masks data, and starts the API on `127.0.0.1:8080`.
+`make dev` starts the API on `127.0.0.1:8080`.
 
 ```sh
-make dev-code-only  # restart the API, keep local data
-make dev-stop       # remove this checkout's containers and volume
+make dev-code-only  # rebuild/restart only the api, keeping local data
+make dev-stop       # stop and remove this checkout's local container and volume
 ```
 
 ## Smoke test
