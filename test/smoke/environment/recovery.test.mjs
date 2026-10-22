@@ -1,0 +1,213 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { cronJobs, retention, retentionJobName } from './database.mjs';
+import { snapshotWriterGuard, verifyRecovery } from './recovery.mjs';
+import { TARGET } from '../harness/target.mjs';
+
+function drainProbeFixture({
+  status = 'succeeded',
+  returnMessage = 'DO',
+} = {}) {
+  let inspections = 0;
+  let cleanups = 0;
+  return {
+    probeName: 'held-state-run-retention-drain-abc123',
+    jobID: 42,
+    runID: 11,
+    async inspect() {
+      inspections++;
+      return {
+        jobExists: true,
+        schedule: '0 0 1 1 *',
+        active: inspections > 1,
+        runID: 11,
+        status,
+        returnMessage,
+        endTime: '2026-10-20T04:00:00.000Z',
+        cronBackends: 0,
+      };
+    },
+    async cleanup() {
+      cleanups++;
+    },
+    get inspections() {
+      return inspections;
+    },
+    get cleanups() {
+      return cleanups;
+    },
+  };
+}
+
+test('recovery rejects scheduled work that becomes active while held', async () => {
+  let stateReads = 0;
+  const recorded = [];
+  const drainProbe = drainProbeFixture({
+    status: 'failed',
+    returnMessage: 'job canceled',
+  });
+  await assert.rejects(
+    () => verifyRecovery({
+      checkResult: {
+        remote: {
+          target: TARGET,
+          createStoppedSnapshot: async (_version, { afterStop }) => {
+            await afterStop();
+            throw new Error('snapshot must not run');
+          },
+          scheduledWorkState: async () => {
+            stateReads++;
+            return stateReads === 1
+              ? { activeJobs: [], runningRuns: 0, cronBackends: 0, maxRunID: 7 }
+              : { activeJobs: ['new-job'], runningRuns: 0, cronBackends: 0, maxRunID: 7 };
+          },
+        },
+        release: { tag: 'v1.2.3' },
+        snapshot: null,
+        http: {},
+      },
+      evidence: {
+        runId: 'held-state-run',
+        record(entry) {
+          recorded.push(entry);
+        },
+      },
+      startDrainProbe: async () => drainProbe,
+      drainProbeSchedule: '0 0 1 1 *',
+      probeWriter: async () => ({ blocked: true }),
+      restore: async () => {},
+    }),
+    /became active/,
+  );
+  assert(recorded.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
+  assert.equal(drainProbe.cleanups, 1);
+});
+
+test('recovery records snapshot and restore failures in their own scenarios', async () => {
+  const before = [];
+  const failedBeforeStop = drainProbeFixture();
+  await assert.rejects(() => verifyRecovery({
+    checkResult: {
+      remote: {
+        target: TARGET,
+        createStoppedSnapshot: async () => { throw new Error('snapshot command failed'); },
+      },
+      release: { tag: 'v1.2.3' },
+      snapshot: null,
+      http: {},
+    },
+    evidence: { record: entry => before.push(entry) },
+    startDrainProbe: async () => failedBeforeStop,
+    drainProbeSchedule: '0 0 1 1 *',
+    probeWriter: async () => ({ blocked: true }),
+    restore: async () => {},
+  }), /snapshot command failed/);
+  assert(before.some(entry => entry.scenario === 'stopped-writer container snapshot' && entry.status === 'failed'));
+  assert(before.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'blocked'));
+  assert.equal(failedBeforeStop.cleanups, 1);
+
+  const after = [];
+  const drainProbe = drainProbeFixture();
+  const expectedJob = cronJobs.get(retentionJobName);
+  const model = { id: 'default', workspaceId: 'workspace', model: 'qwen3.7-flash', enabled: true };
+  const facts = {
+    database: 'pin_glide',
+    model,
+    retention: [...retention].map(([identity, value]) => {
+      const [schema, table] = identity.split('/');
+      return { schema, table, days: value.days, column: value.column };
+    }),
+    cron: [{
+      jobname: retentionJobName,
+      username: expectedJob.username,
+      database: expectedJob.database,
+      schedule: expectedJob.schedule,
+      active: true,
+      command: expectedJob.command,
+    }],
+    cronTimezone: 'GMT',
+    runningCronJobs: 0,
+    cronBackends: 0,
+  };
+  const checkResult = {
+    remote: {
+      target: TARGET,
+      createStoppedSnapshot: async (_version, { afterStop }) => {
+        await afterStop();
+        return 'pin-glide-snapshot-20261020T040000.000000002Z-2.dump';
+      },
+      scheduledWorkState: async () => ({
+        activeJobs: [],
+        runningRuns: 0,
+        cronBackends: 0,
+        maxRunID: 7,
+      }),
+      schemaAudits: async () => facts,
+    },
+    release: { tag: 'v1.2.3', upgradeOrigin: '1.2.2' },
+    snapshot: null,
+    model,
+    postgresImage: 'ghcr.io/example/postgres:18',
+    http: { call: async () => ({ body: { status: 'ok' }, requestId: 'request-1' }) },
+  };
+  let restoredSnapshot;
+  let restoreOptions;
+  await assert.rejects(() => verifyRecovery({
+    checkResult,
+    evidence: { record: entry => after.push(entry) },
+    startDrainProbe: async () => drainProbe,
+    drainProbeSchedule: '0 0 1 1 *',
+    probeWriter: async () => ({ blocked: true }),
+    restore: async (remote, snapshot, options) => {
+      restoredSnapshot = snapshot;
+      restoreOptions = options;
+      throw new Error('restore failed');
+    },
+  }), /restore failed/);
+  assert.equal(
+    restoredSnapshot,
+    `${TARGET.snapshotDir}/pin-glide-snapshot-20261020T040000.000000002Z-2.dump`,
+  );
+  const backup = after.find(entry => entry.scenario === 'stopped-writer container snapshot');
+  assert.equal(backup?.status, 'passed');
+  assert.equal(backup?.details?.heldScheduledWork?.unknownWriterBlocked, true);
+  assert.equal(backup?.details?.retentionDrainProbe?.observedRunning, true);
+  assert.equal(backup?.details?.retentionDrainProbe?.cleanedUp, true);
+  assert.equal(restoreOptions.postgresImage, 'ghcr.io/example/postgres:18');
+  assert.equal(restoreOptions.retentionDrainProbe.name, 'held-state-run-retention-drain-abc123');
+  assert.equal(drainProbe.inspections, 2);
+  assert.equal(drainProbe.cleanups, 1);
+  assert(after.some(entry => entry.scenario === 'container-run development snapshot restore' && entry.status === 'failed'));
+});
+
+test('the default snapshot writer guard keeps a writer until the snapshot rejects it', async () => {
+  let releaseHolder;
+  let snapshots = 0;
+  let terminated = 0;
+  const remote = {
+    exec() {
+      return new Promise(resolve => {
+        releaseHolder = resolve;
+      });
+    },
+    async sqlJSON() {
+      return { connections: 1 };
+    },
+    async createStoppedSnapshot() {
+      snapshots++;
+      throw new Error('Another database writer is still connected');
+    },
+    async sql() {
+      terminated++;
+      releaseHolder({ stdout: '', stderr: '' });
+    },
+    async assertNoExternalWriters() {},
+  };
+  assert.deepEqual(
+    await snapshotWriterGuard(remote, 'smoke-writer', '1.2.3'),
+    { blocked: true, application: 'smoke-writer' },
+  );
+  assert.equal(snapshots, 1);
+  assert.equal(terminated, 1);
+});

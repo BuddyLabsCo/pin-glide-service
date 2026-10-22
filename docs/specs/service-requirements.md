@@ -520,7 +520,7 @@ Repository performance tests, load/benchmark plans, latency sampling procedures 
 - Provider expiry/failure, non-thinking JSON Schema settings, malformed/null/invalid OTP output and local original-SMS validation; no upload on failed extraction.
 - Privacy checks across database/logs/examples; metadata pg_cron retention and no payload recovery after restart.
 
-The [deployed smoke evidence matrix](../../test/smoke/README.md) separates scenario pass, fail and blocked states from deterministic unit/integration evidence and explicitly excluded real-provider paths. A smoke pass does not prove client-side cryptography, key storage, QR handling, platform UI behavior, or successful real QQ/WeChat authorization. Each report applies only to its recorded release, source and contract pins.
+The [local smoke evidence matrix](../../test/smoke/README.md) separates scenario pass, fail and blocked states from deterministic unit/integration evidence and explicitly excluded real-provider paths. A smoke pass does not prove client-side cryptography, key storage, QR handling, platform UI behavior, or successful real QQ/WeChat authorization. Each report applies only to its recorded release, source and contract pins.
 
 ## 12. Engineering and release baseline
 

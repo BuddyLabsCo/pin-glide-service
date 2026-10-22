@@ -116,5 +116,11 @@ test('Compose publishes the adopted LAN API port while keeping the container lis
     target: 8080,
     published: '33489',
     protocol: 'tcp',
+    host_ip: '0.0.0.0',
   }]);
+});
+
+test('Compose accepts a loopback bind for an isolated local smoke installation', () => {
+  const api = configured({ PIN_GLIDE_API_BIND: '127.0.0.1' });
+  assert.equal(api.ports[0].host_ip, '127.0.0.1');
 });

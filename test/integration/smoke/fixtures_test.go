@@ -215,6 +215,7 @@ func generateSmokeSQL(t *testing.T) generatedSmokeSQL {
 	script := `
 import { pathToFileURL } from 'node:url';
 const fixtures = await import(pathToFileURL(process.env.FIXTURES).href);
+const credentialFixtures = await import(pathToFileURL(process.env.CREDENTIAL_FIXTURES).href);
 const fixtureCleanup = await import(pathToFileURL(process.env.FIXTURE_CLEANUP).href);
 const receiverFixtures = await import(pathToFileURL(process.env.RECEIVER_FIXTURES).href);
 const retentionFixtures = await import(pathToFileURL(process.env.RETENTION_FIXTURES).href);
@@ -249,12 +250,12 @@ process.stdout.write(JSON.stringify({
   externalWriterSql: remote.externalWriterQuery,
   terminateWriterSql: retentionSession.terminateApplicationBackendsSQL(
     'smoke-integration-owned-writer'),
-  expireAccess: fixtures.renderExpireAccessSQL(plan, 'scope'),
-  expireRefresh: fixtures.renderExpireRefreshSQL(plan, 'scope'),
-  ageOperation: fixtures.renderAgeRefreshOperationSQL(plan, 'scope', 'integration-operation'),
-  expireParent: fixtures.renderExpireRefreshParentSQL(plan, 'scope', 'integration-operation'),
-  revokeRegistration: fixtures.renderRevokeSenderRegistrationSQL(plan, 'permanent'),
-  supersedeFamily: fixtures.renderSupersedeFamilySQL(plan, 'superseded'),
+  expireAccess: credentialFixtures.renderExpireAccessSQL(plan, 'scope'),
+  expireRefresh: credentialFixtures.renderExpireRefreshSQL(plan, 'scope'),
+  ageOperation: credentialFixtures.renderAgeRefreshOperationSQL(plan, 'scope', 'integration-operation'),
+  expireParent: credentialFixtures.renderExpireRefreshParentSQL(plan, 'scope', 'integration-operation'),
+  revokeRegistration: credentialFixtures.renderRevokeSenderRegistrationSQL(plan, 'permanent'),
+  supersedeFamily: credentialFixtures.renderSupersedeFamilySQL(plan, 'superseded'),
   invalidateReceiver: receiverFixtures.renderInvalidateReceiverCredentialSQL(
     plan, 'smoke-integration-fixture-receiver'),
   retentionAging: retentionFixtures.renderRetentionAgingSQL(plan, retention),
@@ -305,14 +306,15 @@ process.stdout.write(JSON.stringify({
 	command := exec.Command("node", "--input-type=module", "--eval", script)
 	command.Dir = root
 	command.Env = append(os.Environ(),
-		"FIXTURES="+filepath.Join(root, "test/smoke/lib/fixtures.mjs"),
-		"FIXTURE_CLEANUP="+filepath.Join(root, "test/smoke/lib/fixture_cleanup.mjs"),
-		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/lib/receiver_fixtures.mjs"),
-		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/lib/retention_fixtures.mjs"),
-		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/lib/retention_checks.mjs"),
-		"RETENTION_SESSION="+filepath.Join(root, "test/smoke/lib/session_retention.mjs"),
-		"DATABASE="+filepath.Join(root, "test/smoke/lib/database.mjs"),
-		"REMOTE="+filepath.Join(root, "test/smoke/lib/remote.mjs"),
+		"FIXTURES="+filepath.Join(root, "test/smoke/harness/fixtures.mjs"),
+		"CREDENTIAL_FIXTURES="+filepath.Join(root, "test/smoke/credentials/fixtures.mjs"),
+		"FIXTURE_CLEANUP="+filepath.Join(root, "test/smoke/harness/fixture-cleanup.mjs"),
+		"RECEIVER_FIXTURES="+filepath.Join(root, "test/smoke/receiver/fixtures.mjs"),
+		"RETENTION_FIXTURES="+filepath.Join(root, "test/smoke/retention/fixtures.mjs"),
+		"RETENTION_CHECKS="+filepath.Join(root, "test/smoke/retention/checks.mjs"),
+		"RETENTION_SESSION="+filepath.Join(root, "test/smoke/retention/index.mjs"),
+		"DATABASE="+filepath.Join(root, "test/smoke/environment/database.mjs"),
+		"REMOTE="+filepath.Join(root, "test/smoke/environment/local.mjs"),
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
