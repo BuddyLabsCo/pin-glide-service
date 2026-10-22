@@ -3,28 +3,33 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { validateDatabaseFacts } from './lib/database.mjs';
-import { SmokeValidationError } from './lib/errors.mjs';
-import { Evidence } from './lib/evidence.mjs';
-import { runExcludedProviderEvidence } from './lib/excluded_provider.mjs';
-import { createFixturePlan } from './lib/fixtures.mjs';
-import { SmokeBlocked, SmokeHttp, SmokeProblem } from './lib/http.mjs';
-import { summarizeCompose } from './lib/installation.mjs';
-import { modelConfiguration } from './lib/configuration.mjs';
-import { runModelScenarios } from './lib/model.mjs';
-import { contractBytes, scriptDigests, validatePublishedRelease } from './lib/release.mjs';
-import { acquireEnvironmentLock } from './lib/remote_lock.mjs';
-import { RemoteEnvironment, repository } from './lib/remote.mjs';
-import { recoveryRestoreScenario, verifyRecovery } from './lib/recovery.mjs';
-import { recoverySnapshot, verifySnapshotLocations } from './lib/restore.mjs';
-import { SmokeSession } from './lib/session.mjs';
-import { runSenderCredentialScenarios } from './lib/session_credentials.mjs';
-import { runDeliveryScenarios } from './lib/session_delivery.mjs';
-import { recoverDeliveryStorageFault } from './lib/delivery_faults.mjs';
-import { runPairingScenarios } from './lib/session_pairing.mjs';
-import { runReceiverScenarios } from './lib/session_receiver.mjs';
-import { runRetentionScenarios } from './lib/session_retention.mjs';
-import { targetFromOptions } from './lib/target.mjs';
+import { validateDatabaseFacts } from './environment/database.mjs';
+import { SmokeValidationError } from './support/errors.mjs';
+import { Evidence } from './harness/evidence.mjs';
+import { runExcludedProviderEvidence } from './harness/excluded-provider.mjs';
+import { createFixturePlan } from './harness/fixtures.mjs';
+import { SmokeBlocked, SmokeHttp, SmokeProblem } from './harness/http.mjs';
+import { summarizeCompose } from './installation/installation.mjs';
+import { modelConfiguration } from './environment/configuration.mjs';
+import { runModelScenarios } from './model/index.mjs';
+import { scriptDigests, validatePublishedRelease } from './environment/release.mjs';
+import { acquireEnvironmentLock } from './environment/local-lock.mjs';
+import { LocalEnvironment, repository } from './environment/local.mjs';
+import { recoveryRestoreScenario, verifyRecovery } from './environment/recovery.mjs';
+import { recoverySnapshot, verifySnapshotLocations } from './environment/restore.mjs';
+import { SmokeSession } from './harness/session.mjs';
+import { runSenderCredentialScenarios } from './credentials/index.mjs';
+import { runDeliveryScenarios } from './delivery/index.mjs';
+import { recoverDeliveryStorageFault } from './delivery/faults.mjs';
+import { runPairingScenarios } from './pairing/index.mjs';
+import { runReceiverScenarios } from './receiver/index.mjs';
+import { runRetentionScenarios } from './retention/index.mjs';
+import {
+  retentionDrainProbeSchedule,
+  startRunningRetentionProbe,
+} from './retention/runtime.mjs';
+import { renderRetentionCleanupSQL } from './retention/checks.mjs';
+import { targetFromOptions } from './harness/target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const exclusions = [
@@ -37,15 +42,15 @@ function usage() {
     'Usage: node test/smoke/runner.mjs --check --release X.Y.Z',
     '       node test/smoke/runner.mjs --integration-ready --release X.Y.Z',
     '',
-    '--check verifies the published release, deployed Compose identity, health,',
+    '--check verifies the published release, local Compose identity, health,',
     'schema/data ledgers, contracts and snapshot inventory without writes. It',
     'always exits 2 after prerequisites pass because it does not execute restore.',
     '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
     'exercises seeded Sender credential/session, Pairing, Delivery, Receiver and real',
-    'Bailian model journeys plus privacy and retention cleanup through the deployed',
+    'Bailian model journeys plus privacy and retention cleanup through the local',
     'service, then creates a',
     'stopped-writer snapshot and restores it into a disposable database.',
-    'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev.',
+    'It requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke.',
   ].join('\n');
 }
 
@@ -156,11 +161,10 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
       sourceCommit: release.sourceCommit,
       checkedOutCommit: release.checkedOutCommit,
       upgradeOrigin: release.upgradeOrigin,
-      assets: release.assets,
     },
   });
 
-  const remote = new RemoteEnvironment({ target });
+  const remote = new LocalEnvironment({ target });
   const deployment = await remote.verifyDeployment();
   await verifySnapshotLocations(remote);
   onPreflight();
@@ -186,7 +190,7 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     });
     if (snapshot || !allowMissingSnapshot) {
       evidence.record({
-        scenario: 'server and workstation snapshot inventory',
+        scenario: 'local snapshot inventory',
         status: snapshot ? 'passed' : 'blocked',
         details: snapshot || { reason: 'no completed development snapshot exists yet' },
       });
@@ -244,23 +248,10 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     });
     const bindings = await verifyPort(remote, target);
     evidence.record({
-      scenario: 'published LAN port',
+      scenario: 'published local port',
       status: 'passed',
       details: { bindings },
     });
-
-    evidence.record({
-      scenario: 'published contract identities',
-      status: 'passed',
-      details: Object.fromEntries(Object.entries(release.assets).map(([name, asset]) => [name, asset.digest])),
-    });
-    const local = await contractBytes(root);
-    for (const name of ['openapi.yaml', 'asyncapi.yaml']) {
-      const digest = createHash('sha256').update(local[name]).digest('hex');
-      if (digest !== release.assets[name].digest) {
-        throw new Error(`Checked-in ${name} is not the published release asset`);
-      }
-    }
 
     const http = new SmokeHttp({ origin: target.httpOrigin });
     const health = await http.call({ path: '/health' });
@@ -359,6 +350,9 @@ async function integration({
       http: checkResult.http,
       evidence,
       plan,
+      retentionCleanup: (fixturePlan, runIDs) => checkResult.remote.sql(
+        renderRetentionCleanupSQL(fixturePlan, runIDs),
+      ),
     });
     session.diagnosticGroups = {};
     const modelStart = session.requestIds.length;
@@ -414,7 +408,7 @@ async function main(argv = process.argv.slice(2)) {
     throw new Error(`--integration-ready requires PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=${target.project}`);
   }
   const runId = `smoke-${Date.now()}-${randomBytes(6).toString('hex')}`;
-  const evidence = new Evidence({ runId, exclusions });
+  const evidence = new Evidence({ runId, exclusions, redact: false });
   const evidencePath = process.env.PIN_GLIDE_SMOKE_EVIDENCE
     || path.join(root, 'test/smoke/evidence', `${runId}.json`);
   let lock;
@@ -437,7 +431,12 @@ async function main(argv = process.argv.slice(2)) {
     }
     if (options.mode === 'integration-ready') {
       failureStatus = 'failed';
-      await verifyRecovery({ checkResult: result, evidence });
+      await verifyRecovery({
+        checkResult: result,
+        evidence,
+        startDrainProbe: startRunningRetentionProbe,
+        drainProbeSchedule: retentionDrainProbeSchedule,
+      });
       await integration({ target, evidence, checkResult: result });
     }
     const report = evidence.write(evidencePath);

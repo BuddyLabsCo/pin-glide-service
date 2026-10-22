@@ -38,7 +38,11 @@ not_older() {
   done
   return 0
 }
-compose() { env -u RELEASE -u PIN_GLIDE_SNAPSHOT_PATH -u PIN_GLIDE_SNAPSHOT_TIME -u PIN_GLIDE_SNAPSHOT_KEEP docker compose --env-file .env -f "$compose_file" "$@"; }
+compose() {
+  env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME -u COMPOSE_PROFILES \
+    -u RELEASE -u PIN_GLIDE_SNAPSHOT_PATH -u PIN_GLIDE_SNAPSHOT_TIME -u PIN_GLIDE_SNAPSHOT_KEEP \
+    docker compose --env-file .env -f "$compose_file" "$@"
+}
 docker_cmd() { env -u RELEASE docker "$@"; }
 temps=()
 temporary() { temp=$(mktemp ./.pin-glide-tmp.XXXXXXXX); temps+=("$temp"); }
@@ -319,13 +323,20 @@ snapshot_config() {
   jq -n --arg path "$snapshot_path" --arg keep "$snapshot_keep" \
     '{services:{"db-tools":{volumes:[{type:"bind",source:$path,target:"/snapshots",bind:{create_host_path:false}}],environment:{PIN_GLIDE_SNAPSHOT_PATH:"/snapshots",PIN_GLIDE_SNAPSHOT_KEEP:$keep}}}}' > "$snapshot_compose"
 }
+snapshot_user() {
+  if [[ "${SUDO_UID:-}" =~ ^[0-9]+$ && "${SUDO_GID:-}" =~ ^[0-9]+$ ]]; then
+    printf '%s:%s\n' "$SUDO_UID" "$SUDO_GID"
+  else
+    printf '%s:%s\n' "$(id -u)" "$(id -g)"
+  fi
+}
 snapshot_crontab() {
   local jobs errors status quoted script_path
   command -v crontab >/dev/null || fail 'required command is missing: crontab'
   if [[ "$action" == enable-auto-snapshot ]]; then
     snapshot_config
     [[ "$snapshot_time" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || fail 'PIN_GLIDE_SNAPSHOT_TIME must be daily HH:MM in host time'
-    compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(id -u):$(id -g)" --entrypoint /bin/sh db-tools -ec 'test -d /snapshots && test -w /snapshots'
+    compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(snapshot_user)" --entrypoint /bin/sh db-tools -ec 'test -d /snapshots && test -w /snapshots'
   fi
   temporary; jobs=$temp
   temporary; errors=$temp
@@ -355,7 +366,7 @@ snapshot_action() {
     enable-auto-snapshot|disable-auto-snapshot) snapshot_crontab ;;
     make-snapshot)
       snapshot_config
-      compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(id -u):$(id -g)" db-tools snapshot
+      compose -f "$snapshot_compose" run --rm -T --no-deps --user "$(snapshot_user)" db-tools snapshot
       ;;
   esac
 }

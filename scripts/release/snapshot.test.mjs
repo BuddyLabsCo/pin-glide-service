@@ -104,6 +104,14 @@ test('cron wrapper runs installed db-tools snapshot independently of release att
   assert.deepEqual(readdirSync(join(f.root, 'snapshots')), []);
 });
 
+test('snapshots created through sudo keep the invoking operator as owner', t => {
+  const f = installation(t);
+  const result = f.run(['--make-snapshot'], { SUDO_UID: '1001', SUDO_GID: '1002' });
+  assert.equal(result.status, 0, result.stderr);
+  const args = f.calls().find(call => call.includes('run'));
+  assert.equal(args[args.indexOf('--user') + 1], '1001:1002');
+});
+
 test('snapshot lock excludes another snapshot but is independent of the release directory lock', async t => {
   const f = installation(t);
   const releaseLock = spawn('flock', [f.root, 'sh', '-c', 'echo locked; cat'], { stdio: ['pipe', 'pipe', 'pipe'] });

@@ -53,13 +53,13 @@ Place `docker-compose.yml`, `.env`, and a copy of the repository-root
 `install.sh` in the same directory on the server:
 
 ```sh
-mkdir -p /srv/pin-glide-dev
-cp deploy/compose/docker-compose.yml /srv/pin-glide-dev/docker-compose.yml
-cp deploy/compose/.env.example /srv/pin-glide-dev/.env
-cp install.sh /srv/pin-glide-dev/install.sh
-chmod 700 /srv/pin-glide-dev/install.sh
-chmod 600 /srv/pin-glide-dev/.env
-cd /srv/pin-glide-dev
+mkdir -p /srv/pin-glide-service
+cp deploy/compose/docker-compose.yml /srv/pin-glide-service/docker-compose.yml
+cp deploy/compose/.env.example /srv/pin-glide-service/.env
+cp install.sh /srv/pin-glide-service/install.sh
+chmod 700 /srv/pin-glide-service/install.sh
+chmod 600 /srv/pin-glide-service/.env
+cd /srv/pin-glide-service
 ```
 
 Edit `.env` before running the installer:
@@ -89,8 +89,8 @@ Edit `.env` before running the installer:
   row below. It is required for the `api` service to start in production and
   stays outside images, source files and logs.
 - `PIN_GLIDE_SNAPSHOT_PATH`: an existing host directory writable by the cron
-  user's UID/GID. It is used only when automatic deployment snapshots are
-  enabled.
+  user's UID/GID. `install.sh --make-snapshot` writes as the invoking
+  `SUDO_UID`/`SUDO_GID` when run through `sudo`.
 - `PIN_GLIDE_SNAPSHOT_TIME`: daily snapshot time in host-local `HH:MM` form.
 - `PIN_GLIDE_SNAPSHOT_KEEP`: positive number of completed tool-owned snapshots
   to retain.
@@ -112,15 +112,15 @@ the installer unsets inherited `RELEASE`, so the version in local `.env` wins
 even if the invoking shell exports a different value.
 
 The prepared development-acceptance Compose file publishes host port `33489`
-and keeps the API listening on container port `8080`. The adopted LAN origins
-are `http://192.168.10.17:33489` and `ws://192.168.10.17:33489`. Put your own
-HTTPS/WSS reverse proxy in front of a production installation; the service
-terminates TLS nowhere and exposes no other port. Multiple installations need
-distinct project names and host ports.
+and keeps the API listening on container port `8080`. `PIN_GLIDE_API_BIND`
+defaults to `0.0.0.0`; an isolated local smoke installation sets it to
+`127.0.0.1`. Put your own HTTPS/WSS reverse proxy in front of a production
+installation; the service terminates TLS nowhere and exposes no other port.
+Multiple installations need distinct project names and host ports.
 
 ## Smoke-test the development installation
 
-`test/smoke/runner.mjs` checks the pinned release, immutable image IDs and digests, Compose project, database release, schema/data ledgers, packaged SQL order, model configuration, cleanup schedule, LAN port and health. `test/smoke/release-support.json` is the authority for upgrade origins. The runner rejects a target release without a declaration and any history transition the declaration does not allow. It refuses any target other than `local-server`, `/srv/pin-glide-dev`, Compose project `pin-glide-dev`, database `pin_glide`, and the adopted origins.
+`test/smoke/runner.mjs` checks the pinned release, immutable image IDs and digests, Compose project, database release, schema/data ledgers, packaged SQL order, model configuration, cleanup schedule, local port and health. `test/smoke/release-support.json` is the authority for upgrade origins. The runner rejects a target release without a declaration and any history transition the declaration does not allow. It refuses any target other than `127.0.0.1:33489`, `/srv/pin-glide-smoke`, Compose project `pin-glide-smoke`, database `pin_glide`, `/tmp/snapshots/pin-glide`, and the adopted origins.
 
 `test/smoke/README.md` records the acceptance baseline, coverage matrix, status
 meanings, fixture lifecycle, and provider-proof exclusions.
@@ -135,36 +135,36 @@ Run the guarded SQL bootstrap and cleanup only when you authorize writes to the 
 
 ```sh
 PIN_GLIDE_SMOKE_RELEASE=0.1.6 \
-PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev \
+PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
   node test/smoke/runner.mjs --integration-ready
 ```
 
-The integration run first uses the installer to stop the API, hold and drain pg_cron, create a root-authorized stopped snapshot, restart the API, and restore the snapshot into a disposable database through the PostgreSQL container. It verifies the release ledgers, exact model/retention/cron configuration, pg_cron extension and quiescence, then drops the disposable database.
+The integration run first uses the installer to stop the API, hold and drain pg_cron, create a stopped snapshot, restart the API, and restore the snapshot into a disposable database through the PostgreSQL container. It verifies the release ledgers, exact model/retention/cron configuration, pg_cron extension and quiescence, then drops the disposable database.
 
-The runner then creates two synthetic QQ-namespace Accounts and isolated active Sender credential families. It stores only lowercase SHA-256 credential digests with normal three-hour or seven-day lifetimes. Deployed HTTP and WebSocket operations exercise scope and expiry failures, ordered refresh, lost-response recovery, reuse isolation, ordinary logout, Account-switch cleanup and unrelated access. Further scenarios cover Pairing enrollment, replacement, association scope, Receiver credential isolation, presence, restart and Delivery outcomes without replay.
+The runner then creates two synthetic QQ-namespace Accounts and isolated active Sender credential families. It stores only lowercase SHA-256 credential digests with normal three-hour or seven-day lifetimes. Start with `/tmp/snapshots/pin-glide` owned by the invoking operator; the installer passes the invoking `SUDO_UID`/`SUDO_GID` to the snapshot container so the runner can read the archive. Local HTTP and WebSocket operations exercise scope and expiry failures, ordered refresh, lost-response recovery, reuse isolation, ordinary logout, Account-switch cleanup and unrelated access. Further scenarios cover Pairing enrollment, replacement, association scope, Receiver credential isolation, presence, restart and Delivery outcomes without replay.
 
 The runner executes the retention function through pg_cron with run-owned old/fresh rows for every seven- and thirty-day target. It checks strict cutoff boundaries, nullable cron history, live credential families and ordering guards, durable Account/registration/Pairing/Receiver/release-ledger survival, configuration deletion without historical cascades, delayed deduplication, no lookup lifetime extension, purge/404, the accepted repeat-send boundary and no replay after restart. A final privacy pass scans run-owned diagnostics, service logs, HTTP errors and public/SQL artifacts for raw credentials, SMS/OTP text, ciphertext and deployment secrets.
 
 The stopped recovery baseline also proves a controlled external writer is rejected, no scheduled run starts while maintenance is held, and the intended retention job is active again after restart.
 
-The runner records each Pairing and Delivery operation, WebSocket message and source identity. It verifies the latest operation and rotated bundle, waits for the provider-reported temporary-key expiry, restores every controlled fault, then removes the run-owned rows. Raw credentials, SMS text and OTP values stay in runner memory; evidence contains only redacted outcomes and safe request IDs. Referenced deterministic unit and integration tests cover race orderings, retention job create/update/active/retire and retry semantics, and excluded recovery or global-revocation policy closes. The runner records those tests only when every referenced test passes; they are not live-smoke claims.
+The runner records each Pairing and Delivery operation, WebSocket message and source identity. It verifies the latest operation and rotated bundle, waits for the provider-reported temporary-key expiry, restores every controlled fault, then removes the run-owned rows. Raw credentials, SMS text and OTP values can appear in runner output because smoke evidence is intentionally unredacted. Referenced deterministic unit and integration tests cover race orderings, retention job create/update/active/retire and retry semantics, and excluded recovery or global-revocation policy closes. The runner records those tests only when every referenced test passes; they are not live-smoke claims.
 
 The invalid-parent-key fault briefly recreates the API container from a temporary environment file, then restores the original `.env`. The connectivity fault adds and removes a scoped `/etc/hosts` entry inside the current API container, then waits long enough for the service to discard an idle provider connection. Both faults run under the environment lock and restore in `finally` blocks.
 
-Both modes require `/mnt/share/workspace/snapshots/pin-glide` on the server and development workstation. `--check` requires both sides to expose the same completed snapshot, records the restore as blocked and exits `2`; it never reports acceptance. `--integration-ready` can start from an empty directory because it creates the stopped-writer backup used for recovery verification. The runner serializes environment-wide work with `/tmp/pin-glide-dev-smoke.lock` on `local-server`. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
+Both modes require `/tmp/snapshots/pin-glide`. `--check` records the restore as blocked and exits `2`; it never reports acceptance. `--integration-ready` can start from an empty directory because it creates the stopped-writer backup used for recovery verification. The deployment `.env` must set `COMPOSE_PROJECT_NAME=pin-glide-smoke`, `PIN_GLIDE_API_BIND=127.0.0.1`, and `PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`; the runner verifies them before accepting the installation. It serializes environment-wide work with `/tmp/pin-glide-smoke.lock` on the local host. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
 
 The explicit integration run covers successful fresh install, same-version retry, failed migration, retained-container reconciliation, cancel/restore and scheduler fault injection on a disposable real PostgreSQL/Compose stack:
 
 ```sh
-node test/smoke/release-install.mjs --integration-ready
+node test/smoke/installation/release-install.mjs --integration-ready
 ```
 
-The `--check` mode only verifies prerequisites; it does not run those scenarios. The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The deployed runner validates upgrade origins against GitHub releases.
+The `--check` mode only verifies prerequisites; it does not run those scenarios. The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The local runner validates upgrade origins against GitHub releases.
 
 After both releases are published, exercise a fresh installation of the target and the declared upgrade on disposable local Compose projects with the real release images:
 
 ```sh
-node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
+node test/smoke/installation/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
 ```
 
 This command pulls through the existing workstation Docker credential context and removes both project volumes. Its `--check` mode validates the releases and support declaration without starting containers.

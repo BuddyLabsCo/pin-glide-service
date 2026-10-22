@@ -114,7 +114,7 @@ WeChat and QQ configuration is optional at startup. A missing or partial provide
 
 Temporary model credentials come from that parent key plus the enabled non-secret `pin_glide.model_configurations` row. The release Data Script installs the approved Beijing Workspace and `qwen3.7-flash` model; see `deploy/compose/README.md` for verification and change control.
 The repository verifies the boundary with the fake in `test/fakes/bailian`, the
-adapter's own HTTP tests, and the request-driven deployed smoke runner. Platform
+adapter's own HTTP tests, and the request-driven local smoke runner. Platform
 cryptography, key storage, QR scanning, and Android or Windows UI behavior remain
 client acceptance work.
 
@@ -224,16 +224,16 @@ Both run as part of `make test` and fake only `gh` and Docker, so they need no
 credentials and no registry. Real PostgreSQL migration behavior stays in
 `go test -tags=integration ./test/integration/...`, and the real Compose
 install/upgrade/restore journey stays in
-`node test/smoke/release-install.mjs --integration-ready`; neither suite is a
+`node test/smoke/installation/release-install.mjs --integration-ready`; neither suite is a
 publication gate. The real local restore/mask/lifecycle check is explicit:
-`node test/smoke/dev-snapshot.mjs --docker`.
+`node test/smoke/local-lifecycle/dev-snapshot.mjs --docker`.
 
-The deployed LAN smoke runner checks a published release against `local-server`
-without accepting an ambiguous target:
+The local smoke runner checks a published release against an isolated local
+Compose installation without accepting an ambiguous target:
 
 ```sh
 PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
-PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-dev \
+PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
   node test/smoke/runner.mjs --integration-ready
 ```
 
@@ -263,7 +263,7 @@ artifacts for seeded credentials, OTP/SMS text, ciphertext and deployment
 secrets. The stopped recovery baseline also proves a controlled external writer
 is rejected and no scheduled run starts while maintenance is held.
 
-The runner writes redacted evidence, then runs the referenced deterministic
+The runner writes unredacted evidence, then runs the referenced deterministic
 unit and integration tests for job lifecycle and retry semantics, race
 orderings and excluded recovery or global-revocation policy closes that the
 live smoke path cannot observe. It records those tests only when they pass, so
@@ -279,7 +279,7 @@ the declared upgrade with disposable Compose projects and the real release
 images:
 
 ```sh
-node test/smoke/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
+node test/smoke/installation/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
 ```
 
 See `test/smoke/README.md` for the acceptance baseline, coverage matrix,
