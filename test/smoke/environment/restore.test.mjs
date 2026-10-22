@@ -1,74 +1,13 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import test from 'node:test';
 
 import { cronJobs, retention, retentionJobName } from './database.mjs';
 import {
-  lastCompletedSnapshot,
-  listLocalSnapshots,
-  recoverySnapshot,
   restoreFactsInDisposablePostgres,
   restoreSnapshotToDisposableDatabase,
   validateRestoredFacts,
-  verifyLocalSnapshotDirectory,
 } from './restore.mjs';
 import { TARGET } from '../harness/target.mjs';
-
-test('snapshot discovery selects only completed tool-owned files and never an unrelated backup', () => {
-  const entries = [
-    { name: 'backup-0.1.5.dump', isFile: () => true },
-    { name: 'unrelated.txt', isFile: () => true },
-    { name: 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump', isFile: () => true },
-    { name: 'pin-glide-snapshot-20261019T030000.000000001Z-2.dump', isFile: () => true },
-    { name: 'pin-glide-snapshot-invalid.dump', isFile: () => true },
-    { name: 'pin-glide-snapshot-20261021T030000.000000001Z-3.dump', isFile: () => false },
-  ];
-  assert.equal(
-    lastCompletedSnapshot(entries, '/tmp/snapshots/pin-glide', 'local'),
-    '/tmp/snapshots/pin-glide/pin-glide-snapshot-20261020T030000.000000001Z-1.dump',
-  );
-  assert.throws(
-    () => lastCompletedSnapshot([entries[0]], '/tmp/snapshots/pin-glide', 'local'),
-    /No completed snapshot/,
-  );
-});
-
-test('local snapshot paths are exact and list only completed dumps', async t => {
-  const directory = fs.mkdtempSync(`${os.tmpdir()}/pin-glide-smoke-snapshot-`);
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  fs.writeFileSync(`${directory}/unrelated.txt`, 'not a dump');
-  fs.writeFileSync(`${directory}/pin-glide-snapshot-20261020T030000.000000001Z-1.dump`, 'dump');
-  assert.equal(await verifyLocalSnapshotDirectory(directory), directory);
-  assert.deepEqual(await listLocalSnapshots(directory), [
-    'pin-glide-snapshot-20261020T030000.000000001Z-1.dump',
-  ]);
-  await assert.rejects(() => verifyLocalSnapshotDirectory(`${directory}/missing`), /unavailable/);
-});
-
-test('recovery uses the newest completed local snapshot', async t => {
-  const directory = fs.mkdtempSync(`${os.tmpdir()}/pin-glide-smoke-shared-`);
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const name = 'pin-glide-snapshot-20261020T030000.000000001Z-1.dump';
-  fs.writeFileSync(`${directory}/${name}`, 'PGDMP test archive');
-  const target = { ...TARGET, snapshotDir: directory };
-  const remote = {
-    target,
-  };
-  const snapshot = await recoverySnapshot(remote);
-  assert.equal(snapshot.name, name);
-  assert.equal(snapshot.remotePath, `${directory}/${name}`);
-});
-
-test('integration recovery can start from an empty local snapshot directory', async t => {
-  const directory = fs.mkdtempSync(`${os.tmpdir()}/pin-glide-smoke-empty-`);
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const target = { ...TARGET, snapshotDir: directory };
-  const remote = {
-    target,
-  };
-  assert.equal(await recoverySnapshot(remote, { allowMissing: true }), null);
-});
 
 test('disposable restore validates restored facts and propagates failure', async () => {
   const expectedJob = cronJobs.get(retentionJobName);

@@ -61,7 +61,7 @@ export async function verifyRecovery({
     throw new Error('Recovery requires a retention drain probe and its schedule');
   }
   const backupScenario = 'stopped-writer container snapshot';
-  let artifact = checkResult.snapshot;
+  let artifact;
   let backupComplete = false;
   let failure;
   let drainProbe;

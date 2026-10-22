@@ -15,8 +15,9 @@ import { runModelScenarios } from './model/index.mjs';
 import { scriptDigests, validatePublishedRelease } from './environment/release.mjs';
 import { acquireEnvironmentLock } from './environment/local-lock.mjs';
 import { LocalEnvironment, repository } from './environment/local.mjs';
-import { recoveryRestoreScenario, verifyRecovery } from './environment/recovery.mjs';
-import { recoverySnapshot, verifySnapshotLocations } from './environment/restore.mjs';
+import { ensureSmokeDeployment } from './environment/provision.mjs';
+import { verifyRecovery } from './environment/recovery.mjs';
+import { verifySnapshotLocations } from './environment/restore.mjs';
 import { SmokeSession } from './harness/session.mjs';
 import { runSenderCredentialScenarios } from './credentials/index.mjs';
 import { runDeliveryScenarios } from './delivery/index.mjs';
@@ -39,13 +40,10 @@ const exclusions = [
 ];
 function usage() {
   return [
-    'Usage: node test/smoke/runner.mjs --check --release X.Y.Z',
-    '       node test/smoke/runner.mjs --integration-ready --release X.Y.Z',
+    'Usage: node test/smoke/runner.mjs --integration-ready --release X.Y.Z',
     '',
-    '--check verifies the published release, local Compose identity, health,',
-    'schema/data ledgers, contracts and snapshot inventory without writes. It',
-    'always exits 2 after prerequisites pass because it does not execute restore.',
-    '--integration-ready additionally writes and cleans up the guarded SQL fixture,',
+    'The runner creates or updates /srv/pin-glide-smoke and its smoke .env, then',
+    'writes and cleans up the guarded SQL fixture,',
     'exercises seeded Sender credential/session, Pairing, Delivery, Receiver and real',
     'Bailian model journeys plus privacy and retention cleanup through the local',
     'service, then creates a',
@@ -60,7 +58,7 @@ function argumentsFrom(argv) {
     const argument = argv[index];
     if (argument === '--help' || argument === '-h') {
       result.help = true;
-    } else if (['--check', '--integration-ready'].includes(argument)) {
+    } else if (argument === '--integration-ready') {
       if (result.mode) throw new Error('Choose exactly one smoke run mode');
       result.mode = argument.slice(2);
     } else if (argument === '--release') {
@@ -70,16 +68,12 @@ function argumentsFrom(argv) {
       throw new Error(`Unknown smoke runner argument: ${argument}`);
     }
   }
-  if (!result.help && !result.mode) throw new Error('Use --check or explicitly authorize --integration-ready');
+  if (!result.help && !result.mode) throw new Error('Use --integration-ready to authorize the smoke run');
   return result;
 }
 
 function targetFor(options) {
   return targetFromOptions(options);
-}
-
-export function checkExitCode(mode) {
-  return mode === 'check' ? 2 : 0;
 }
 
 function imageFacts(result, label, reference) {
@@ -150,7 +144,7 @@ async function verifyPort(remote, target) {
   return bindings;
 }
 
-async function check({ target, evidence, onPreflight = () => {}, allowMissingSnapshot = false }) {
+async function check({ target, evidence, onPreflight = () => {} }) {
   const release = await validatePublishedRelease({ target, root });
   target.sourceCommit = release.sourceCommit;
   evidence.record({
@@ -165,11 +159,15 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
   });
 
   const remote = new LocalEnvironment({ target });
-  const deployment = await remote.verifyDeployment();
-  await verifySnapshotLocations(remote);
-  onPreflight();
-  const snapshot = await recoverySnapshot(remote, { allowMissing: true });
   try {
+    const installation = await ensureSmokeDeployment(remote, {
+      root,
+      release: target.release,
+      origins: release.origins[target.release],
+    });
+    const deployment = await remote.verifyDeployment();
+    await verifySnapshotLocations(remote);
+    onPreflight();
     const config = await remote.composeConfig();
     const apiEnvironment = config.services?.api?.environment || {};
     const postgresEnvironment = config.services?.postgres?.environment || {};
@@ -186,27 +184,8 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
     evidence.record({
       scenario: 'target and Compose identity',
       status: 'passed',
-      details: { ...compose, deployment },
+      details: { ...compose, deployment, installation },
     });
-    if (snapshot || !allowMissingSnapshot) {
-      evidence.record({
-        scenario: 'local snapshot inventory',
-        status: snapshot ? 'passed' : 'blocked',
-        details: snapshot || { reason: 'no completed development snapshot exists yet' },
-      });
-    }
-    if (!allowMissingSnapshot) {
-      evidence.record({
-        scenario: recoveryRestoreScenario,
-        status: 'blocked',
-        details: {
-          reason: snapshot
-            ? '--check is read-only and does not execute the restore'
-            : '--check is read-only and no completed snapshot is available',
-        },
-      });
-    }
-
     const images = await inspectImages(remote, target);
     const running = {
       api: runningImage(await remote.deployedImage('api'), 'API'),
@@ -291,7 +270,6 @@ async function check({ target, evidence, onPreflight = () => {}, allowMissingSna
       http,
       database,
       release,
-      snapshot,
       model,
       postgresImage: running.postgres.reference,
     };
@@ -421,24 +399,15 @@ async function main(argv = process.argv.slice(2)) {
       onPreflight: () => {
         failureStatus = 'failed';
       },
-      allowMissingSnapshot: options.mode === 'integration-ready',
     });
-    const exitCode = checkExitCode(options.mode);
-    if (exitCode !== 0) {
-      const report = evidence.write(evidencePath);
-      console.error(JSON.stringify(report, null, 2));
-      return exitCode;
-    }
-    if (options.mode === 'integration-ready') {
-      failureStatus = 'failed';
-      await verifyRecovery({
-        checkResult: result,
-        evidence,
-        startDrainProbe: startRunningRetentionProbe,
-        drainProbeSchedule: retentionDrainProbeSchedule,
-      });
-      await integration({ target, evidence, checkResult: result });
-    }
+    failureStatus = 'failed';
+    await verifyRecovery({
+      checkResult: result,
+      evidence,
+      startDrainProbe: startRunningRetentionProbe,
+      drainProbeSchedule: retentionDrainProbeSchedule,
+    });
+    await integration({ target, evidence, checkResult: result });
     const report = evidence.write(evidencePath);
     console.log(JSON.stringify(report, null, 2));
     return 0;
@@ -449,7 +418,7 @@ async function main(argv = process.argv.slice(2)) {
       failureStatus = 'failed';
     }
     evidence.record({
-      scenario: options.mode === 'integration-ready' ? 'seeded smoke journey' : 'read-only deployment check',
+      scenario: 'seeded smoke journey',
       status: failureStatus,
       code: error instanceof SmokeProblem ? error.code : '',
       requestId: error instanceof SmokeProblem ? error.requestId : '',

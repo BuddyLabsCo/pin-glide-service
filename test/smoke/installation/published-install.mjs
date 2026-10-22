@@ -20,7 +20,7 @@ export function parseArguments(argv) {
   const result = { mode: '', from: '', to: '' };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
-    if (argument === '--check' || argument === '--integration-ready') {
+    if (argument === '--integration-ready') {
       if (result.mode) throw new Error('Choose exactly one published installation mode');
       result.mode = argument.slice(2);
     } else if (argument === '--from' || argument === '--to') {
@@ -33,7 +33,7 @@ export function parseArguments(argv) {
     }
   }
   if (!result.mode || !result.from || !result.to) {
-    throw new Error('Use --check or --integration-ready with explicit --from and --to releases');
+    throw new Error('Use --integration-ready with explicit --from and --to releases');
   }
   return result;
 }
@@ -431,27 +431,14 @@ async function main(argv = process.argv.slice(2)) {
     }
     const originCommit = await publishedOrigin(options.from, runProcess, env);
     prerequisitesPassed = true;
-    if (options.mode === 'check') {
-      evidence.record({
-        scenario: 'published installation prerequisites',
-        status: 'passed',
-        details: {
-          origin: options.from,
-          originCommit,
-          release: options.to,
-          sourceCommit: release.sourceCommit,
-        },
-      });
-    } else {
-      await integration({ options, release, originCommit, evidence, env, run: runProcess });
-    }
+    await integration({ options, release, originCommit, evidence, env, run: runProcess });
     const report = evidence.write(evidencePath);
     console.log(JSON.stringify(report, null, 2));
     return 0;
   } catch (error) {
     const failed = prerequisitesPassed || error instanceof SmokeValidationError;
     evidence.record({
-      scenario: options.mode === 'check' ? 'published installation prerequisites' : 'published installation journey',
+      scenario: 'published installation journey',
       status: failed ? 'failed' : 'blocked',
       details: { reason: error.message },
     });

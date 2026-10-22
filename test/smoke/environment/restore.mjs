@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
 
 import { validateConfiguration, validateReleaseHistory } from './database.mjs';
@@ -8,71 +7,14 @@ import { quote, snapshotName } from './local.mjs';
 
 const restoreContainer = /^smoke_restore_[a-f0-9]{16}$/;
 
-export function lastCompletedSnapshot(entries, directory, host = 'local') {
-  const matching = entries
-    .filter(entry => entry.isFile() && snapshotName.test(entry.name))
-    .map(entry => entry.name)
-    .sort();
-  if (matching.length === 0) {
-    throw new Error(`No completed snapshot exists in ${host}:${directory}`);
-  }
-  return path.posix.join(directory, matching.at(-1));
-}
-
-export async function verifyLocalSnapshotDirectory(directory) {
-  let resolved;
-  try {
-    resolved = await fs.promises.realpath(directory);
-  } catch (error) {
-    throw new Error(`Local snapshot directory is unavailable: ${error.message}`);
-  }
-  if (resolved !== directory) {
-    throw new Error(`Local snapshot directory must resolve to ${directory}`);
-  }
-  const stat = await fs.promises.stat(directory);
-  if (!stat.isDirectory()) throw new Error('Local snapshot path must be a directory');
-  await fs.promises.access(directory, fs.constants.R_OK | fs.constants.W_OK);
-  return resolved;
-}
-
+// The smoke environment owns this directory, so it only has to be a directory.
 export async function verifySnapshotLocations(remote) {
-  await verifyLocalSnapshotDirectory(remote.target.snapshotDir);
-}
-
-export async function listLocalSnapshots(directory) {
-  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
-  return entries
-    .filter(entry => entry.isFile() && entry.name.endsWith('.dump'))
-    .map(entry => entry.name)
-    .sort();
-}
-
-export async function recoverySnapshot(remote, { allowMissing = false } = {}) {
-  await verifySnapshotLocations(remote);
-  const localNames = await listLocalSnapshots(remote.target.snapshotDir);
-  const localMatches = localNames.filter(name => snapshotName.test(name));
-  if (localMatches.length === 0 && allowMissing) return null;
-  const localName = lastCompletedSnapshot(
-    localMatches.map(name => ({ name, isFile: () => true })),
-    remote.target.snapshotDir,
-    'local',
+  const result = await remote.exec(
+    `test -d ${quote(remote.target.snapshotDir)} && test -w ${quote(remote.target.snapshotDir)}`,
+    { timeoutMs: 30_000 },
   );
-  const localPath = path.posix.join(remote.target.snapshotDir, path.basename(localName));
-  const handle = await fs.promises.open(localPath, 'r');
-  try {
-    const header = Buffer.alloc(5);
-    await handle.read(header, 0, header.length, 0);
-    if (header.toString() !== 'PGDMP') throw new Error('Local snapshot is not a PostgreSQL custom archive');
-  } finally {
-    await handle.close();
-  }
-  return {
-    name: path.basename(localName),
-    remotePath: localPath,
-    localPath,
-  };
+  return result;
 }
-
 export function restoreFactsQuery() {
   return databaseConfigurationFactsQuery({ includeRestoreChecks: true });
 }

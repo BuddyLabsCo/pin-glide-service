@@ -125,13 +125,8 @@ Multiple installations need distinct project names and host ports.
 `test/smoke/README.md` records the acceptance baseline, coverage matrix, status
 meanings, fixture lifecycle, and provider-proof exclusions.
 
-Run the read-only checks after a published release:
-
-```sh
-PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
-```
-
-Run the guarded SQL bootstrap and cleanup only when you authorize writes to the development database:
+Run the guarded local smoke journey only when you authorize writes to the
+development database:
 
 ```sh
 PIN_GLIDE_SMOKE_RELEASE=0.1.6 \
@@ -141,7 +136,7 @@ PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
 
 The integration run first uses the installer to stop the API, hold and drain pg_cron, create a stopped snapshot, restart the API, and restore the snapshot into a disposable database through the PostgreSQL container. It verifies the release ledgers, exact model/retention/cron configuration, pg_cron extension and quiescence, then drops the disposable database.
 
-The runner then creates two synthetic QQ-namespace Accounts and isolated active Sender credential families. It stores only lowercase SHA-256 credential digests with normal three-hour or seven-day lifetimes. The smoke deployment is an exception to the real-deploy `.env.example`: override its snapshot directory to `/tmp/snapshots/pin-glide`, owned by the invoking operator. The installer passes the invoking `SUDO_UID`/`SUDO_GID` to the snapshot container so the runner can read the archive. Local HTTP and WebSocket operations exercise scope and expiry failures, ordered refresh, lost-response recovery, reuse isolation, ordinary logout, Account-switch cleanup and unrelated access. Further scenarios cover Pairing enrollment, replacement, association scope, Receiver credential isolation, presence, restart and Delivery outcomes without replay.
+The runner creates `/srv/pin-glide-smoke` and `/tmp/snapshots/pin-glide`, copies the prepared Compose file and installer, and patches the smoke `.env` to `pin-glide-smoke`, `127.0.0.1`, and `/tmp/snapshots/pin-glide` while leaving credentials unchanged. The first run performs an initial installation; later runs redeploy the same release or use a declared upgrade. The snapshot directory is owned by the invoking operator, and the installer passes the invoking `SUDO_UID`/`SUDO_GID` to the snapshot container so the runner can read the archive. The runner then creates two synthetic QQ-namespace Accounts and isolated active Sender credential families. It stores only lowercase SHA-256 credential digests with normal three-hour or seven-day lifetimes. Local HTTP and WebSocket operations exercise scope and expiry failures, ordered refresh, lost-response recovery, reuse isolation, ordinary logout, Account-switch cleanup and unrelated access. Further scenarios cover Pairing enrollment, replacement, association scope, Receiver credential isolation, presence, restart and Delivery outcomes without replay.
 
 The runner executes the retention function through pg_cron with run-owned old/fresh rows for every seven- and thirty-day target. It checks strict cutoff boundaries, nullable cron history, live credential families and ordering guards, durable Account/registration/Pairing/Receiver/release-ledger survival, configuration deletion without historical cascades, delayed deduplication, no lookup lifetime extension, purge/404, the accepted repeat-send boundary and no replay after restart. A final privacy pass scans run-owned diagnostics, service logs, HTTP errors and public/SQL artifacts for raw credentials, SMS/OTP text, ciphertext and deployment secrets.
 
@@ -151,7 +146,7 @@ The runner records each Pairing and Delivery operation, WebSocket message and so
 
 The invalid-parent-key fault briefly recreates the API container from a temporary environment file, then restores the original `.env`. The connectivity fault adds and removes a scoped `/etc/hosts` entry inside the current API container, then waits long enough for the service to discard an idle provider connection. Both faults run under the environment lock and restore in `finally` blocks.
 
-Both modes require `/tmp/snapshots/pin-glide`. `--check` records the restore as blocked and exits `2`; it never reports acceptance. `--integration-ready` can start from an empty directory because it creates the stopped-writer backup used for recovery verification. The deployment `.env` must set `COMPOSE_PROJECT_NAME=pin-glide-smoke`, `PIN_GLIDE_API_BIND=127.0.0.1`, and `PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`; the runner verifies them before accepting the installation. It serializes environment-wide work with `/tmp/pin-glide-smoke.lock` on the local host. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
+The run can start from an empty environment because it provisions the local installation and creates the stopped-writer backup used for recovery verification. The runner verifies that the resolved `.env` uses `COMPOSE_PROJECT_NAME=pin-glide-smoke`, `PIN_GLIDE_API_BIND=127.0.0.1`, and `PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`. It serializes environment-wide work with `/tmp/pin-glide-smoke.lock` on the local host. Evidence defaults to the ignored `test/smoke/evidence/` directory with mode `0600`. Use `PIN_GLIDE_SMOKE_EVIDENCE` to select another path.
 
 The explicit integration run covers successful fresh install, same-version retry, failed migration, retained-container reconciliation, cancel/restore and scheduler fault injection on a disposable real PostgreSQL/Compose stack:
 
@@ -159,7 +154,7 @@ The explicit integration run covers successful fresh install, same-version retry
 node test/smoke/installation/release-install.mjs --integration-ready
 ```
 
-The `--check` mode only verifies prerequisites; it does not run those scenarios. The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The local runner validates upgrade origins against GitHub releases.
+The fake `63.x` images exercise installer state transitions and are not evidence for a supported historical release. The local runner validates upgrade origins against GitHub releases.
 
 After both releases are published, exercise a fresh installation of the target and the declared upgrade on disposable local Compose projects with the real release images:
 
@@ -167,7 +162,7 @@ After both releases are published, exercise a fresh installation of the target a
 node test/smoke/installation/published-install.mjs --integration-ready --from 0.1.5 --to 0.1.6
 ```
 
-This command pulls through the existing workstation Docker credential context and removes both project volumes. Its `--check` mode validates the releases and support declaration without starting containers.
+This command pulls through the existing workstation Docker credential context and removes both project volumes.
 
 Real QQ/WeChat authorization, fresh-owner Sender or Receiver device-security revocation and fresh-owner `recover_receiver` remain outside unattended smoke coverage. The runner executes selected provider-fake integration tests for those paths and records them separately as deterministic evidence, never as real-provider login.
 

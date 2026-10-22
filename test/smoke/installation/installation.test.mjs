@@ -82,9 +82,12 @@ test('published installation arguments require explicit origin and target versio
     from: '0.1.5',
     to: '0.1.6',
   });
-  assert.throws(() => parseArguments(['--check', '--to', '0.1.6']), /explicit --from/);
-  assert.throws(() => parseArguments(['--check', '--from', 'latest', '--to', '0.1.6']), /X\.Y\.Z/);
-  assert.throws(() => parseArguments(['--check', '--check', '--from', '0.1.5', '--to', '0.1.6']), /exactly one/);
+  assert.throws(() => parseArguments(['--integration-ready', '--to', '0.1.6']), /explicit --from/);
+  assert.throws(() => parseArguments(['--integration-ready', '--from', 'latest', '--to', '0.1.6']), /X\.Y\.Z/);
+  assert.throws(
+    () => parseArguments(['--integration-ready', '--integration-ready', '--from', '0.1.5', '--to', '0.1.6']),
+    /exactly one/,
+  );
 });
 
 test('published installation Compose keeps release tags but removes host-wide resources', () => {

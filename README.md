@@ -228,19 +228,21 @@ install/upgrade/restore journey stays in
 publication gate. The real local restore/mask/lifecycle check is explicit:
 `node test/smoke/local-lifecycle/dev-snapshot.mjs --docker`.
 
-The local smoke runner checks a published release against an isolated local
-Compose installation without accepting an ambiguous target:
+The local smoke runner creates or updates an isolated local Compose installation
+without accepting an ambiguous target:
 
 ```sh
-PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
 PIN_GLIDE_SMOKE_RELEASE=0.1.6 PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
   node test/smoke/runner.mjs --integration-ready
 ```
 
-`--check` is read-only and exits `2` after prerequisites pass because it does
-not execute restore. `--integration-ready` creates a stopped-writer container
-snapshot and restores it into a disposable database. It then seeds and removes
-run-owned SQL fixtures, exercises the Sender credential/session lifecycle
+The runner copies the deployment Compose file and installer into
+`/srv/pin-glide-smoke`, creates `/tmp/snapshots/pin-glide`, and patches the smoke
+`.env` without changing credentials. It installs a fresh environment, redeploys
+the same release, or performs a declared upgrade before testing. It then creates
+a stopped-writer container snapshot and restores it into a disposable database.
+It also seeds and removes run-owned SQL fixtures, exercises the Sender
+credential/session lifecycle
 through the deployed HTTP and WebSocket surface, calls the real service-issued
 Bailian flow directly, drives Receiver enrollment, add-Sender, replacement,
 association and capacity journeys, checks Receiver credential scope, exclusive

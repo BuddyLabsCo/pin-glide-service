@@ -5,7 +5,6 @@ import test from 'node:test';
 import { escapeSQLString } from '../support/sql.mjs';
 import { createFixturePlan, credentialLifetimeHours, fixtureSender, renderBootstrapSQL } from '../harness/fixtures.mjs';
 import { SmokeHttp, SmokeProblem } from '../harness/http.mjs';
-import { checkExitCode } from '../runner.mjs';
 import { TARGET, targetFromOptions, validateTarget } from './target.mjs';
 
 test('the smoke target accepts only the adopted local installation', () => {
@@ -139,9 +138,4 @@ test('the runner ignores environment overrides of the adopted target', () => {
     targetFromOptions({ release: '1.2.3' }, { PIN_GLIDE_SMOKE_PROJECT: 'pin-glide-dev' }).project,
     'pin-glide-smoke',
   );
-});
-
-test('a read-only check is never reported as a completed acceptance run', () => {
-  assert.equal(checkExitCode('check'), 2);
-  assert.equal(checkExitCode('integration-ready'), 0);
 });

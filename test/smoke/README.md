@@ -58,14 +58,18 @@ The runner refuses any other origin, project, deployment directory, database,
 snapshot directory, or undeclared release transition. Installation commands run
 locally through passwordless `sudo`; SSH is not used.
 
-The deployment `.env.example` keeps the real-deploy snapshot path. For smoke,
-override the copied smoke installation `.env` to set
-`COMPOSE_PROJECT_NAME=pin-glide-smoke`, `PIN_GLIDE_API_BIND=127.0.0.1`, and
-`PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`. The runner clears inherited
-Compose and service variables before invoking Compose and verifies those three
-resolved values, so a stray shell export cannot retarget or re-expose the
-installation. `install.sh` writes snapshots as the invoking `SUDO_UID` and
-`SUDO_GID` when called under `sudo`, so the operator can read the archive.
+The runner creates `/srv/pin-glide-smoke` and `/tmp/snapshots/pin-glide`, copies
+the deployment Compose file, `.env.example`, and `install.sh`, then patches the
+smoke `.env` to `COMPOSE_PROJECT_NAME=pin-glide-smoke`,
+`PIN_GLIDE_API_BIND=127.0.0.1`, and
+`PIN_GLIDE_SNAPSHOT_PATH=/tmp/snapshots/pin-glide`. Other values, including
+provider credentials and the PostgreSQL password, are left unchanged. An
+existing smoke volume is queried before the runner chooses a same-version
+redeploy or a declared upgrade. The runner clears inherited Compose and service
+variables before invoking Compose and verifies the three smoke values, so a
+stray shell export cannot retarget or re-expose the installation. `install.sh`
+writes snapshots as the invoking `SUDO_UID` and `SUDO_GID` when called under
+`sudo`, so the operator can read the archive.
 
 No YAML asset hash is validated. The runner still rejects draft or prerelease
 tags, checks the release source commit, validates the declared upgrade origin,
@@ -78,15 +82,15 @@ Every runner report assigns each scenario one of three statuses:
 
 - `passed`: the scenario completed and its assertions held.
 - `failed`: the scenario ran and an assertion or service outcome failed.
-- `blocked`: an explicit prerequisite was unavailable, such as Docker, Go, a
-  snapshot, or a provider input.
+- `blocked`: an explicit prerequisite was unavailable, such as Docker, Go, or a
+  provider input.
 
 Every scenario also has an `evidenceType`: `smoke` for local-service behavior
 or `deterministic` for a referenced Go test. The status is that evidence's
 execution outcome, not a claim that deterministic evidence crossed the deployed
 boundary. A smoke exit code of `0` means the requested journey and its referenced
 deterministic checks passed, `1` means one failed, and `2` means a prerequisite
-was blocked or a read-only check completed without restore.
+was blocked.
 
 The runner executes exact Go test names and records deterministic evidence only
 when the test reports `--- PASS`. Missing Go or Docker blocks that evidence; a
@@ -131,12 +135,6 @@ identities and expiring credentials never enter the release ledger.
 
 ## Commands and evidence
 
-Read-only preflight:
-
-```sh
-PIN_GLIDE_SMOKE_RELEASE=0.1.6 node test/smoke/runner.mjs --check
-```
-
 Guarded local journey:
 
 ```sh
@@ -148,7 +146,9 @@ PIN_GLIDE_SMOKE_WRITE_AUTHORIZATION=pin-glide-smoke \
 Evidence defaults to the ignored `test/smoke/evidence/` directory with mode
 `0600`. Set `PIN_GLIDE_SMOKE_EVIDENCE` to choose another path. The run holds
 `/tmp/pin-glide-smoke.lock`, restores every reversible fault in `finally` paths,
-and releases the lock before exiting.
+and releases the lock before exiting. The first run installs the selected
+release into the freshly created smoke environment; later runs redeploy the
+same release or upgrade from its current recorded release.
 
 Disposable installation checks remain explicit:
 
