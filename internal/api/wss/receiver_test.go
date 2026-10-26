@@ -342,6 +342,22 @@ func TestNewerGenerationOwnsPresenceAcrossOldClose(t *testing.T) {
 	receivers.supersede("receiver-1")
 	newer := channel.connected(t, "receiver-1:2")
 
+	// Dial can return before the server attaches the newer connection.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		channel.socket.mutex.Lock()
+		slot := channel.socket.slots[receiverKey{receiverID: "receiver-1", generation: 2}]
+		attached := slot != nil && slot.socket != nil
+		channel.socket.mutex.Unlock()
+		if attached {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the newer Receiver connection never attached")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	// The generation that already holds a slot is refused, and neither the
 	// refusal nor the newer connection changes the online time.
 	if socket, _, err := channel.dial("receiver-1:2"); err == nil {
