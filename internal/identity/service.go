@@ -91,10 +91,8 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundl
 }
 
 // Authenticate resolves one raw credential to the Sender it authorizes for
-// scope. An unknown, revoked, expired or wrongly scoped credential is
-// indistinguishable to the caller, and so is a credential whose Sender
-// registration an owner security revocation permanently closed: a closed
-// registration authorizes nothing, whatever its credentials still record.
+// scope. A retained credential identifies a permanently closed Sender before
+// its own expiry, scope or revocation is considered.
 func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope Scope) (string, error) {
 	if rawCredential == "" {
 		return "", ErrCredentialMissing
@@ -116,7 +114,7 @@ func (s *Service) Authenticate(ctx context.Context, rawCredential string, scope 
 	case err != nil:
 		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	case state == model.IdentitySenderRegistrationState_Revoked:
-		return "", ErrCredentialRevoked
+		return "", ErrSenderRevoked
 	}
 	if credential.RevokedAt != nil || Scope(credential.Scope) != scope {
 		return "", ErrCredentialInvalid
@@ -168,7 +166,7 @@ func (s *Service) Refresh(ctx context.Context, request RefreshRequest) (bundle B
 		return Bundle{}, err
 	}
 	if registration.State != model.IdentitySenderRegistrationState_Active {
-		return Bundle{}, ErrCredentialRevoked
+		return Bundle{}, ErrSenderRevoked
 	}
 	credential, err := lockCredential(ctx, tx, presented.TokenDigest)
 	if err != nil {
@@ -299,7 +297,7 @@ func (s *Service) Logout(ctx context.Context, request LogoutRequest) (err error)
 		return err
 	}
 	if registration.State != model.IdentitySenderRegistrationState_Active {
-		return ErrCredentialRevoked
+		return ErrSenderRevoked
 	}
 	credential, err := lockCredential(ctx, tx, claimed.TokenDigest)
 	if err != nil {

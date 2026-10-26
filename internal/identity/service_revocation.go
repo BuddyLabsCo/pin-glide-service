@@ -44,7 +44,7 @@ func (s *Service) SwitchAccountTx(ctx context.Context, tx *sql.Tx, senderID, pre
 	}
 	if sender.State != model.IdentitySenderRegistrationState_Active {
 		// A registration an owner permanently closed authorizes no switch.
-		return ErrCredentialRevoked
+		return ErrSenderRevoked
 	}
 	presented, err := lockCredential(ctx, tx, digest(presentedCredential))
 	if err != nil {

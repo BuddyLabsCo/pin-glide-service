@@ -100,7 +100,7 @@ func registerAuthorize(api huma.API, handlers Handlers) {
 			"A repeated claim by the same Sender returns the same session; another Sender receives 409 pairing_session_claimed. " +
 			"recover_receiver additionally requires exactly one fresh WeChat or QQ proof of the Account that owns the Receiver, which approves one replacement of that Receiver's credential for every Sender that shares it: the approving owner is told that this interrupts the Receiver's current delivery connection. " +
 			"Sending both proof fields is rejected. " +
-			"Failures report 401 for an unusable management credential, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for absent or foreign recovery proof, 404 resource_not_found, 409 receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for conflicting proof fields, 502 identity_provider_error, or 503 service_unavailable.",
+			"Failures report 401 for an unusable management credential, 401 wechat_authorization_invalid or qq_authorization_invalid for proof the provider refuses, 403 fresh_identity_required for absent or foreign recovery proof, 404 resource_not_found, 409 device_registration_revoked, receiver_limit_reached or pairing_session_claimed, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for conflicting proof fields, 502 identity_provider_error, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusForbidden,
@@ -150,7 +150,7 @@ func registerComplete(api huma.API, handlers Handlers) {
 		Description: "Records one participant's authenticated, mode-specific report. The claiming Sender reports with its management credential; the Receiver side reports with the session's restricted credential. A report states what its own holder did with the derived key; the service never sees or verifies that client key material, so the report is the side's own statement rather than proof, and a reported credential effect follows only the server-side checks below. Both reports atomically activate the session's reservation: a new_receiver session then becomes credential_ready, while an add_sender session completes without issuing a Receiver credential. Repeating a successful side's report is idempotent. " +
 			"A re-pairing commits its own Pairing ID and retires only the confirming Sender's association that this session replaced, and only while that association is still current; any other outcome fails with 409 operation_superseded and preserves the association that is current. " +
 			"A recover_receiver session instead reconciles the Pairing keys that survived. The approving Sender confirms the key of its own association or reports not_available for the one it lost; the Receiver side reports the retainedPairingIds whose local keys it still holds. An association survives only if the Receiver reports its Pairing ID as retained and its Sender did not report not_available; a Sender reporting not_available also loses its unfinished work with that Receiver, and the Receiver's unfinished reservations for Pairing IDs it no longer holds a key for are canceled. A lost key therefore needs a separate pairing and a reinstalled Receiver needs a new registration. The session reaches credential_ready once both sides have reported, creates no Pairing and reserves no binding capacity. Only this mode accepts not_available and retainedPairingIds, and only its Receiver side reports the retained set. " +
-			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 pairing_not_ready or operation_superseded, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for a report that does not match the session's mode or the reporting side, or 503 service_unavailable.",
+			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 device_registration_revoked, pairing_not_ready or operation_superseded, 410 pairing_session_expired or pairing_session_closed, 422 validation_failed for a report that does not match the session's mode or the reporting side, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
@@ -236,10 +236,11 @@ func registerCancel(api huma.API, handlers Handlers) {
 		Description: "Cancels a session before activation and releases its reservation. " +
 			"Both participants are told the session closed, and the restricted channel stops relaying: its next frame closes the connection. " +
 			"An already activated association is not undone: the call reports 410 pairing_session_closed and ordinary Pairing removal applies. " +
-			"Failures report 401 for an unusable credential, 404 resource_not_found, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable.",
+			"Failures report 401 for an unusable credential, 404 resource_not_found, 409 device_registration_revoked for a permanently closed Sender registration, 410 pairing_session_expired or pairing_session_closed, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
+			http.StatusConflict,
 			http.StatusGone,
 			http.StatusServiceUnavailable,
 		},

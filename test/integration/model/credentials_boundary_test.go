@@ -208,7 +208,7 @@ func TestModelCredentialsRequireCurrentUploadAuthority(t *testing.T) {
 	if revocation.StatusCode != http.StatusNoContent {
 		t.Fatalf("owner revocation status = %d, want %d: %s", revocation.StatusCode, http.StatusNoContent, revoked)
 	}
-	environment.fails(t, latest.Uploader.Token, http.StatusUnauthorized, "credential_revoked")
+	environment.fails(t, latest.Uploader.Token, http.StatusConflict, "device_registration_revoked")
 
 	if requests := environment.mint.Requests(); len(requests) != 0 {
 		t.Errorf("the provider was called %d times without current upload authority", len(requests))

@@ -160,8 +160,8 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 		{token: revoked.Refresh.Token, scope: identity.ScopeRefresh},
 	} {
 		if _, err := identity.NewService(environment.pool, nil).Authenticate(
-			context.Background(), credential.token, credential.scope); !errors.Is(err, identity.ErrCredentialRevoked) {
-			t.Errorf("the revoked %s credential reports %v, want credential_revoked", credential.scope, err)
+			context.Background(), credential.token, credential.scope); !errors.Is(err, identity.ErrSenderRevoked) {
+			t.Errorf("the revoked %s credential reports %v, want device_registration_revoked", credential.scope, err)
 		}
 	}
 	if state := environment.associationState(t, "pairing-revoked"); state != "removed" {
@@ -267,10 +267,9 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 	environment.provider.Accept("code-owned-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-owned-again"}`)
 	environment.provider.Accept("code-closed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
-	// The credential itself is revoked with its registration, so the caller
-	// reports that before the already closed registration is considered.
+	// The retained credential identifies the permanently closed registration.
 	revokeFails(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-closed-again"}`,
-		http.StatusUnauthorized, "credential_revoked")
+		http.StatusConflict, "device_registration_revoked")
 }
 
 // A revocation whose cleanup cannot commit reports the standard failure and
@@ -320,12 +319,70 @@ func TestRevokedSenderCannotActOnItsOwnRegistration(t *testing.T) {
 	// revoked with it.
 	environment.provider.Accept("code-revoke-quiet-again", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
 	revokeFails(t, environment, owned.SenderID, owned.UserSession.Token,
-		`{"wechatCode":"code-revoke-quiet-again"}`, http.StatusUnauthorized, "credential_revoked")
-	status, payload, _ := environment.logout(t, owned.UserSession.Token, "")
-	if status != http.StatusUnauthorized {
-		t.Fatalf("logout with a closed registration = %d, want 401: %s", status, payload)
+		`{"wechatCode":"code-revoke-quiet-again"}`, http.StatusConflict, "device_registration_revoked")
+	// Registration closure wins over revocation, expiry and scope on every
+	// shared HTTP authentication path, including refresh-backed logout.
+	for _, expired := range []bool{false, true} {
+		if expired {
+			environment.exec(t, `UPDATE pin_glide.identity_credentials
+				SET expires_at = now() - interval '1 second' WHERE sender_id = $1`, owned.SenderID)
+		}
+		for _, token := range []string{owned.UserSession.Token, owned.Uploader.Token, owned.Refresh.Token} {
+			for _, operation := range []struct {
+				method string
+				path   string
+				body   string
+				bearer string
+			}{
+				{http.MethodGet, "/v1/self/receivers", "", token},
+				{http.MethodPost, "/v1/messages", `{"messageId":"revoked-message","items":[]}`, token},
+				{http.MethodGet, "/v1/messages/revoked-message", "", token},
+				{http.MethodPost, "/v1/model/credentials", "", token},
+				{http.MethodPost, refreshPath, refreshBody(token, "revoked-operation", 0), ""},
+				{http.MethodPost, logoutPath, "", token},
+				{http.MethodPost, logoutPath, logoutRefreshBody(token), ""},
+				{http.MethodPost, logoutPath, switchAccountBody, token},
+			} {
+				t.Run(operation.method+" "+operation.path, func(t *testing.T) {
+					assertRegistrationRevoked(t, environment, operation.method, operation.path, operation.body, operation.bearer)
+				})
+			}
+		}
 	}
-	if code := decodeProblem(t, payload).Code; code != "credential_revoked" {
-		t.Errorf("logout with a closed registration code = %q, want credential_revoked", code)
+	if issued := environment.count(t, `SELECT count(*) FROM pin_glide.identity_credentials WHERE sender_id = $1`, owned.SenderID); issued != 3 {
+		t.Errorf("rejected requests changed the credential count to %d, want 3", issued)
+	}
+	if recorded := environment.count(t, `SELECT count(*) FROM pin_glide.identity_refresh_operations WHERE sender_id = $1`, owned.SenderID); recorded != 0 {
+		t.Errorf("rejected requests recorded %d refresh operations, want 0", recorded)
+	}
+}
+
+func assertRegistrationRevoked(t *testing.T, environment *loginEnvironment, method, path, body, bearer string) {
+	t.Helper()
+
+	request, err := http.NewRequest(method, environment.service.BaseURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	response, err := environment.service.Client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	var rejected struct {
+		Status int    `json:"status"`
+		Code   string `json:"code"`
+		Type   string `json:"type"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&rejected); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if response.StatusCode != http.StatusConflict || rejected.Status != http.StatusConflict ||
+		rejected.Code != "device_registration_revoked" || rejected.Type != "/problems/device_registration_revoked" {
+		t.Errorf("HTTP %d, problem %+v; want 409 device_registration_revoked", response.StatusCode, rejected)
 	}
 }

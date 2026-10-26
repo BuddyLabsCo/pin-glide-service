@@ -50,7 +50,7 @@ func registerUpload(api huma.API, service *domain.Service) {
 		DefaultStatus: http.StatusMultiStatus,
 		Summary:       "Upload indexed ciphertexts for live Delivery",
 		Description: "Admits one Sender's Message and forwards each entry to the Receiver it selected, answering 207 with one terminal result per input entry and its original index. " +
-			"Upload authority is required, so an absent credential reports 401 credential_missing; an unknown or wrongly scoped credential, and one an earlier logout, fresh login or family-reuse revocation invalidated, reports 401 credential_invalid; an expired one reports 401 credential_expired; and one whose Sender registration an owner permanently closed reports 401 credential_revoked. The Sender identity comes from that credential, never from the payload. " +
+			"Upload authority is required, so an absent credential reports 401 credential_missing; an unknown or wrongly scoped credential, and one an earlier logout, fresh login or family-reuse revocation invalidated, reports 401 credential_invalid; an expired one reports 401 credential_expired; and one whose Sender registration an owner permanently closed reports 409 device_registration_revoked. The Sender identity comes from that credential, never from the payload. " +
 			"The envelope is the whole-request contract: a body that is not JSON reports 400 invalid_request, a missing request body reports 400 invalid_request, and a JSON body without a readable messageId or without an items array reports 422 validation_failed. " +
 			"Once entries can be enumerated, each entry is validated on its own index, so a malformed entry never suppresses a valid one. Two entries naming the same Receiver are both rejected with duplicate_receiver, because the service never chooses between different ciphertexts for one Delivery. " +
 			"Each entry is validated and then authorized before its dedup lookup: another readable cryptoVersion reports unsupported_crypto_version; a missing field, unpadded or non-Base64 value, a nonce that is not 96 bits or a ciphertext that cannot hold its 128-bit tag reports invalid_delivery_item; and a Receiver that is unknown to this Sender, not its own active Pairing or revoked reports receiver_not_authorized without confirming whether it exists. " +
@@ -65,6 +65,7 @@ func registerUpload(api huma.API, service *domain.Service) {
 		Errors: []int{
 			http.StatusBadRequest,
 			http.StatusUnauthorized,
+			http.StatusConflict,
 			http.StatusUnprocessableEntity,
 			http.StatusServiceUnavailable,
 		},
@@ -117,10 +118,11 @@ func registerMessage(api huma.API, service *domain.Service) {
 			"Upload authority is required, and only this Sender's own Deliveries appear: another Sender's or another Account's Message is invisible here. The query grants no forwarding authority and does not require the Pairing to stay active, so it never overrides upload validation. " +
 			"Processing appears only here, never in a synchronous 207 result; an upload that admitted no Delivery, including one whose entries were all rejected, is not queryable, and a Message whose rows scheduled cleanup already deleted is reported the same way. " +
 			"Registered work whose owner is gone is resolved as interrupted rather than left pending, and it is never resumed or re-sent. " +
-			"Failures report 401 for an absent or unusable upload credential, 404 resource_not_found for a Message with no retained admitted Delivery, or 503 delivery_status_unavailable when the retained metadata cannot be read reliably.",
+			"Failures report 401 for an absent or unusable upload credential, 409 device_registration_revoked for a permanently closed Sender registration, 404 resource_not_found for a Message with no retained admitted Delivery, or 503 delivery_status_unavailable when the retained metadata cannot be read reliably.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
+			http.StatusConflict,
 			http.StatusServiceUnavailable,
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},

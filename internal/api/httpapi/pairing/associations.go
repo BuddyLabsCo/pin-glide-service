@@ -67,9 +67,10 @@ func registerListReceivers(api huma.API, handlers Handlers) {
 		Description: "Returns every active association the authenticated Sender owns: the Receiver it forwards to, the Pairing ID both clients stored the Pairing key under, the Sender's own alias, and the Receiver's current presence with the time that state last changed. " +
 			"Only this Sender's own associations appear: another Sender sharing the same Receiver is invisible here, and a pending reservation appears only as its Pairing Session. " +
 			"Management authority is required, so an upload, Receiver or restricted pairing credential authorizes nothing here. " +
-			"Failures report 401 for an absent or unusable management credential, or 503 service_unavailable.",
+			"Failures report 401 for an absent or unusable management credential, 409 device_registration_revoked for a permanently closed Sender registration, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
+			http.StatusConflict,
 			http.StatusServiceUnavailable,
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},
@@ -104,10 +105,11 @@ func registerRenamePairing(api huma.API, handlers Handlers) {
 		Description: "Replaces the authenticated Sender's own alias for one of its active associations and returns that association as it now is, with the Receiver's current presence. An empty alias clears the Sender's own label. " +
 			"The Pairing identity, its Receiver, the Receiver's delivery connection and every other Sender's association are untouched. " +
 			"A Pairing that is unknown, owned by another Sender, still pending or already removed reports 404 resource_not_found exactly as one that does not exist, so no caller can confirm another Sender's association. " +
-			"Failures report 401 for an absent or unusable management credential, 404 resource_not_found, 422 validation_failed for a body without an alias within its length, or 503 service_unavailable.",
+			"Failures report 401 for an absent or unusable management credential, 409 device_registration_revoked for a permanently closed Sender registration, 404 resource_not_found, 422 validation_failed for a body without an alias within its length, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
+			http.StatusConflict,
 			http.StatusUnprocessableEntity,
 			http.StatusServiceUnavailable,
 		},
@@ -140,10 +142,11 @@ func registerRemovePairing(api huma.API, handlers Handlers) {
 		Description: "Removes this Sender's own authorization to forward to a Receiver and answers 204. The Receiver credential, its delivery connection and every other Sender's association survive, and the removed association keeps its durable identity. " +
 			"The Sender's unfinished association work for the same Receiver is canceled with it, so a later key-confirmation report cannot recreate the association those clients removed; a connected Receiver is told with pairing_removed on its delivery connection, which stays open. " +
 			"A Pairing that is unknown, owned by another Sender, still pending or already removed reports 404 resource_not_found exactly as one that does not exist. " +
-			"Failures report 401 for an absent or unusable management credential, 404 resource_not_found, or 503 service_unavailable.",
+			"Failures report 401 for an absent or unusable management credential, 409 device_registration_revoked for a permanently closed Sender registration, 404 resource_not_found, or 503 service_unavailable.",
 		Errors: []int{
 			http.StatusUnauthorized,
 			http.StatusNotFound,
+			http.StatusConflict,
 			http.StatusServiceUnavailable,
 		},
 		Security: []map[string][]string{{"bearerAuth": {}}},
