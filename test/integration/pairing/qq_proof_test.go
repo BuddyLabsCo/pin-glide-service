@@ -86,8 +86,8 @@ func TestQQProofSupportsRecoveryAndPermanentDeviceRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	if status := response.StatusCode; status != http.StatusUnauthorized {
-		t.Errorf("QQ-revoked Sender credential status = %d, want 401", status)
+	if status := response.StatusCode; status != http.StatusConflict {
+		t.Errorf("QQ-revoked Sender credential status = %d, want 409", status)
 	}
 
 	status, payload = environment.qqRevokeDevice(t, association.ReceiverID,

@@ -43,8 +43,9 @@ channels:
       A subscription the service rejects before upgrading is an ordinary HTTP
       problem detail: 400 invalid_request when the upgrade did not offer the
       pin-glide.v1 subprotocol, 401 credential_missing, credential_invalid or
-      credential_expired, 404 resource_not_found, 410 pairing_session_expired or
-      pairing_session_closed, or 503 service_unavailable. A credential's own
+      credential_expired, 404 resource_not_found, 409 device_registration_revoked
+      for a permanently closed Sender registration, 410 pairing_session_expired
+      or pairing_session_closed, or 503 service_unavailable. A credential's own
       validity is decided before the protected session state, so an expired
       restricted credential reports itself while the valid management
       credential of the session's own Sender reports the expired session.

@@ -86,6 +86,8 @@ func (a senderAuthenticator) Authenticate(ctx context.Context, rawCredential, sc
 // rather than two.
 func credentialOutcome(err error) error {
 	switch {
+	case errors.Is(err, identity.ErrSenderRevoked):
+		return ErrSenderRevoked
 	case errors.Is(err, identity.ErrCredentialMissing):
 		return ErrCredentialMissing
 	case errors.Is(err, identity.ErrCredentialInvalid):

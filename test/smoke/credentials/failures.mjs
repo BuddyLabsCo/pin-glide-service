@@ -67,13 +67,13 @@ export async function permanentAndFailureOutcomes(session) {
   const permanent = {
     management: await session.expectProblem(
       { path: '/v1/self/receivers', token: session.token('permanent', 'user_session') },
-      401,
-      'credential_revoked',
+      409,
+      'device_registration_revoked',
     ),
     uploader: await session.expectProblem(
       { path: `/v1/messages/smoke-permanent-${session.plan.runId}`, token: session.token('permanent', 'uploader') },
-      401,
-      'credential_revoked',
+      409,
+      'device_registration_revoked',
     ),
     refresh: await session.expectProblem(
       {
@@ -85,8 +85,28 @@ export async function permanentAndFailureOutcomes(session) {
           attempt: 0,
         },
       },
-      401,
-      'credential_revoked',
+      409,
+      'device_registration_revoked',
+    ),
+    model: await session.expectProblem(
+      { method: 'POST', path: '/v1/model/credentials', token: session.token('permanent', 'uploader') },
+      409,
+      'device_registration_revoked',
+    ),
+    logout: await session.expectProblem(
+      { method: 'POST', path: '/v1/auth/logout', token: session.token('permanent', 'user_session') },
+      409,
+      'device_registration_revoked',
+    ),
+    switchAccount: await session.expectProblem(
+      {
+        method: 'POST',
+        path: '/v1/auth/logout',
+        token: session.token('permanent', 'user_session'),
+        body: { mode: 'switch_account' },
+      },
+      409,
+      'device_registration_revoked',
     ),
   };
   const invalid = await session.expectProblem(

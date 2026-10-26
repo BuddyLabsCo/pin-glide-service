@@ -40,7 +40,7 @@ func TestPublishedHTTPDescriptionKeepsTheOwnAssociationContract(t *testing.T) {
 	if ref, want := element["$ref"], protocol.SchemaPrefix+"ReceiverAssociation"; ref != want {
 		t.Errorf("list items reference %v, want %s", ref, want)
 	}
-	assertFailureStatuses(t, publishedFailureStatuses(t, list), []string{"401", "500", "503"})
+	assertFailureStatuses(t, publishedFailureStatuses(t, list), []string{"401", "409", "500", "503"})
 
 	rename := operationOf(t, description, operationContract{
 		OperationID: "PatchSelfPairing",
@@ -66,7 +66,7 @@ func TestPublishedHTTPDescriptionKeepsTheOwnAssociationContract(t *testing.T) {
 	if properties := propertyFields(t, request); !slices.Equal(properties, []string{"alias"}) {
 		t.Errorf("rename fields = %v, want [alias]", properties)
 	}
-	assertFailureStatuses(t, publishedFailureStatuses(t, rename), []string{"401", "404", "422", "500", "503"})
+	assertFailureStatuses(t, publishedFailureStatuses(t, rename), []string{"401", "404", "409", "422", "500", "503"})
 
 	remove := operationOf(t, description, operationContract{
 		OperationID: "DeleteSelfPairing",
@@ -81,7 +81,7 @@ func TestPublishedHTTPDescriptionKeepsTheOwnAssociationContract(t *testing.T) {
 	if content, present := success["content"]; present {
 		t.Errorf("the bodyless removal success carries content: %v", content)
 	}
-	assertFailureStatuses(t, publishedFailureStatuses(t, remove), []string{"401", "404", "422", "500", "503"})
+	assertFailureStatuses(t, publishedFailureStatuses(t, remove), []string{"401", "404", "409", "422", "500", "503"})
 }
 
 // associationSuccess is one resolved success payload of an association

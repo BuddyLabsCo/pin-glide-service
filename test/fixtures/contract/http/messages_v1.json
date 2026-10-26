@@ -33,9 +33,9 @@
     "401": [
       "credential_expired",
       "credential_invalid",
-      "credential_missing",
-      "credential_revoked"
+      "credential_missing"
     ],
+    "409": ["device_registration_revoked"],
     "422": ["validation_failed"],
     "500": ["internal_error"],
     "503": ["delivery_status_unavailable", "service_unavailable"]
@@ -59,10 +59,10 @@
       "401": [
         "credential_expired",
         "credential_invalid",
-        "credential_missing",
-        "credential_revoked"
+        "credential_missing"
       ],
       "404": ["resource_not_found"],
+      "409": ["device_registration_revoked"],
       "422": ["validation_failed"],
       "500": ["internal_error"],
       "503": ["delivery_status_unavailable", "service_unavailable"]

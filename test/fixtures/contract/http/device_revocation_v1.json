@@ -16,7 +16,6 @@
       "credential_expired",
       "credential_invalid",
       "credential_missing",
-      "credential_revoked",
       "qq_authorization_invalid",
       "wechat_authorization_invalid"
     ],

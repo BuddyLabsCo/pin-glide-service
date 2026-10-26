@@ -18,6 +18,7 @@
       "credential_missing",
       "credential_revoked"
     ],
+    "409": ["device_registration_revoked"],
     "422": ["validation_failed"],
     "500": ["internal_error"],
     "503": ["service_unavailable"]

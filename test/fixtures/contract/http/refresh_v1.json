@@ -32,7 +32,7 @@
       "credential_revoked",
       "refresh_reuse_detected"
     ],
-    "409": ["operation_mismatch", "operation_superseded"],
+    "409": ["device_registration_revoked", "operation_mismatch", "operation_superseded"],
     "422": ["validation_failed"],
     "500": ["internal_error"],
     "503": ["service_unavailable"]
