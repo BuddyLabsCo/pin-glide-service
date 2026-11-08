@@ -39,10 +39,10 @@ func upsertAccount(ctx context.Context, tx *sql.Tx, verified Identity) (string, 
 
 // insertSender registers one new installation. The service assigns the ID; the
 // caller's device is identified by it afterwards.
-func insertSender(ctx context.Context, tx *sql.Tx, senderID, accountID string) error {
+func insertSender(ctx context.Context, tx *sql.Tx, senderID, accountID, deviceName string) error {
 	_, err := table.IdentitySenderRegistrations.
-		INSERT(table.IdentitySenderRegistrations.ID, table.IdentitySenderRegistrations.AccountID).
-		VALUES(senderID, accountID).
+		INSERT(table.IdentitySenderRegistrations.ID, table.IdentitySenderRegistrations.AccountID, table.IdentitySenderRegistrations.DeviceName).
+		VALUES(senderID, accountID, deviceName).
 		ExecContext(ctx, tx)
 	return err
 }
@@ -51,7 +51,7 @@ func insertSender(ctx context.Context, tx *sql.Tx, senderID, accountID string) e
 // transaction and requires it to belong to the verified Account and to be
 // active. A foreign or unknown ID reports the same outcome as a missing one, so
 // the response cannot confirm another Account's registrations.
-func restoreSender(ctx context.Context, tx *sql.Tx, senderID, accountID string) error {
+func restoreSender(ctx context.Context, tx *sql.Tx, senderID, accountID, deviceName string) error {
 	registration, err := lockSender(ctx, tx, senderID)
 	if errors.Is(err, qrm.ErrNoRows) {
 		return ErrSenderNotFound
@@ -65,7 +65,12 @@ func restoreSender(ctx context.Context, tx *sql.Tx, senderID, accountID string) 
 	if registration.State == model.IdentitySenderRegistrationState_Revoked {
 		return ErrSenderRevoked
 	}
-	return nil
+	_, err = table.IdentitySenderRegistrations.
+		UPDATE(table.IdentitySenderRegistrations.DeviceName).
+		SET(deviceName).
+		WHERE(table.IdentitySenderRegistrations.ID.EQ(postgres.String(senderID))).
+		ExecContext(ctx, tx)
+	return err
 }
 
 // closeSender permanently closes one registration and records when owner
@@ -287,4 +292,24 @@ func nullable(value string) any {
 		return nil
 	}
 	return value
+}
+
+// activeSenders returns the complete unrevoked Account inventory in display order.
+func activeSenders(ctx context.Context, db qrm.Queryable, accountID string) ([]Sender, error) {
+	var rows []model.IdentitySenderRegistrations
+	err := table.IdentitySenderRegistrations.
+		SELECT(table.IdentitySenderRegistrations.ID, table.IdentitySenderRegistrations.DeviceName, table.IdentitySenderRegistrations.CreatedAt).
+		FROM(table.IdentitySenderRegistrations).
+		WHERE(table.IdentitySenderRegistrations.AccountID.EQ(postgres.String(accountID)).
+			AND(table.IdentitySenderRegistrations.State.EQ(enum.IdentitySenderRegistrationState.Active))).
+		ORDER_BY(table.IdentitySenderRegistrations.CreatedAt.DESC(), table.IdentitySenderRegistrations.ID.ASC()).
+		QueryContext(ctx, db, &rows)
+	if err != nil {
+		return nil, err
+	}
+	senders := make([]Sender, 0, len(rows))
+	for _, row := range rows {
+		senders = append(senders, Sender{ID: row.ID, DeviceName: row.DeviceName, CreatedAt: row.CreatedAt.UTC()})
+	}
+	return senders, nil
 }

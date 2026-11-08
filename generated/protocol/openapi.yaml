@@ -498,6 +498,10 @@ components:
     QQLoginRequest:
       additionalProperties: false
       properties:
+        deviceName:
+          description: Client-supplied device name; trimmed before validating 1 to 64 Unicode characters; required on both creation and restoration
+          minLength: 1
+          type: string
         qqCode:
           description: Fresh single-use QQ authorization code obtained by the Android client
           maxLength: 512
@@ -508,6 +512,7 @@ components:
           maxLength: 128
           type: string
       required:
+        - deviceName
         - qqCode
       type: object
     ReceiverAssociation:
@@ -626,6 +631,50 @@ components:
         - operationId
         - attempt
       type: object
+    SenderList:
+      additionalProperties: false
+      properties:
+        items:
+          description: All unrevoked Senders of the authenticated Account, including self and logged-out registrations; newest creation first, then Sender ID ascending
+          items:
+            $ref: "#/components/schemas/SenderRegistration"
+          type: array
+      required:
+        - items
+      type: object
+    SenderRegistration:
+      additionalProperties: false
+      properties:
+        createdAt:
+          description: Original registration creation time in RFC 3339 UTC
+          format: date-time
+          type: string
+        deviceName:
+          description: Client-supplied trimmed device name; duplicate names identify distinct registrations by Sender ID
+          maxLength: 64
+          minLength: 1
+          type: string
+        revokedAt:
+          description: Always null for an unrevoked registration
+          format: date-time
+          type:
+            - string
+            - "null"
+        senderId:
+          description: Sender registration ID; use this ID as the permanent-revocation target
+          type: string
+        state:
+          description: Unrevoked registration; does not imply online, logged in or forwarding
+          enum:
+            - active
+          type: string
+      required:
+        - senderId
+        - deviceName
+        - state
+        - createdAt
+        - revokedAt
+      type: object
     UploadItem:
       additionalProperties: false
       properties:
@@ -742,6 +791,10 @@ components:
     WeChatLoginRequest:
       additionalProperties: false
       properties:
+        deviceName:
+          description: Client-supplied device name; trimmed before validating 1 to 64 Unicode characters; required on both creation and restoration
+          minLength: 1
+          type: string
         senderId:
           description: Saved Sender ID to restore; omit it to register this installation as a new Sender
           maxLength: 128
@@ -752,6 +805,7 @@ components:
           minLength: 1
           type: string
       required:
+        - deviceName
         - wechatCode
       type: object
     WeChatProofRequest:
@@ -858,7 +912,7 @@ paths:
         - identity
   /v1/auth/qq:
     post:
-      description: Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
+      description: Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration and updates its deviceName. deviceName is required for every login, trimmed and validated as 1 to 64 Unicode characters; invalid names report 422 validation_failed before any mutation. Older clients must update to supply this field. Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
       operationId: PostAuthQQ
       requestBody:
         content:
@@ -984,7 +1038,7 @@ paths:
         - identity
   /v1/auth/wechat:
     post:
-      description: Verifies a fresh WeChat authorization code, maps it to its Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Failures report 401 wechat_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
+      description: Verifies a fresh WeChat authorization code, maps it to its Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration and updates its deviceName. deviceName is required for every login, trimmed and validated as 1 to 64 Unicode characters; invalid names report 422 validation_failed before any mutation. Older clients must update to supply this field. Failures report 401 wechat_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
       operationId: PostAuthWechat
       requestBody:
         content:
@@ -1801,6 +1855,46 @@ paths:
       summary: List the Sender's own Receiver associations
       tags:
         - pairing
+  /v1/self/senders:
+    get:
+      description: Returns the complete list for the Account resolved from the current Sender management credential M, including the calling Sender and ordinary-logged-out registrations. Permanently revoked registrations are excluded. No Account selector, paging, search or filter parameters are supported. Ordered by createdAt descending, then senderId ascending. Active means unrevoked, not online, logged in or forwarding. U, R, F and restricted Pairing credentials do not authorize this operation. Failures report 401 for absent, unusable, wrongly scoped or expired M, 409 device_registration_revoked for a permanently closed acting Sender, and 503 service_unavailable for temporary storage failure. Listing makes no identity-provider call or credential, presence or revocation mutation. After a successful reload for the same Account, a missing selected Sender confirms revocation; a remaining target can be retried through POST /v1/devices/{id}/revoke with M and fresh matching owner proof. A failed list request establishes neither outcome.
+      operationId: GetSelfSenders
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SenderList"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: List the Account's unrevoked Sender registrations
+      tags:
+        - identity
 servers:
   - description: The public origin supplied by the installation.
     url: https://{serviceHost}

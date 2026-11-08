@@ -151,7 +151,7 @@ func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	t.Helper()
 	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 
-	status, payload := e.request(t, http.MethodPost, "/v1/auth/wechat", `{"wechatCode":"`+code+`"}`, "")
+	status, payload := e.request(t, http.MethodPost, "/v1/auth/wechat", `{"deviceName":"Test Sender","wechatCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
 		t.Fatalf("login status = %d: %s", status, payload)
 	}
@@ -167,7 +167,7 @@ func (e *environment) qqSender(t *testing.T, code, openID string) bundle {
 	t.Helper()
 	e.qq.Accept(code, identity.Identity{AppID: "qq-app", OpenID: openID})
 
-	status, payload := e.request(t, http.MethodPost, "/v1/auth/qq", `{"qqCode":"`+code+`"}`, "")
+	status, payload := e.request(t, http.MethodPost, "/v1/auth/qq", `{"deviceName":"Test Sender","qqCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
 		t.Fatalf("QQ login status = %d: %s", status, payload)
 	}

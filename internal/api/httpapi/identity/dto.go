@@ -28,14 +28,16 @@ type CredentialBundle struct {
 
 // WeChatLoginRequest is the accepted POST /v1/auth/wechat body.
 type WeChatLoginRequest struct {
+	DeviceName string `json:"deviceName" required:"true" minLength:"1" doc:"Client-supplied device name; trimmed before validating 1 to 64 Unicode characters; required on both creation and restoration"`
 	WeChatCode string `json:"wechatCode" required:"true" minLength:"1" maxLength:"512" doc:"Fresh single-use WeChat authorization code obtained by the Android client"`
 	SenderID   string `json:"senderId,omitempty" maxLength:"128" doc:"Saved Sender ID to restore; omit it to register this installation as a new Sender"`
 }
 
 // QQLoginRequest is the accepted POST /v1/auth/qq body.
 type QQLoginRequest struct {
-	QQCode   string `json:"qqCode" required:"true" minLength:"1" maxLength:"512" doc:"Fresh single-use QQ authorization code obtained by the Android client"`
-	SenderID string `json:"senderId,omitempty" maxLength:"128" doc:"Saved Sender ID to restore; omit it to register this installation as a new Sender"`
+	DeviceName string `json:"deviceName" required:"true" minLength:"1" doc:"Client-supplied device name; trimmed before validating 1 to 64 Unicode characters; required on both creation and restoration"`
+	QQCode     string `json:"qqCode" required:"true" minLength:"1" maxLength:"512" doc:"Fresh single-use QQ authorization code obtained by the Android client"`
+	SenderID   string `json:"senderId,omitempty" maxLength:"128" doc:"Saved Sender ID to restore; omit it to register this installation as a new Sender"`
 }
 
 // RefreshRequest is the accepted POST /v1/auth/refresh body.

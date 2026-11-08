@@ -84,12 +84,20 @@ func SelectProof(wechatCode, qqCode string) (Proof, error) {
 	}
 }
 
+// Sender is one unrevoked registration in an Account's complete inventory.
+type Sender struct {
+	ID         string
+	DeviceName string
+	CreatedAt  time.Time
+}
+
 // LoginRequest is one fresh provider login. An empty SenderID asks for a new
 // installation registration; a supplied one may only restore an owned, active
 // registration, never recreate one.
 type LoginRequest struct {
-	Proof    Proof
-	SenderID string
+	DeviceName string
+	Proof      Proof
+	SenderID   string
 }
 
 // RefreshRequest is one ordered renewal: the token that authorizes it, the
@@ -184,4 +192,6 @@ var (
 	ErrAttemptUnsupported = errors.New("refresh attempt unsupported")
 	// ErrStorageUnavailable marks a required database operation that failed.
 	ErrStorageUnavailable = errors.New("storage unavailable")
+	// ErrDeviceNameInvalid marks a missing or overlong Sender device name.
+	ErrDeviceNameInvalid = errors.New("device name must contain 1 to 64 Unicode characters")
 )

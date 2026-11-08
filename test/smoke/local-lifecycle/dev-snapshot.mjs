@@ -360,8 +360,8 @@ if (args[0] === 'build') fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.s
     ON CONFLICT (id) DO UPDATE SET workspace_id = excluded.workspace_id, model = excluded.model, enabled = true;
     INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
     VALUES ('account-local', 'wechat', 'app-local', 'open-local');
-    INSERT INTO pin_glide.identity_sender_registrations (id, account_id)
-    VALUES ('sender-local', 'account-local');
+    INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id)
+    VALUES ('Test Sender', 'sender-local', 'account-local');
     INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
     VALUES ('receiver-local', 'account-local', 'active');
     INSERT INTO pin_glide.pairing_pairings (id, sender_id, receiver_id, alias, state, activated_at)

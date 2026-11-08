@@ -1,0 +1,20 @@
+{
+  "operationId": "GetSelfSenders",
+  "path": "/v1/self/senders",
+  "method": "get",
+  "success": {
+    "schema": "SenderList",
+    "status": "200",
+    "required": ["items"]
+  },
+  "item": {
+    "schema": "SenderRegistration",
+    "required": ["createdAt", "deviceName", "revokedAt", "senderId", "state"]
+  },
+  "errors": {
+    "401": ["credential_missing", "credential_invalid", "credential_expired"],
+    "409": ["device_registration_revoked"],
+    "500": ["internal_error"],
+    "503": ["service_unavailable"]
+  }
+}

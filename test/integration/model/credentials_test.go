@@ -188,9 +188,9 @@ func (e *environment) sender(t *testing.T, code, openID, senderID string) sender
 	t.Helper()
 
 	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
-	body := fmt.Sprintf(`{"wechatCode":%q}`, code)
+	body := fmt.Sprintf(`{"deviceName":"Test Sender","wechatCode":%q}`, code)
 	if senderID != "" {
-		body = fmt.Sprintf(`{"wechatCode":%q,"senderId":%q}`, code, senderID)
+		body = fmt.Sprintf(`{"deviceName":"Test Sender","wechatCode":%q,"senderId":%q}`, code, senderID)
 	}
 	return e.login(t, loginPath, body)
 }

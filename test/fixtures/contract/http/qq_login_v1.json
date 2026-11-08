@@ -4,8 +4,8 @@
   "method": "post",
   "request": {
     "schema": "QQLoginRequest",
-    "required": ["qqCode"],
-    "properties": ["qqCode", "senderId"]
+    "required": ["deviceName", "qqCode"],
+    "properties": ["deviceName", "qqCode", "senderId"]
   },
   "success": {
     "schema": "CredentialBundle",

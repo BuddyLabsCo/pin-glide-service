@@ -23,6 +23,7 @@ func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
 	registerRefresh(api, service)
 	registerLogout(api, service, devices)
 	registerRevokeDevice(api, devices)
+	registerListSenders(api, service)
 }
 
 // DeviceRevocation is the two identity operations that change a device
@@ -44,7 +45,8 @@ func registerWeChatLogin(api huma.API, service *domain.Service) {
 		Path:        "/v1/auth/wechat",
 		Summary:     "Verify WeChat login and issue Sender credentials",
 		Description: "Verifies a fresh WeChat authorization code, maps it to its Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. " +
-			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration. " +
+			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration and updates its deviceName. " +
+			"deviceName is required for every login, trimmed and validated as 1 to 64 Unicode characters; invalid names report 422 validation_failed before any mutation. Older clients must update to supply this field. " +
 			"Failures report 401 wechat_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. " +
 			"Raw M, U and F credentials are returned only to this holder and the response is never cacheable.",
 		Errors: []int{
@@ -60,8 +62,9 @@ func registerWeChatLogin(api huma.API, service *domain.Service) {
 		Security: []map[string][]string{},
 	}, func(ctx context.Context, input *loginInput) (*loginOutput, error) {
 		bundle, err := service.Login(ctx, domain.LoginRequest{
-			Proof:    domain.Proof{Provider: domain.ProviderWeChat, Code: input.Body.WeChatCode},
-			SenderID: input.Body.SenderID,
+			Proof:      domain.Proof{Provider: domain.ProviderWeChat, Code: input.Body.WeChatCode},
+			SenderID:   input.Body.SenderID,
+			DeviceName: input.Body.DeviceName,
 		})
 		if err != nil {
 			return nil, err
@@ -83,7 +86,8 @@ func registerQQLogin(api huma.API, service *domain.Service) {
 		Path:        "/v1/auth/qq",
 		Summary:     "Verify QQ login and issue Sender credentials",
 		Description: "Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. " +
-			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration. " +
+			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration and updates its deviceName. " +
+			"deviceName is required for every login, trimmed and validated as 1 to 64 Unicode characters; invalid names report 422 validation_failed before any mutation. Older clients must update to supply this field. " +
 			"Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. " +
 			"Raw M, U and F credentials are returned only to this holder and the response is never cacheable.",
 		Errors: []int{
@@ -97,8 +101,9 @@ func registerQQLogin(api huma.API, service *domain.Service) {
 		Security: []map[string][]string{},
 	}, func(ctx context.Context, input *qqLoginInput) (*loginOutput, error) {
 		bundle, err := service.Login(ctx, domain.LoginRequest{
-			Proof:    domain.Proof{Provider: domain.ProviderQQ, Code: input.Body.QQCode},
-			SenderID: input.Body.SenderID,
+			Proof:      domain.Proof{Provider: domain.ProviderQQ, Code: input.Body.QQCode},
+			SenderID:   input.Body.SenderID,
+			DeviceName: input.Body.DeviceName,
 		})
 		if err != nil {
 			return nil, err

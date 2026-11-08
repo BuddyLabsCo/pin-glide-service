@@ -159,6 +159,7 @@ export function renderBootstrapSQL(plan) {
     ${escapeSQLString(account.appID)}, ${escapeSQLString(account.openID)}
   )`).join(',\n');
   const senderRows = plan.senders.map(sender => `(
+    'Synthetic Sender',
     ${escapeSQLString(sender.id)}, ${escapeSQLString(sender.accountID)}, 'active'
   )`).join(',\n');
   const credentialRows = plan.senders.flatMap(sender => sender.credentials.map(credential => `(
@@ -182,7 +183,7 @@ INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
 VALUES
 ${accountRows};
 
-INSERT INTO pin_glide.identity_sender_registrations (id, account_id, state)
+INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id, state)
 VALUES
 ${senderRows};
 

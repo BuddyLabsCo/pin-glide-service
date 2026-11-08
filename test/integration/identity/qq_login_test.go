@@ -64,8 +64,8 @@ func TestQQLoginCreatesRestoresAndSeparatesAccounts(t *testing.T) {
 	environment.qq.Accept("qq-foreign", identity.Identity{AppID: "qq-app", OpenID: "openid-foreign"})
 	environment.provider.Accept("wechat-same", identity.Identity{AppID: "qq-app", OpenID: "openid-shared"})
 
-	first := environment.qqLoginOK(t, `{"qqCode":"qq-first"}`)
-	second := environment.qqLoginOK(t, `{"qqCode":"qq-second"}`)
+	first := environment.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"qq-first"}`)
+	second := environment.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"qq-second"}`)
 	if first.AccountID != second.AccountID {
 		t.Errorf("repeated QQ identity produced Accounts %q and %q", first.AccountID, second.AccountID)
 	}
@@ -73,7 +73,7 @@ func TestQQLoginCreatesRestoresAndSeparatesAccounts(t *testing.T) {
 		t.Error("QQ login without senderId reused another installation's Sender")
 	}
 
-	restored := environment.qqLoginOK(t, `{"qqCode":"qq-first","senderId":"`+first.SenderID+`"}`)
+	restored := environment.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"qq-first","senderId":"`+first.SenderID+`"}`)
 	if restored.AccountID != first.AccountID || restored.SenderID != first.SenderID {
 		t.Errorf("QQ restore = %+v, want Account %q and Sender %q",
 			restored, first.AccountID, first.SenderID)
@@ -89,27 +89,27 @@ func TestQQLoginCreatesRestoresAndSeparatesAccounts(t *testing.T) {
 		t.Errorf("the fresh QQ family does not authorize management: %q %v", senderID, err)
 	}
 
-	wechat := environment.loginOK(t, `{"wechatCode":"wechat-same"}`)
+	wechat := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"wechat-same"}`)
 	if wechat.AccountID == first.AccountID {
 		t.Errorf("equal AppID and OpenID across WeChat and QQ merged into Account %q", first.AccountID)
 	}
 
-	environment.qqLoginFails(t, `{"qqCode":"qq-foreign","senderId":"`+first.SenderID+`"}`,
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-foreign","senderId":"`+first.SenderID+`"}`,
 		http.StatusNotFound, "resource_not_found")
-	environment.qqLoginFails(t, `{"qqCode":"qq-unregistered"}`,
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-unregistered"}`,
 		http.StatusUnauthorized, "qq_authorization_invalid")
 	environment.qq.Fail("qq-broken", identity.ErrIdentityProvider)
-	environment.qqLoginFails(t, `{"qqCode":"qq-broken"}`,
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-broken"}`,
 		http.StatusBadGateway, "identity_provider_error")
-	environment.qqLoginFails(t, `{"qqCode":""}`,
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":""}`,
 		http.StatusUnprocessableEntity, "validation_failed")
 
 	environment.qq.Accept("qq-revoked", identity.Identity{AppID: "qq-app", OpenID: "openid-revoked"})
 	environment.exec(t, `INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
 		VALUES ('account-qq-revoked', 'qq', 'qq-app', 'openid-revoked')`)
-	environment.exec(t, `INSERT INTO pin_glide.identity_sender_registrations (id, account_id, state, revoked_at)
-		VALUES ('sender-qq-revoked', 'account-qq-revoked', 'revoked', now())`)
-	environment.qqLoginFails(t, `{"qqCode":"qq-revoked","senderId":"sender-qq-revoked"}`,
+	environment.exec(t, `INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id, state, revoked_at)
+		VALUES ('Test Sender', 'sender-qq-revoked', 'account-qq-revoked', 'revoked', now())`)
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-revoked","senderId":"sender-qq-revoked"}`,
 		http.StatusConflict, "device_registration_revoked")
 
 	request, err := http.NewRequest(http.MethodGet, environment.service.BaseURL+"/v1/self/receivers", nil)
@@ -147,11 +147,11 @@ func TestQQLoginWorksWithoutCompleteWeChatConfiguration(t *testing.T) {
 			environment.qq = qqProvider
 			qqProvider.Accept("qq-only", identity.Identity{AppID: "qq-app", OpenID: "openid-only"})
 
-			issued := environment.qqLoginOK(t, `{"qqCode":"qq-only"}`)
+			issued := environment.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"qq-only"}`)
 			if issued.AccountID == "" || issued.SenderID == "" {
 				t.Fatalf("QQ-only login issued an incomplete bundle: %+v", issued)
 			}
-			environment.loginFails(t, `{"wechatCode":"wechat-missing"}`,
+			environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"wechat-missing"}`,
 				http.StatusBadGateway)
 		})
 	}
@@ -162,7 +162,7 @@ func TestQQLoginFailureDoesNotIssueIdentity(t *testing.T) {
 	environment := startLogin(t)
 	environment.qq.Fail("qq-invalid", identity.ErrQQAuthorizationInvalid)
 
-	environment.qqLoginFails(t, `{"qqCode":"qq-invalid"}`,
+	environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-invalid"}`,
 		http.StatusUnauthorized, "qq_authorization_invalid")
 	if count := environment.count(t,
 		`SELECT count(*) FROM pin_glide.identity_accounts WHERE provider = 'qq'`); count != 0 {

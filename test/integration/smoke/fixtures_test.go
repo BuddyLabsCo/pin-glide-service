@@ -173,8 +173,8 @@ VALUES ('smoke-integration-fixture-request', 'http', 'GET', 200, 1)`)
 INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
 VALUES ('unrelated-integration-account', 'qq', 'unrelated', 'unrelated')`)
 	execSQL(t, pool, `
-INSERT INTO pin_glide.identity_sender_registrations (id, account_id, state)
-VALUES ('unrelated-integration-sender', 'unrelated-integration-account', 'active')`)
+INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id, state)
+VALUES ('Test Sender', 'unrelated-integration-sender', 'unrelated-integration-account', 'active')`)
 
 	execSQL(t, pool, sql.Cleanup)
 	for _, query := range []string{
