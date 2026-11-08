@@ -46,7 +46,7 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundl
 		}
 	}()
 
-	verified, err := s.verify(ctx, request.Proof)
+	verified, err := s.verify(ctx, request.Proof, true)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -338,7 +338,7 @@ func revokeForReuse(ctx context.Context, tx *sql.Tx, credential model.IdentityCr
 // belongs to. Unknown identities report the same outcome as invisible ones, so
 // a caller cannot confirm whether another Account holds one.
 func (s *Service) AccountFor(ctx context.Context, proof Proof) (string, error) {
-	verified, err := s.verify(ctx, proof)
+	verified, err := s.verify(ctx, proof, false)
 	if err != nil {
 		return "", err
 	}
@@ -354,12 +354,16 @@ func (s *Service) AccountFor(ctx context.Context, proof Proof) (string, error) {
 
 // verify selects the configured provider and rejects an adapter answer that
 // does not belong to the selected provider.
-func (s *Service) verify(ctx context.Context, proof Proof) (Identity, error) {
+func (s *Service) verify(ctx context.Context, proof Proof, login bool) (Identity, error) {
 	provider := s.providers[proof.Provider]
 	if provider == nil || proof.Code == "" {
 		return Identity{}, ErrIdentityProvider
 	}
-	verified, err := provider.Verify(ctx, proof.Code)
+	verify := provider.Verify
+	if provider, ok := provider.(LoginProvider); login && ok {
+		verify = provider.VerifyLogin
+	}
+	verified, err := verify(ctx, proof.Code)
 	if err != nil {
 		return Identity{}, err
 	}

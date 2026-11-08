@@ -53,6 +53,21 @@ type Identity struct {
 	AppID    string
 	OpenID   string
 	UnionID  string
+	Profile  *DisplayProfile
+}
+
+// DisplayProfile is optional provider display data, never identity proof.
+type DisplayProfile struct {
+	Nickname  string
+	AvatarURL string
+}
+
+// AccountProfile is an Account's service identity and optional cached display
+// fields. It contains no provider identity or credentials.
+type AccountProfile struct {
+	AccountID string
+	Nickname  *string
+	AvatarURL *string
 }
 
 // Provider verifies one fresh authorization code. It is the external boundary
@@ -60,6 +75,13 @@ type Identity struct {
 type Provider interface {
 	Kind() ProviderKind
 	Verify(ctx context.Context, code string) (Identity, error)
+}
+
+// LoginProvider optionally retrieves display data using the same verified
+// authorization as login. Other identity proofs use Verify without profiles.
+type LoginProvider interface {
+	Provider
+	VerifyLogin(ctx context.Context, code string) (Identity, error)
 }
 
 // Proof is one provider-selected fresh identity proof.
