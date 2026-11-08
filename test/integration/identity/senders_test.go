@@ -3,6 +3,7 @@
 package identity_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -21,7 +22,7 @@ func TestSenderLoginRejectsInvalidDeviceNames(t *testing.T) {
 	environment.qq.Accept("name-code", identity.Identity{AppID: "app", OpenID: "owner"})
 	environment.provider.Accept("name-code", identity.Identity{AppID: "app", OpenID: "owner"})
 	for _, provider := range []string{"qq", "wechat"} {
-		for _, name := range []string{"", `,"deviceName":null`, `,"deviceName":12`, `,"deviceName":false`, `,"deviceName":{}`, `,"deviceName":[]`, `,"deviceName":""`, `,"deviceName":" \t\n\u3000"`, fmt.Sprintf(`,"deviceName":%q`, strings.Repeat("界", 65))} {
+		for _, name := range []string{"", `,"deviceName":null`, `,"deviceName":12`, `,"deviceName":false`, `,"deviceName":{}`, `,"deviceName":[]`, `,"deviceName":""`, `,"deviceName":" \t\n\u3000"`, `,"deviceName":"Phone\u0000"`, fmt.Sprintf(`,"deviceName":%q`, strings.Repeat("界", 65))} {
 			body := fmt.Sprintf(`{%q:"name-code"%s}`, provider+"Code", name)
 			status, payload, _ := post(t, environment, "/v1/auth/"+provider, body)
 			var failure problem
@@ -35,6 +36,54 @@ func TestSenderLoginRejectsInvalidDeviceNames(t *testing.T) {
 	}
 	if count := environment.count(t, `SELECT (SELECT count(*) FROM pin_glide.identity_sender_registrations) + (SELECT count(*) FROM pin_glide.identity_accounts) + (SELECT count(*) FROM pin_glide.identity_credentials)`); count != 0 {
 		t.Fatalf("invalid names created %d identity rows", count)
+	}
+}
+
+// Reject NUL before consuming login proof, and preserve the restored Sender's
+// name and credentials when PostgreSQL cannot represent the supplied name.
+func TestSenderLoginRejectsNULBeforeProofAndPreservesSender(t *testing.T) {
+	environment := startLogin(t)
+	environment.qq.Accept("name-code", identity.Identity{AppID: "app", OpenID: "owner"})
+	environment.provider.Accept("name-code", identity.Identity{AppID: "app", OpenID: "owner"})
+	for _, provider := range []string{"qq", "wechat"} {
+		status, payload, _ := post(t, environment, "/v1/auth/"+provider,
+			fmt.Sprintf(`{%q:"name-code","deviceName":"Original Sender"}`, provider+"Code"))
+		if status != http.StatusOK {
+			t.Fatalf("%s setup login: %d %s", provider, status, payload)
+		}
+		issued := decodeBundle(t, payload)
+		// An unusable proof makes an accidental provider call observable as 401.
+		for _, request := range []struct{ code, senderID string }{
+			{"name-code", ""},
+			{"name-code", issued.SenderID},
+			{"unregistered-code", ""},
+			{"unregistered-code", issued.SenderID},
+		} {
+			body := fmt.Sprintf(`{%q:%q,"deviceName":"Phone\u0000","senderId":%q}`, provider+"Code", request.code, request.senderID)
+			status, payload, _ := post(t, environment, "/v1/auth/"+provider, body)
+			var failure problem
+			if err := json.Unmarshal(payload, &failure); err != nil {
+				t.Fatal(err)
+			}
+			if status != http.StatusUnprocessableEntity || failure.Code != "validation_failed" {
+				t.Errorf("%s NUL name, code=%s, senderId=%s: status=%d code=%s, want 422 validation_failed", provider, request.code, request.senderID, status, failure.Code)
+			}
+		}
+		status, inventory := environment.senderInventory(t, issued.UserSession.Token)
+		items, _ := inventory["items"].([]any)
+		if status != http.StatusOK || len(items) != 1 || items[0].(map[string]any)["senderId"] != issued.SenderID || items[0].(map[string]any)["deviceName"] != "Original Sender" {
+			t.Fatalf("%s invalid login changed Sender inventory: %d %v", provider, status, inventory)
+		}
+		credentials := identity.NewService(environment.pool)
+		for scope, token := range map[identity.Scope]string{
+			identity.ScopeUserSession: issued.UserSession.Token,
+			identity.ScopeUploader:    issued.Uploader.Token,
+			identity.ScopeRefresh:     issued.Refresh.Token,
+		} {
+			if senderID, err := credentials.Authenticate(context.Background(), token, scope); err != nil || senderID != issued.SenderID {
+				t.Errorf("%s invalid login changed %s: senderId=%s err=%v", provider, scope, senderID, err)
+			}
+		}
 	}
 }
 

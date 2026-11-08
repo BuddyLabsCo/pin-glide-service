@@ -41,7 +41,8 @@ func NewService(pool *sql.DB, providers ...Provider) *Service {
 // provider never holds a database transaction.
 func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundle, err error) {
 	request.DeviceName = strings.TrimSpace(request.DeviceName)
-	if request.DeviceName == "" || !utf8.ValidString(request.DeviceName) || utf8.RuneCountInString(request.DeviceName) > 64 {
+	if request.DeviceName == "" || strings.ContainsRune(request.DeviceName, '\x00') ||
+		!utf8.ValidString(request.DeviceName) || utf8.RuneCountInString(request.DeviceName) > 64 {
 		return Bundle{}, ErrDeviceNameInvalid
 	}
 
