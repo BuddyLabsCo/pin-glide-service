@@ -388,8 +388,8 @@ INSERT INTO pin_glide.identity_accounts
     (id, provider, app_id, open_id)
 VALUES ('account-retention', 'wechat', 'wx-app', 'openid-retention')`)
 	e.exec(t, `
-INSERT INTO pin_glide.identity_sender_registrations (id, account_id)
-VALUES ('sender-retention', 'account-retention')`)
+INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id)
+VALUES ('Test Sender', 'sender-retention', 'account-retention')`)
 	e.exec(t, `
 INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
 VALUES ('receiver-retention', 'account-retention', 'active')`)

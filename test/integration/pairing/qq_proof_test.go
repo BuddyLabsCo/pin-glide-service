@@ -14,7 +14,7 @@ func (e *environment) qqSender(t *testing.T, code, openID string) bundle {
 	t.Helper()
 
 	e.qq.Accept(code, identity.Identity{AppID: "qq-app", OpenID: openID})
-	status, payload := e.post(t, "/v1/auth/qq", `{"qqCode":"`+code+`"}`, "")
+	status, payload := e.post(t, "/v1/auth/qq", `{"deviceName":"Test Sender","qqCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
 		t.Fatalf("QQ login status = %d: %s", status, payload)
 	}

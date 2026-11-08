@@ -151,7 +151,7 @@ func (e *environment) sender(t *testing.T, code, openID string) bundle {
 	e.provider.Accept(code, identity.Identity{AppID: "wx-app", OpenID: openID})
 
 	status, payload := e.request(t, http.MethodPost, "/v1/auth/wechat",
-		`{"wechatCode":"`+code+`"}`, "")
+		`{"deviceName":"Test Sender","wechatCode":"`+code+`"}`, "")
 	if status != http.StatusOK {
 		t.Fatalf("login status = %d: %s", status, payload)
 	}
@@ -310,7 +310,7 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	// record is the status alone, and the answer to it must not echo the body
 	// the caller sent.
 	status, malformedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
-		`{"wechatCode":"`+wechatCodeCanary+`"`, "")
+		`{"deviceName":"Test Sender","wechatCode":"`+wechatCodeCanary+`"`, "")
 	if status != http.StatusBadRequest {
 		t.Fatalf("malformed login status = %d, want %d", status, http.StatusBadRequest)
 	}
@@ -322,7 +322,7 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	// An authorization the provider cannot verify, carrying the synthetic code
 	// and OTP this test must never see again.
 	status, rejectedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
-		`{"wechatCode":"`+wechatCodeCanary+`"}`, "")
+		`{"deviceName":"Test Sender","wechatCode":"`+wechatCodeCanary+`"}`, "")
 	if status != http.StatusUnauthorized {
 		t.Fatalf("rejected login status = %d: %s", status, rejectedPayload)
 	}
@@ -336,7 +336,7 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	environment.provider.Fail(canaryCode, fmt.Errorf("%w: %s provider outage",
 		identity.ErrIdentityProvider, providerCanary))
 	status, failedPayload := environment.request(t, http.MethodPost, "/v1/auth/wechat",
-		`{"wechatCode":"`+canaryCode+`"}`, "")
+		`{"deviceName":"Test Sender","wechatCode":"`+canaryCode+`"}`, "")
 	if status != http.StatusBadGateway {
 		t.Fatalf("provider-failure status = %d: %s", status, failedPayload)
 	}
@@ -348,14 +348,14 @@ func TestHTTPDiagnosticsCarryOnlySafeOutcomes(t *testing.T) {
 	// QQ uses the same safe diagnostics mapping for a rejected code and a
 	// provider failure.
 	status, rejectedQQPayload := environment.request(t, http.MethodPost, "/v1/auth/qq",
-		`{"qqCode":"`+qqCodeCanary+`"}`, "")
+		`{"deviceName":"Test Sender","qqCode":"`+qqCodeCanary+`"}`, "")
 	if status != http.StatusUnauthorized {
 		t.Fatalf("rejected QQ login status = %d: %s", status, rejectedQQPayload)
 	}
 	environment.qq.Fail(canaryCode, fmt.Errorf("%w: %s QQ provider outage",
 		identity.ErrIdentityProvider, providerCanary))
 	status, failedQQPayload := environment.request(t, http.MethodPost, "/v1/auth/qq",
-		`{"qqCode":"`+canaryCode+`"}`, "")
+		`{"deviceName":"Test Sender","qqCode":"`+canaryCode+`"}`, "")
 	if status != http.StatusBadGateway {
 		t.Fatalf("QQ provider-failure status = %d: %s", status, failedQQPayload)
 	}

@@ -18,11 +18,12 @@ type identitySenderRegistrationsTable struct {
 	postgres.Table
 
 	// Columns
-	ID        postgres.ColumnString     // Sender deviceId assigned by the service; reinstallation creates a new one.
-	AccountID postgres.ColumnString     // Owning Account; a Sender belongs to exactly one Account.
-	State     postgres.ColumnString     // Active registrations accept login restoration; revoked ones never do.
-	CreatedAt postgres.ColumnTimestampz // When the installation registration was first created.
-	RevokedAt postgres.ColumnTimestampz // When owner security revocation permanently closed the registration.
+	ID         postgres.ColumnString     // Sender deviceId assigned by the service; reinstallation creates a new one.
+	AccountID  postgres.ColumnString     // Owning Account; a Sender belongs to exactly one Account.
+	DeviceName postgres.ColumnString     // Client-supplied name, 1 to 64 Unicode characters; not identity proof.
+	State      postgres.ColumnString     // Active registrations accept login restoration; revoked ones never do.
+	CreatedAt  postgres.ColumnTimestampz // When the installation registration was first created.
+	RevokedAt  postgres.ColumnTimestampz // When owner security revocation permanently closed the registration.
 
 	AllColumns     postgres.ColumnList
 	MutableColumns postgres.ColumnList
@@ -64,25 +65,27 @@ func newIdentitySenderRegistrationsTable(schemaName, tableName, alias string) *I
 
 func newIdentitySenderRegistrationsTableImpl(schemaName, tableName, alias string) identitySenderRegistrationsTable {
 	var (
-		IDColumn        = postgres.StringColumn("id")
-		AccountIDColumn = postgres.StringColumn("account_id")
-		StateColumn     = postgres.StringColumn("state")
-		CreatedAtColumn = postgres.TimestampzColumn("created_at")
-		RevokedAtColumn = postgres.TimestampzColumn("revoked_at")
-		allColumns      = postgres.ColumnList{IDColumn, AccountIDColumn, StateColumn, CreatedAtColumn, RevokedAtColumn}
-		mutableColumns  = postgres.ColumnList{AccountIDColumn, StateColumn, CreatedAtColumn, RevokedAtColumn}
-		defaultColumns  = postgres.ColumnList{StateColumn, CreatedAtColumn}
+		IDColumn         = postgres.StringColumn("id")
+		AccountIDColumn  = postgres.StringColumn("account_id")
+		DeviceNameColumn = postgres.StringColumn("device_name")
+		StateColumn      = postgres.StringColumn("state")
+		CreatedAtColumn  = postgres.TimestampzColumn("created_at")
+		RevokedAtColumn  = postgres.TimestampzColumn("revoked_at")
+		allColumns       = postgres.ColumnList{IDColumn, AccountIDColumn, DeviceNameColumn, StateColumn, CreatedAtColumn, RevokedAtColumn}
+		mutableColumns   = postgres.ColumnList{AccountIDColumn, DeviceNameColumn, StateColumn, CreatedAtColumn, RevokedAtColumn}
+		defaultColumns   = postgres.ColumnList{StateColumn, CreatedAtColumn}
 	)
 
 	return identitySenderRegistrationsTable{
 		Table: postgres.NewTable(schemaName, tableName, alias, allColumns...),
 
 		//Columns
-		ID:        IDColumn,
-		AccountID: AccountIDColumn,
-		State:     StateColumn,
-		CreatedAt: CreatedAtColumn,
-		RevokedAt: RevokedAtColumn,
+		ID:         IDColumn,
+		AccountID:  AccountIDColumn,
+		DeviceName: DeviceNameColumn,
+		State:      StateColumn,
+		CreatedAt:  CreatedAtColumn,
+		RevokedAt:  RevokedAtColumn,
 
 		AllColumns:     allColumns,
 		MutableColumns: mutableColumns,

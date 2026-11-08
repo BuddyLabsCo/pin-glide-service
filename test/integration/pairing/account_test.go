@@ -47,7 +47,7 @@ func TestAccountLookupPreservesReceiverGrantAndPairings(t *testing.T) {
 
 	e.qq.Accept("update", identity.Identity{AppID: "qq-app", OpenID: "owner",
 		Profile: &identity.DisplayProfile{Nickname: "New name", AvatarURL: "https://qq.example/new"}})
-	status, payload = e.post(t, "/v1/auth/qq", `{"qqCode":"update","senderId":"`+owner.SenderID+`"}`, "")
+	status, payload = e.post(t, "/v1/auth/qq", `{"deviceName":"Test Sender","qqCode":"update","senderId":"`+owner.SenderID+`"}`, "")
 	if status != http.StatusOK {
 		t.Fatalf("restore = %d: %s", status, payload)
 	}

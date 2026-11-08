@@ -16,7 +16,7 @@ import (
 func TestSenderCredentialsEnforceScopeAndValidity(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-scope", identity.Identity{AppID: "wx-app", OpenID: "openid-scope"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-scope"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-scope"}`)
 
 	credentials := identity.NewService(environment.pool, nil)
 	ctx := context.Background()

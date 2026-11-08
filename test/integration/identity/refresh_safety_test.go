@@ -65,7 +65,7 @@ func concurrentPost(environment *loginEnvironment, path, body, bearer string) (i
 func TestRefreshConcurrentAttemptsCommitOnce(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-concurrent", identity.Identity{AppID: "wx-app", OpenID: "openid-concurrent"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-concurrent"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-concurrent"}`)
 
 	const attempted = 2
 	statuses := make([]int, attempted)
@@ -123,13 +123,13 @@ func TestRefreshConcurrentAttemptsCommitOnce(t *testing.T) {
 func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-family", identity.Identity{AppID: "wx-app", OpenID: "openid-family"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-family"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-family"}`)
 	replaced := refreshOK(t, environment, issued.Refresh.Token, "operation-old", 0)
 
 	// A fresh login restoring the same Sender replaces that family. The
 	// delayed retransmission of the old operation then presents a revoked
 	// token: it authorizes nothing and revokes nothing.
-	authenticated := environment.loginOK(t, `{"wechatCode":"code-family","senderId":"`+issued.SenderID+`"}`)
+	authenticated := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-family","senderId":"`+issued.SenderID+`"}`)
 	refreshFails(t, environment, issued.Refresh.Token, "operation-old", 1,
 		http.StatusUnauthorized, "credential_revoked")
 	refreshFails(t, environment, replaced.Refresh.Token, "operation-replaced", 0,
@@ -138,7 +138,7 @@ func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 
 	// A renewal racing a fresh login serializes on the Sender, so only the
 	// authenticated family authorizes afterwards either way.
-	racing := environment.loginOK(t, `{"wechatCode":"code-family"}`)
+	racing := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-family"}`)
 	var wait sync.WaitGroup
 	var renewedStatus int
 	var renewedPayload []byte
@@ -154,7 +154,7 @@ func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		status, payload, err := concurrentLogin(environment,
-			`{"wechatCode":"code-family","senderId":"`+racing.SenderID+`"}`)
+			`{"deviceName":"Test Sender","wechatCode":"code-family","senderId":"`+racing.SenderID+`"}`)
 		loginPayload = payload
 		switch {
 		case err != nil:
@@ -203,7 +203,7 @@ func TestRefreshCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 func TestRefreshRollsBackIssuanceWhenStorageFails(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-storage", identity.Identity{AppID: "wx-app", OpenID: "openid-storage"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-storage"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-storage"}`)
 
 	environment.exec(t, `CREATE FUNCTION pin_glide.identity_credentials_test_reject() RETURNS trigger
 		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected credential storage failure'; END $$`)
@@ -228,7 +228,7 @@ func TestRefreshKeepsCredentialsOutOfDiagnostics(t *testing.T) {
 	var diagnostics bytes.Buffer
 	environment := startLoginWith(t, observability.NewLogger(&diagnostics, "integration"))
 	environment.provider.Accept("code-diagnostics", identity.Identity{AppID: "wx-app", OpenID: "openid-diagnostics"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-diagnostics"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-diagnostics"}`)
 	rotated := refreshOK(t, environment, issued.Refresh.Token, "operation-diagnostics", 0)
 
 	logs := diagnostics.String()

@@ -310,6 +310,7 @@ var businessOutcomes = []struct {
 	{identity.ErrOperationSuperseded, protocol.OperationSuperseded},
 	{identity.ErrOperationMismatch, protocol.OperationMismatch},
 	{identity.ErrAttemptUnsupported, protocol.ValidationFailed},
+	{identity.ErrDeviceNameInvalid, protocol.ValidationFailed},
 	{identity.ErrStorageUnavailable, protocol.ServiceUnavailable},
 	{model.ErrConfigurationUnavailable, protocol.ModelConfigurationUnavailable},
 	{model.ErrProvider, protocol.ModelProviderError},

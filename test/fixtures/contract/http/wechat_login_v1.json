@@ -4,8 +4,8 @@
   "method": "post",
   "request": {
     "schema": "WeChatLoginRequest",
-    "required": ["wechatCode"],
-    "properties": ["senderId", "wechatCode"]
+    "required": ["deviceName", "wechatCode"],
+    "properties": ["deviceName", "senderId", "wechatCode"]
   },
   "success": {
     "schema": "CredentialBundle",

@@ -13,9 +13,10 @@ import (
 
 // Configuration Data: Sender registrations and their security revocation.
 type IdentitySenderRegistrations struct {
-	ID        string                          `sql:"primary_key"` // Sender deviceId assigned by the service; reinstallation creates a new one.
-	AccountID string                          // Owning Account; a Sender belongs to exactly one Account.
-	State     IdentitySenderRegistrationState // Active registrations accept login restoration; revoked ones never do.
-	CreatedAt time.Time                       // When the installation registration was first created.
-	RevokedAt *time.Time                      // When owner security revocation permanently closed the registration.
+	ID         string                          `sql:"primary_key"` // Sender deviceId assigned by the service; reinstallation creates a new one.
+	AccountID  string                          // Owning Account; a Sender belongs to exactly one Account.
+	DeviceName string                          // Client-supplied name, 1 to 64 Unicode characters; not identity proof.
+	State      IdentitySenderRegistrationState // Active registrations accept login restoration; revoked ones never do.
+	CreatedAt  time.Time                       // When the installation registration was first created.
+	RevokedAt  *time.Time                      // When owner security revocation permanently closed the registration.
 }

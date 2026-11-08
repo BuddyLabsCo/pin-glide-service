@@ -17,6 +17,7 @@ var v1Inventory = []string{
 	"GET /v1/messages/{messageId}",
 	"GET /v1/self/account",
 	"GET /v1/self/receivers",
+	"GET /v1/self/senders",
 	"PATCH /v1/self/pairings/{id}",
 	"DELETE /v1/self/pairings/{id}",
 	"DELETE /v1/pairing-sessions/{id}",

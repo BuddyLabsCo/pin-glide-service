@@ -74,6 +74,7 @@ type problem struct {
 // loginEnvironment is one composed service with its disposable database and
 // faked WeChat and QQ boundaries.
 type loginEnvironment struct {
+	postgres *harness.Postgres
 	service  *harness.Service
 	provider *wechatfake.Fake
 	qq       *qqfake.Fake
@@ -114,8 +115,8 @@ func startLoginWithProviders(t *testing.T, logger *slog.Logger, providers ...ide
 	t.Cleanup(func() { _ = pool.Close() })
 
 	return &loginEnvironment{
-		service: harness.StartProvidersLogging(t, postgres.DSN, providers, nil, logger),
-		pool:    pool,
+		postgres: postgres, service: harness.StartProvidersLogging(t, postgres.DSN, providers, nil, logger),
+		pool: pool,
 	}
 }
 
@@ -217,12 +218,12 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	environment.provider.Fail("code-broken", identity.ErrIdentityProvider)
 
 	// A login without a saved Sender ID registers this installation.
-	first := environment.loginOK(t, `{"wechatCode":"code-first"}`)
+	first := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-first"}`)
 	assertIssuedFamily(t, first, time.Now().UTC())
 
 	// The same Account logging in from another installation gets its own
 	// Sender ID, not the first one.
-	second := environment.loginOK(t, `{"wechatCode":"code-second"}`)
+	second := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-second"}`)
 	if second.AccountID != first.AccountID {
 		t.Errorf("Account mapping: second login account = %q, want %q", second.AccountID, first.AccountID)
 	}
@@ -232,7 +233,7 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 
 	// A fresh same-Account login restoring the saved ID replaces that Sender's
 	// credential family: the delayed old family cannot authorize afterwards.
-	restored := environment.loginOK(t, `{"wechatCode":"code-first","senderId":"`+first.SenderID+`"}`)
+	restored := environment.loginOK(t, `{"deviceName":"  Restored Sender  ","wechatCode":"code-first","senderId":"`+first.SenderID+`"}`)
 	if restored.AccountID != first.AccountID || restored.SenderID != first.SenderID {
 		t.Errorf("restore = %+v, want account %q and sender %q", restored, first.AccountID, first.SenderID)
 	}
@@ -247,18 +248,37 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 		t.Errorf("the fresh family does not authorize management: %q %v", senderID, err)
 	}
 
+	status, inventory := environment.senderInventory(t, restored.UserSession.Token)
+	if status != http.StatusOK {
+		t.Fatalf("WeChat inventory: %d %v", status, inventory)
+	}
+	items, _ := inventory["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("WeChat inventory: %v", inventory)
+	}
+	for _, value := range items {
+		item := value.(map[string]any)
+		expected := "Test Sender"
+		if item["senderId"] == first.SenderID {
+			expected = "Restored Sender"
+		}
+		if item["deviceName"] != expected {
+			t.Errorf("WeChat Sender name = %v, want %s", item, expected)
+		}
+	}
+
 	// Another Account cannot see or take over the registration, and an unknown
 	// ID stays resource_not_found.
-	environment.loginFails(t, `{"wechatCode":"code-other","senderId":"`+first.SenderID+`"}`, http.StatusNotFound)
-	environment.loginFails(t, `{"wechatCode":"code-first","senderId":"sender-that-never-existed"}`, http.StatusNotFound)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-other","senderId":"`+first.SenderID+`"}`, http.StatusNotFound)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-first","senderId":"sender-that-never-existed"}`, http.StatusNotFound)
 
 	// An owned, permanently security-revoked registration is refused and
 	// never recreated.
 	environment.exec(t, `INSERT INTO pin_glide.identity_accounts (id, provider, app_id, open_id)
 		VALUES ('account-revoked', 'wechat', 'wx-app', 'openid-revoked')`)
-	environment.exec(t, `INSERT INTO pin_glide.identity_sender_registrations (id, account_id, state, revoked_at)
-		VALUES ('sender-revoked', 'account-revoked', 'revoked', now())`)
-	environment.loginFails(t, `{"wechatCode":"code-revoked","senderId":"sender-revoked"}`, http.StatusConflict)
+	environment.exec(t, `INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id, state, revoked_at)
+		VALUES ('Test Sender', 'sender-revoked', 'account-revoked', 'revoked', now())`)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-revoked","senderId":"sender-revoked"}`, http.StatusConflict)
 	if count := environment.count(t, `SELECT count(*) FROM pin_glide.identity_sender_registrations WHERE account_id = 'account-revoked'`); count != 1 {
 		t.Errorf("revoked registration was recreated: %d rows", count)
 	}
@@ -266,19 +286,19 @@ func TestWeChatLoginRegistersAndRestoresSenderInstallations(t *testing.T) {
 	// A shared UnionID never merges Accounts.
 	environment.provider.Accept("code-union-a", identity.Identity{AppID: "wx-app", OpenID: "openid-union-a", UnionID: "union-shared"})
 	environment.provider.Accept("code-union-b", identity.Identity{AppID: "wx-app", OpenID: "openid-union-b", UnionID: "union-shared"})
-	unionA := environment.loginOK(t, `{"wechatCode":"code-union-a"}`)
-	unionB := environment.loginOK(t, `{"wechatCode":"code-union-b"}`)
+	unionA := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-union-a"}`)
+	unionB := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-union-b"}`)
 	if unionA.AccountID == unionB.AccountID {
 		t.Errorf("a shared UnionID merged two Accounts into %q", unionA.AccountID)
 	}
 
 	// Whole-request failures and provider outcomes keep their documented
 	// status and code.
-	environment.loginFails(t, `{"wechatCode":""}`, http.StatusUnprocessableEntity)
-	environment.loginFails(t, `{"senderId":"sender-x"}`, http.StatusUnprocessableEntity)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":""}`, http.StatusUnprocessableEntity)
+	environment.loginFails(t, `{"deviceName":"Test Sender","senderId":"sender-x"}`, http.StatusUnprocessableEntity)
 	environment.loginFails(t, `not json`, http.StatusBadRequest)
-	environment.loginFails(t, `{"wechatCode":"code-that-was-never-issued"}`, http.StatusUnauthorized)
-	environment.loginFails(t, `{"wechatCode":"code-broken"}`, http.StatusBadGateway)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-that-was-never-issued"}`, http.StatusUnauthorized)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-broken"}`, http.StatusBadGateway)
 }
 
 // A configured provider is independent of an absent or incomplete provider pair.
@@ -301,11 +321,11 @@ func TestWeChatLoginWorksWithoutCompleteQQConfiguration(t *testing.T) {
 			environment.provider = provider
 			provider.Accept("wechat-only", identity.Identity{AppID: "wx-app", OpenID: "openid-only"})
 
-			issued := environment.loginOK(t, `{"wechatCode":"wechat-only"}`)
+			issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"wechat-only"}`)
 			if issued.AccountID == "" || issued.SenderID == "" {
 				t.Fatalf("WeChat-only login issued an incomplete bundle: %+v", issued)
 			}
-			environment.qqLoginFails(t, `{"qqCode":"qq-missing"}`,
+			environment.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"qq-missing"}`,
 				http.StatusBadGateway, "identity_provider_error")
 		})
 	}
@@ -326,7 +346,7 @@ func TestWeChatLoginRollsBackWhenCredentialStorageFails(t *testing.T) {
 		BEFORE INSERT ON pin_glide.identity_credentials
 		FOR EACH ROW EXECUTE FUNCTION pin_glide.identity_credentials_test_reject()`)
 
-	environment.loginFails(t, `{"wechatCode":"code-rollback"}`, http.StatusServiceUnavailable)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-rollback"}`, http.StatusServiceUnavailable)
 	if count := environment.count(t, `SELECT count(*) FROM pin_glide.identity_accounts
 		WHERE provider = 'wechat' AND app_id = 'wx-app' AND open_id = 'openid-rollback'`); count != 0 {
 		t.Errorf("failed login left %d Account rows", count)
@@ -337,7 +357,7 @@ func TestWeChatLoginRollsBackWhenCredentialStorageFails(t *testing.T) {
 
 	environment.exec(t, `DROP TRIGGER trg_identity_credentials_test_reject ON pin_glide.identity_credentials`)
 	environment.exec(t, `DROP FUNCTION pin_glide.identity_credentials_test_reject()`)
-	if issued := environment.loginOK(t, `{"wechatCode":"code-rollback"}`); issued.SenderID == "" {
+	if issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-rollback"}`); issued.SenderID == "" {
 		t.Error("the retried login issued no Sender registration")
 	}
 }

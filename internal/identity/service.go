@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BuddyLabsCo/pin-glide-service/internal/db/jetgen/pin_glide/model"
 	"github.com/go-jet/jet/v2/qrm"
@@ -38,6 +40,12 @@ func NewService(pool *sql.DB, providers ...Provider) *Service {
 // credential family. The provider is called first, so a slow or failing
 // provider never holds a database transaction.
 func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundle, err error) {
+	request.DeviceName = strings.TrimSpace(request.DeviceName)
+	if request.DeviceName == "" || strings.ContainsRune(request.DeviceName, '\x00') ||
+		!utf8.ValidString(request.DeviceName) || utf8.RuneCountInString(request.DeviceName) > 64 {
+		return Bundle{}, ErrDeviceNameInvalid
+	}
+
 	// A failure that is not an explicit outcome is storage unavailability:
 	// login cannot complete without PostgreSQL.
 	defer func() {
@@ -66,10 +74,10 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (bundle Bundl
 	senderID := request.SenderID
 	if senderID == "" {
 		senderID = newValue()
-		if err := insertSender(ctx, tx, senderID, accountID); err != nil {
+		if err := insertSender(ctx, tx, senderID, accountID, request.DeviceName); err != nil {
 			return Bundle{}, err
 		}
-	} else if err := restoreSender(ctx, tx, senderID, accountID); err != nil {
+	} else if err := restoreSender(ctx, tx, senderID, accountID, request.DeviceName); err != nil {
 		return Bundle{}, err
 	}
 

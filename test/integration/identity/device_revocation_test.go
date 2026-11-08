@@ -136,8 +136,8 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 	for _, openID := range []string{"revoked", "sharing"} {
 		environment.provider.Accept("code-"+openID, identity.Identity{AppID: "wx-app", OpenID: "openid-" + openID})
 	}
-	revoked := environment.loginOK(t, `{"wechatCode":"code-revoked"}`)
-	sharing := environment.loginOK(t, `{"wechatCode":"code-sharing"}`)
+	revoked := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-revoked"}`)
+	sharing := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-sharing"}`)
 	environment.seedPairing(t, "receiver-revoke", "pairing-revoked", revoked.SenderID)
 	environment.seedPairing(t, "receiver-revoke", "pairing-sharing", sharing.SenderID)
 
@@ -186,7 +186,7 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 		t.Errorf("the revoked registration is not stored as permanently closed: %d rows", closed)
 	}
 	environment.provider.Accept("code-revoke-again", identity.Identity{AppID: "wx-app", OpenID: "openid-revoked"})
-	environment.loginFails(t, `{"wechatCode":"code-revoke-again","senderId":"`+revoked.SenderID+`"}`, http.StatusConflict)
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-revoke-again","senderId":"`+revoked.SenderID+`"}`, http.StatusConflict)
 	if recreated := environment.count(t, `SELECT count(*) FROM pin_glide.identity_sender_registrations
 		WHERE account_id = $1`, revoked.AccountID); recreated != 1 {
 		t.Errorf("a refused restore changed the Account's registrations: %d rows", recreated)
@@ -194,7 +194,7 @@ func TestOwnerRevocationClosesOnlyThatSenderRegistration(t *testing.T) {
 
 	// The same Account can still register a new installation, which is the
 	// supported way back from a revocation.
-	registered := environment.loginOK(t, `{"wechatCode":"code-revoke-again"}`)
+	registered := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-revoke-again"}`)
 	if registered.SenderID == revoked.SenderID {
 		t.Errorf("a new registration reused the closed Sender ID %q", revoked.SenderID)
 	}
@@ -219,8 +219,8 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 	environment := startLogin(t)
 	environment.provider.Accept("code-owned", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
 	environment.provider.Accept("code-foreign", identity.Identity{AppID: "wx-app", OpenID: "openid-foreign"})
-	owned := environment.loginOK(t, `{"wechatCode":"code-owned"}`)
-	foreign := environment.loginOK(t, `{"wechatCode":"code-foreign"}`)
+	owned := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-owned"}`)
+	foreign := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-foreign"}`)
 	environment.seedPairing(t, "receiver-owner", "pairing-owner", owned.SenderID)
 
 	environment.provider.Accept("code-owned-again", identity.Identity{AppID: "wx-app", OpenID: "openid-owned"})
@@ -278,7 +278,7 @@ func TestOwnerRevocationRequiresAnOwnedRegistrationAndFreshSameAccountProof(t *t
 func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-revoke-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
-	owned := environment.loginOK(t, `{"wechatCode":"code-revoke-rollback"}`)
+	owned := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-revoke-rollback"}`)
 	environment.seedPairing(t, "receiver-revoke-rollback", "pairing-revoke-rollback", owned.SenderID)
 	environment.provider.Accept("code-revoke-rollback-owner", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
 
@@ -300,7 +300,7 @@ func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 	environment.exec(t, `DROP FUNCTION pin_glide.identity_sender_registrations_test_reject_close()`)
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-revoke-rollback-owner"}`)
 	environment.provider.Accept("code-revoke-rollback-restore", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-rollback"})
-	environment.loginFails(t, `{"wechatCode":"code-revoke-rollback-restore","senderId":"`+owned.SenderID+`"}`,
+	environment.loginFails(t, `{"deviceName":"Test Sender","wechatCode":"code-revoke-rollback-restore","senderId":"`+owned.SenderID+`"}`,
 		http.StatusConflict)
 }
 
@@ -311,7 +311,7 @@ func TestOwnerRevocationRollsBackWhenCleanupCannotCommit(t *testing.T) {
 func TestRevokedSenderCannotActOnItsOwnRegistration(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-revoke-quiet", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
-	owned := environment.loginOK(t, `{"wechatCode":"code-revoke-quiet"}`)
+	owned := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-revoke-quiet"}`)
 	environment.provider.Accept("code-revoke-quiet-owner", identity.Identity{AppID: "wx-app", OpenID: "openid-revoke-quiet"})
 	revokeOK(t, environment, owned.SenderID, owned.UserSession.Token, `{"wechatCode":"code-revoke-quiet-owner"}`)
 
@@ -335,6 +335,7 @@ func TestRevokedSenderCannotActOnItsOwnRegistration(t *testing.T) {
 				bearer string
 			}{
 				{http.MethodGet, "/v1/self/receivers", "", token},
+				{http.MethodGet, "/v1/self/senders", "", token},
 				{http.MethodPost, "/v1/messages", `{"messageId":"revoked-message","items":[]}`, token},
 				{http.MethodGet, "/v1/messages/revoked-message", "", token},
 				{http.MethodPost, "/v1/model/credentials", "", token},

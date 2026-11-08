@@ -18,7 +18,7 @@ func (e *environment) qqSender(t *testing.T, code, openID string) senderBundle {
 	t.Helper()
 
 	e.qq.Accept(code, identity.Identity{AppID: "qq-app", OpenID: openID})
-	return e.login(t, "/v1/auth/qq", fmt.Sprintf(`{"qqCode":%q}`, code))
+	return e.login(t, "/v1/auth/qq", fmt.Sprintf(`{"deviceName":"Test Sender","qqCode":%q}`, code))
 }
 
 // A QQ uploader credential follows the same model-credential path as a WeChat

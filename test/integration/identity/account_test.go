@@ -17,12 +17,12 @@ func TestQQLoginCachesSharedAccountProfile(t *testing.T) {
 	e := startLogin(t)
 	e.qq.Accept("first", identity.Identity{AppID: "qq-app", OpenID: "owner",
 		Profile: &identity.DisplayProfile{Nickname: "First name", AvatarURL: "https://qq.example/first"}})
-	first := e.qqLoginOK(t, `{"qqCode":"first"}`)
+	first := e.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"first"}`)
 	assertOwnAccount(t, e, first.Uploader.Token, first.AccountID, "First name", "https://qq.example/first")
 
 	e.qq.Accept("next", identity.Identity{AppID: "qq-app", OpenID: "owner",
 		Profile: &identity.DisplayProfile{Nickname: "New name", AvatarURL: "https://qq.example/next"}})
-	other := e.qqLoginOK(t, `{"qqCode":"next"}`)
+	other := e.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"next"}`)
 	if other.AccountID != first.AccountID || other.SenderID == first.SenderID {
 		t.Fatalf("second installation = %+v, want same Account and different Sender", other)
 	}
@@ -30,24 +30,24 @@ func TestQQLoginCachesSharedAccountProfile(t *testing.T) {
 
 	e.qq.Accept("restore", identity.Identity{AppID: "qq-app", OpenID: "owner",
 		Profile: &identity.DisplayProfile{Nickname: "Restored name", AvatarURL: "https://qq.example/restored"}})
-	restored := e.qqLoginOK(t, `{"qqCode":"restore","senderId":"`+first.SenderID+`"}`)
+	restored := e.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"restore","senderId":"`+first.SenderID+`"}`)
 	if restored.AccountID != first.AccountID || restored.SenderID != first.SenderID {
 		t.Fatalf("restoration changed identity: %+v", restored)
 	}
 	assertOwnAccount(t, e, other.Uploader.Token, first.AccountID, "Restored name", "https://qq.example/restored")
 	e.qq.Accept("profile-failure", identity.Identity{AppID: "qq-app", OpenID: "owner"})
-	failedProfile := e.qqLoginOK(t, `{"qqCode":"profile-failure"}`)
+	failedProfile := e.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"profile-failure"}`)
 	assertOwnAccount(t, e, failedProfile.Uploader.Token, first.AccountID, "Restored name", "https://qq.example/restored")
 
 	e.qq.Accept("uncached", identity.Identity{AppID: "qq-app", OpenID: "uncached"})
-	uncached := e.qqLoginOK(t, `{"qqCode":"uncached"}`)
+	uncached := e.qqLoginOK(t, `{"deviceName":"Test Sender","qqCode":"uncached"}`)
 	assertOwnAccount(t, e, uncached.Uploader.Token, uncached.AccountID, "", "")
 	e.qq.Fail("denied", identity.ErrQQAuthorizationInvalid)
-	e.qqLoginFails(t, `{"qqCode":"denied"}`, http.StatusUnauthorized, "qq_authorization_invalid")
+	e.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"denied"}`, http.StatusUnauthorized, "qq_authorization_invalid")
 	assertOwnAccount(t, e, failedProfile.Uploader.Token, first.AccountID, "Restored name", "https://qq.example/restored")
 	e.qq.Accept("foreign-restore", identity.Identity{AppID: "qq-app", OpenID: "owner",
 		Profile: &identity.DisplayProfile{Nickname: "Must not commit", AvatarURL: "https://qq.example/wrong"}})
-	e.qqLoginFails(t, `{"qqCode":"foreign-restore","senderId":"`+uncached.SenderID+`"}`, http.StatusNotFound, "resource_not_found")
+	e.qqLoginFails(t, `{"deviceName":"Test Sender","qqCode":"foreign-restore","senderId":"`+uncached.SenderID+`"}`, http.StatusNotFound, "resource_not_found")
 	assertOwnAccount(t, e, failedProfile.Uploader.Token, first.AccountID, "Restored name", "https://qq.example/restored")
 }
 
@@ -56,7 +56,7 @@ func TestQQLoginCachesSharedAccountProfile(t *testing.T) {
 func TestOwnAccountRejectsInvalidSenderAuthority(t *testing.T) {
 	e := startLogin(t)
 	e.provider.Accept("wechat", identity.Identity{AppID: "wx-app", OpenID: "owner"})
-	issued := e.loginOK(t, `{"wechatCode":"wechat"}`)
+	issued := e.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"wechat"}`)
 	assertOwnAccount(t, e, issued.Uploader.Token, issued.AccountID, "", "")
 	for _, test := range []struct{ token, code string }{
 		{"", "credential_missing"}, {"invented", "credential_invalid"},

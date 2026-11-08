@@ -177,10 +177,10 @@ func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 	for _, openID := range []string{"managed", "uploaded", "renewed", "bystander"} {
 		environment.provider.Accept("code-"+openID, identity.Identity{AppID: "wx-app", OpenID: "openid-" + openID})
 	}
-	managed := environment.loginOK(t, `{"wechatCode":"code-managed"}`)
-	uploaded := environment.loginOK(t, `{"wechatCode":"code-uploaded"}`)
-	renewed := environment.loginOK(t, `{"wechatCode":"code-renewed"}`)
-	bystander := environment.loginOK(t, `{"wechatCode":"code-bystander"}`)
+	managed := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-managed"}`)
+	uploaded := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-uploaded"}`)
+	renewed := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-renewed"}`)
+	bystander := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-bystander"}`)
 
 	// Pairing activation arrives in a later slice, so the association is seeded
 	// directly to prove ordinary logout does not remove it.
@@ -225,7 +225,7 @@ func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 		t.Errorf("logout left the Sender %d Pairings, want its seeded one", pairings)
 	}
 	environment.provider.Accept("code-managed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-managed"})
-	restored := environment.loginOK(t, `{"wechatCode":"code-managed-again","senderId":"`+managed.SenderID+`"}`)
+	restored := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-managed-again","senderId":"`+managed.SenderID+`"}`)
 	if restored.SenderID != managed.SenderID {
 		t.Errorf("login restored sender %q, want %q", restored.SenderID, managed.SenderID)
 	}
@@ -236,7 +236,7 @@ func TestLogoutRevokesOnlyThePresentingSendersFamily(t *testing.T) {
 func TestLogoutAcceptsExpiredAccessWithAValidRefreshCredential(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-expired", identity.Identity{AppID: "wx-app", OpenID: "openid-expired"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-expired"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-expired"}`)
 
 	environment.exec(t, `UPDATE pin_glide.identity_credentials
 		SET expires_at = now() - interval '1 second'
@@ -271,8 +271,8 @@ func TestLogoutRejectsConflictingUnknownAndUnusableSources(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-sources", identity.Identity{AppID: "wx-app", OpenID: "openid-sources"})
 	environment.provider.Accept("code-late-expiry", identity.Identity{AppID: "wx-app", OpenID: "openid-late-expiry"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-sources"}`)
-	expiring := environment.loginOK(t, `{"wechatCode":"code-late-expiry"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-sources"}`)
+	expiring := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-late-expiry"}`)
 
 	// Two sources state no single authority, so the request is never guessed at.
 	logoutFails(t, environment, issued.UserSession.Token, logoutRefreshBody(issued.Refresh.Token),
@@ -326,8 +326,8 @@ func TestLogoutSerializesWithRenewal(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-renewal-first", identity.Identity{AppID: "wx-app", OpenID: "openid-renewal-first"})
 	environment.provider.Accept("code-logout-first", identity.Identity{AppID: "wx-app", OpenID: "openid-logout-first"})
-	renewalFirst := environment.loginOK(t, `{"wechatCode":"code-renewal-first"}`)
-	logoutFirst := environment.loginOK(t, `{"wechatCode":"code-logout-first"}`)
+	renewalFirst := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-renewal-first"}`)
+	logoutFirst := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-logout-first"}`)
 
 	// Renewal then logout: the rotated family is the one logout revokes, and the
 	// access credentials ordinary rotation kept valid are revoked with it.
@@ -360,11 +360,11 @@ func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-delayed", identity.Identity{AppID: "wx-app", OpenID: "openid-delayed"})
 	environment.provider.Accept("code-racing", identity.Identity{AppID: "wx-app", OpenID: "openid-racing"})
-	delayed := environment.loginOK(t, `{"wechatCode":"code-delayed"}`)
-	racing := environment.loginOK(t, `{"wechatCode":"code-racing"}`)
+	delayed := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-delayed"}`)
+	racing := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-racing"}`)
 
 	environment.provider.Accept("code-delayed-again", identity.Identity{AppID: "wx-app", OpenID: "openid-delayed"})
-	authenticated := environment.loginOK(t, `{"wechatCode":"code-delayed-again","senderId":"`+delayed.SenderID+`"}`)
+	authenticated := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-delayed-again","senderId":"`+delayed.SenderID+`"}`)
 	logoutFails(t, environment, delayed.UserSession.Token, "", http.StatusUnauthorized, "credential_revoked")
 	logoutFails(t, environment, "", logoutRefreshBody(delayed.Refresh.Token),
 		http.StatusUnauthorized, "credential_revoked")
@@ -387,7 +387,7 @@ func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		status, payload, err := concurrentLogin(environment,
-			`{"wechatCode":"code-racing","senderId":"`+racing.SenderID+`"}`)
+			`{"deviceName":"Test Sender","wechatCode":"code-racing","senderId":"`+racing.SenderID+`"}`)
 		loginPayload = payload
 		switch {
 		case err != nil:
@@ -433,7 +433,7 @@ func TestLogoutCannotDisturbAFreshlyAuthenticatedFamily(t *testing.T) {
 func TestLogoutRollsBackWhenRevocationDoesNotCommit(t *testing.T) {
 	environment := startLogin(t)
 	environment.provider.Accept("code-rollback", identity.Identity{AppID: "wx-app", OpenID: "openid-rollback"})
-	issued := environment.loginOK(t, `{"wechatCode":"code-rollback"}`)
+	issued := environment.loginOK(t, `{"deviceName":"Test Sender","wechatCode":"code-rollback"}`)
 
 	environment.exec(t, `CREATE FUNCTION pin_glide.identity_credentials_test_reject_revocation() RETURNS trigger
 		LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected credential revocation failure'; END $$`)

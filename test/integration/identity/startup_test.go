@@ -149,9 +149,9 @@ func assertUnavailableProof(t *testing.T, address string, pool *sql.DB, provider
 	var path, body string
 	switch provider {
 	case identity.ProviderWeChat:
-		path, body = "/v1/auth/wechat", `{"wechatCode":"unconfigured-provider"}`
+		path, body = "/v1/auth/wechat", `{"deviceName":"Test Sender","wechatCode":"unconfigured-provider"}`
 	case identity.ProviderQQ:
-		path, body = "/v1/auth/qq", `{"qqCode":"unconfigured-provider"}`
+		path, body = "/v1/auth/qq", `{"deviceName":"Test Sender","qqCode":"unconfigured-provider"}`
 	default:
 		t.Fatalf("unknown unavailable provider %q", provider)
 	}

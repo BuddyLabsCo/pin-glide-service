@@ -51,6 +51,8 @@ This pulls both release images, starts PostgreSQL, runs the migration, starts th
 
 ## Upgrade or redeploy
 
+Before the first upgrade containing issue #109, [prepare explicit Sender device names](../../docs/upgrades/issue-109-sender-names.md) and update Sender clients. Keep application writers stopped through backfill and migration. Unprepared registrations stop the upgrade; the service does not invent names.
+
 Copy the new `docker-compose.yml` and `install.sh` into the deployment directory, keeping `.env`:
 
 ```sh

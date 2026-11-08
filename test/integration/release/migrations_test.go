@@ -299,8 +299,8 @@ func TestIdentityProviderAccountUpgrade(t *testing.T) {
 	sqlExec(`INSERT INTO pin_glide.identity_accounts
 		(id, wechat_app_id, wechat_open_id, wechat_union_id)
 		VALUES ('legacy-account', 'shared-app', 'shared-openid', 'legacy-union')`)
-	sqlExec(`INSERT INTO pin_glide.identity_sender_registrations (id, account_id)
-		VALUES ('legacy-sender', 'legacy-account')`)
+	sqlExec(`INSERT INTO pin_glide.identity_sender_registrations (device_name, id, account_id)
+		VALUES ('Test Sender', 'legacy-sender', 'legacy-account')`)
 	sqlExec(`INSERT INTO pin_glide.identity_receiver_registrations (id, account_id, state)
 		VALUES ('legacy-receiver', 'legacy-account', 'active')`)
 	sqlExec(`INSERT INTO pin_glide.identity_credentials

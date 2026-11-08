@@ -297,10 +297,11 @@ Common response objects:
 
 | Operation | Request | Success |
 | --- | --- | --- |
-| POST /v1/auth/wechat | wechatCode; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
-| POST /v1/auth/qq | qqCode; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
+| POST /v1/auth/wechat | wechatCode, required deviceName; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
+| POST /v1/auth/qq | qqCode, required deviceName; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
 | POST /v1/auth/refresh | refreshToken, operationId, attempt (0 or 1) | 200 CredentialBundle plus the accepted operationId and attempt |
 | POST /v1/auth/logout | Optional mode: logout or switch_account, default logout; refreshToken when using F | 204; logout revokes the current Sender's credentials and preserves Pairings; switch_account also removes its Pairings and requires M management authority |
+| GET /v1/self/senders | No body; current Sender M | 200 {items: SenderRegistration[]}; complete Account inventory of unrevoked Senders, including self and logged-out registrations |
 | GET /v1/self/account | No body or Account selector | 200 AccountProfile; 401 credential_missing/credential_invalid/credential_expired, 409 device_registration_revoked for a revoked Sender, 503 service_unavailable |
 | GET /v1/self/receivers | No body | 200 {items: ReceiverAssociation[]} |
 | PATCH /v1/self/pairings/{id} | alias string | 200 ReceiverAssociation with the updated own alias |
@@ -583,3 +584,13 @@ Shared-boundary checkpoint: the current client maps contain no approved conflict
 Adoption: the user approved the complete v1 route/schema/crypto framing in [the functional resolution](https://github.com/BuddyLabsCo/pin-glide-service/issues/2#issuecomment-6080960446). Client context pointers carry that shared contract into their local HITL discussions. Provider support for the selected settings is documented; actual account permissions, temporary-key/Workspace-endpoint use and inference remain integration checks. Local client behavior remains with its owners; completed client specifications and runtime interoperability are not claimed.
 
 S18-S20 code structure, static enforcement and persistence-evolution policy belong to the separate architecture child and its required root-level code-architecture.md. Do not implement or silently decide those here.
+
+## Sender names and Account inventory
+
+Sender login requires a client-supplied deviceName on both creation and restoration. Trim Unicode whitespace, require 1 to 64 Unicode characters, and persist the trimmed value. Invalid input reports 422 validation_failed without mutation. Same-Account restoration updates the name while preserving identity and Pairings; names may repeat and never establish authority. Renewal and owner-proof bodies are unchanged.
+
+GET /v1/self/senders requires current Sender M and resolves the Account from that credential. Return all unrevoked registrations, including self and ordinary-logged-out Senders, ordered by createdAt descending and senderId ascending. Each item contains only senderId, deviceName, state (active), createdAt (RFC 3339 UTC) and revokedAt (null). No caller-selected Account, paging, filters or presence fields are supported. U, R, F and restricted Pairing credentials are rejected. Use the existing 401, 409 device_registration_revoked and 503 service_unavailable conventions.
+
+After successful reload for the same Account, absence of a selected Sender confirms revocation; a remaining target can be retried using the existing permanent-revocation endpoint with fresh owner proof. A failed list request establishes neither outcome.
+
+This contract intentionally requires updated clients and a release containing issue #109; v1.0.1 does not contain it. Existing deployments must follow the [explicit name-backfill and verification procedure](../upgrades/issue-109-sender-names.md) before enabling the database constraint.
