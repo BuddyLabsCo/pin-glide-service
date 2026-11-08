@@ -18,6 +18,7 @@ const TagIdentity = "identity"
 // returns the domain's typed outcome; the shared HTTP error model maps it to
 // the stable business code the published contract defines.
 func Register(api huma.API, service *domain.Service, devices DeviceRevocation) {
+	registerOwnAccount(api, service)
 	registerWeChatLogin(api, service)
 	registerQQLogin(api, service)
 	registerRefresh(api, service)
@@ -88,6 +89,7 @@ func registerQQLogin(api huma.API, service *domain.Service) {
 		Description: "Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. " +
 			"Omitting senderId registers a new Sender; supplying one restores only an owned active registration and updates its deviceName. " +
 			"deviceName is required for every login, trimmed and validated as 1 to 64 Unicode characters; invalid names report 422 validation_failed before any mutation. Older clients must update to supply this field. " +
+			"Uses the exchanged token to cache authorized nickname and QQ avatar data for GET /v1/self/account. The mobile SDK authorization must include profile access (get_simple_userinfo), and the configured AppID and user must permit get_user_info. Profile-fetch failure preserves known values and does not fail login; an uncached Account has null display fields. Provider tokens are never persisted. " +
 			"Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. " +
 			"Raw M, U and F credentials are returned only to this holder and the response is never cacheable.",
 		Errors: []int{

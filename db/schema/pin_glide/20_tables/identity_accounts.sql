@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS pin_glide.identity_accounts (
     app_id text NOT NULL,
     open_id text NOT NULL,
     union_id text,
+    nickname text,
+    avatar_url text,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT pk_identity_accounts PRIMARY KEY (id),
     CONSTRAINT chk_identity_accounts_provider CHECK (
@@ -27,5 +29,9 @@ COMMENT ON COLUMN pin_glide.identity_accounts.open_id
 IS 'Provider-verified OpenID within its provider application namespace.';
 COMMENT ON COLUMN pin_glide.identity_accounts.union_id
 IS 'Optional provider UnionID, recorded only; it never merges Accounts.';
+COMMENT ON COLUMN pin_glide.identity_accounts.nickname
+IS 'Cached display nickname from successful QQ login; NULL if unavailable.';
+COMMENT ON COLUMN pin_glide.identity_accounts.avatar_url
+IS 'Cached QQ avatar URL from successful login; NULL if unavailable.';
 COMMENT ON COLUMN pin_glide.identity_accounts.created_at
 IS 'When the Account was first created.';

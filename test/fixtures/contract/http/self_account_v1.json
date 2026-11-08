@@ -1,0 +1,17 @@
+{
+  "operationId": "GetSelfAccount",
+  "path": "/v1/self/account",
+  "method": "get",
+  "success": {
+    "schema": "AccountProfile",
+    "status": "200",
+    "required": ["accountId", "avatarUrl", "nickname"]
+  },
+  "nullable": ["avatarUrl", "nickname"],
+  "errors": {
+    "401": ["credential_missing", "credential_invalid", "credential_expired"],
+    "409": ["device_registration_revoked"],
+    "500": ["internal_error"],
+    "503": ["service_unavailable"]
+  }
+}

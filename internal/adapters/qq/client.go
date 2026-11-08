@@ -16,30 +16,33 @@ import (
 )
 
 const (
-	tokenEndpoint  = "https://graph.qq.com/oauth2.0/token"
-	openIDEndpoint = "https://graph.qq.com/oauth2.0/me"
-	timeout        = 10 * time.Second
-	maxBodyBytes   = 64 << 10
+	tokenEndpoint   = "https://graph.qq.com/oauth2.0/token"
+	openIDEndpoint  = "https://graph.qq.com/oauth2.0/me"
+	profileEndpoint = "https://graph.qq.com/user/get_user_info"
+	timeout         = 10 * time.Second
+	maxBodyBytes    = 64 << 10
 )
 
 // Client verifies authorization codes for one configured QQ mobile
 // application.
 type Client struct {
-	appID          string
-	appKey         string
-	httpClient     *http.Client
-	tokenEndpoint  string
-	openIDEndpoint string
+	appID           string
+	appKey          string
+	httpClient      *http.Client
+	tokenEndpoint   string
+	openIDEndpoint  string
+	profileEndpoint string
 }
 
 // New returns the client for the configured QQ mobile application.
 func New(appID, appKey string) *Client {
 	return &Client{
-		appID:          appID,
-		appKey:         appKey,
-		httpClient:     &http.Client{Timeout: timeout},
-		tokenEndpoint:  tokenEndpoint,
-		openIDEndpoint: openIDEndpoint,
+		appID:           appID,
+		appKey:          appKey,
+		httpClient:      &http.Client{Timeout: timeout},
+		tokenEndpoint:   tokenEndpoint,
+		openIDEndpoint:  openIDEndpoint,
+		profileEndpoint: profileEndpoint,
 	}
 }
 
@@ -51,6 +54,15 @@ func (c *Client) Kind() identity.ProviderKind {
 // Verify exchanges one authorization code, resolves its OpenID and checks that
 // the provider bound it to this configured application.
 func (c *Client) Verify(ctx context.Context, code string) (identity.Identity, error) {
+	return c.verify(ctx, code, false)
+}
+
+// VerifyLogin adds best-effort display data after verifying identity and AppID.
+func (c *Client) VerifyLogin(ctx context.Context, code string) (identity.Identity, error) {
+	return c.verify(ctx, code, true)
+}
+
+func (c *Client) verify(ctx context.Context, code string, profile bool) (identity.Identity, error) {
 	if c.appID == "" || c.appKey == "" {
 		return identity.Identity{}, fmt.Errorf("%w: QQ credentials are not configured",
 			identity.ErrIdentityProvider)
@@ -64,11 +76,15 @@ func (c *Client) Verify(ctx context.Context, code string) (identity.Identity, er
 	if err != nil {
 		return identity.Identity{}, err
 	}
-	return identity.Identity{
+	verified := identity.Identity{
 		Provider: identity.ProviderQQ,
 		AppID:    c.appID,
 		OpenID:   openID,
-	}, nil
+	}
+	if profile {
+		verified.Profile = c.profile(ctx, accessToken, openID)
+	}
+	return verified, nil
 }
 
 type tokenAnswer struct {

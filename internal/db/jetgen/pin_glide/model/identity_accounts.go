@@ -18,5 +18,7 @@ type IdentityAccounts struct {
 	AppID     string    // Configured provider application that verified this OpenID.
 	OpenID    string    // Provider-verified OpenID within its provider application namespace.
 	UnionID   *string   // Optional provider UnionID, recorded only; it never merges Accounts.
+	Nickname  *string   // Cached display nickname from successful QQ login; NULL if unavailable.
+	AvatarURL *string   // Cached QQ avatar URL from successful login; NULL if unavailable.
 	CreatedAt time.Time // When the Account was first created.
 }
