@@ -1,6 +1,27 @@
 # Generated from the service's Huma registrations; do not edit.
 components:
   schemas:
+    AccountProfile:
+      additionalProperties: false
+      properties:
+        accountId:
+          description: Internal opaque service Account identifier; not a numeric QQ number or OpenID
+          type: string
+        avatarUrl:
+          description: Cached QQ avatar URL; null when no profile has been cached
+          type:
+            - string
+            - "null"
+        nickname:
+          description: Cached QQ nickname; null when no profile has been cached
+          type:
+            - string
+            - "null"
+      required:
+        - accountId
+        - nickname
+        - avatarUrl
+      type: object
     AuthorizeRequest:
       additionalProperties: false
       properties:
@@ -858,7 +879,7 @@ paths:
         - identity
   /v1/auth/qq:
     post:
-      description: Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
+      description: Verifies a fresh QQ authorization code through the mobile server-side flow, maps the provider-verified OpenID to its QQ Account and creates or restores this installation's Sender registration, replacing that Sender's previous credential family. Omitting senderId registers a new Sender; supplying one restores only an owned active registration. Uses the exchanged token to cache authorized nickname and QQ avatar data for GET /v1/self/account. The mobile SDK authorization must include profile access (get_simple_userinfo), and the configured AppID and user must permit get_user_info. Profile-fetch failure preserves known values and does not fail login; an uncached Account has null display fields. Provider tokens are never persisted. Failures report 401 qq_authorization_invalid, 404 resource_not_found for an unknown or foreign senderId, 409 device_registration_revoked for a permanently revoked one, 502 identity_provider_error or 503 service_unavailable. Raw M, U and F credentials are returned only to this holder and the response is never cacheable.
       operationId: PostAuthQQ
       requestBody:
         content:
@@ -1638,6 +1659,46 @@ paths:
       summary: Redeem the Pairing Session's Receiver credential
       tags:
         - pairing
+  /v1/self/account:
+    get:
+      description: Accepts a Sender U credential or an active current-generation Receiver R credential in the Bearer Authorization header. M, F and restricted Pairing credentials are not accepted. Resolves the Account entirely from the validated credential; no caller-selected Account ID is accepted. Returns accountId and the shared cached nickname/avatarUrl, with null display fields for Accounts without a cached profile, including existing WeChat Accounts. Reads never call QQ, refresh or write profiles, consume Receiver issuance grants, or change connections or presence, regardless of cache age. A later successful QQ login updates the shared cache; profile-provider failures preserve known values. Failures report 401 credential_missing, credential_invalid (including revoked or superseded R and wrong scopes), or credential_expired, 409 device_registration_revoked for a permanently revoked Sender, and 503 service_unavailable. Responses are never cacheable.
+      operationId: GetSelfAccount
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountProfile"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Unauthorized
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Conflict
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Service Unavailable
+      security:
+        - bearerAuth: []
+      summary: Read the authenticated device's own Account
+      tags:
+        - identity
   /v1/self/pairings/{id}:
     delete:
       description: Removes this Sender's own authorization to forward to a Receiver and answers 204. The Receiver credential, its delivery connection and every other Sender's association survive, and the removed association keeps its durable identity. The Sender's unfinished association work for the same Receiver is canceled with it, so a later key-confirmation report cannot recreate the association those clients removed; a connected Receiver is told with pairing_removed on its delivery connection, which stays open. A Pairing that is unknown, owned by another Sender, still pending or already removed reports 404 resource_not_found exactly as one that does not exist. Failures report 401 for an absent or unusable management credential, 409 device_registration_revoked for a permanently closed Sender registration, 404 resource_not_found, or 503 service_unavailable.

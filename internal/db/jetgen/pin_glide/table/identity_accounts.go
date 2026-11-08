@@ -23,6 +23,8 @@ type identityAccountsTable struct {
 	AppID     postgres.ColumnString     // Configured provider application that verified this OpenID.
 	OpenID    postgres.ColumnString     // Provider-verified OpenID within its provider application namespace.
 	UnionID   postgres.ColumnString     // Optional provider UnionID, recorded only; it never merges Accounts.
+	Nickname  postgres.ColumnString     // Cached display nickname from successful QQ login; NULL if unavailable.
+	AvatarURL postgres.ColumnString     // Cached QQ avatar URL from successful login; NULL if unavailable.
 	CreatedAt postgres.ColumnTimestampz // When the Account was first created.
 
 	AllColumns     postgres.ColumnList
@@ -70,9 +72,11 @@ func newIdentityAccountsTableImpl(schemaName, tableName, alias string) identityA
 		AppIDColumn     = postgres.StringColumn("app_id")
 		OpenIDColumn    = postgres.StringColumn("open_id")
 		UnionIDColumn   = postgres.StringColumn("union_id")
+		NicknameColumn  = postgres.StringColumn("nickname")
+		AvatarURLColumn = postgres.StringColumn("avatar_url")
 		CreatedAtColumn = postgres.TimestampzColumn("created_at")
-		allColumns      = postgres.ColumnList{IDColumn, ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, CreatedAtColumn}
-		mutableColumns  = postgres.ColumnList{ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, CreatedAtColumn}
+		allColumns      = postgres.ColumnList{IDColumn, ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, NicknameColumn, AvatarURLColumn, CreatedAtColumn}
+		mutableColumns  = postgres.ColumnList{ProviderColumn, AppIDColumn, OpenIDColumn, UnionIDColumn, NicknameColumn, AvatarURLColumn, CreatedAtColumn}
 		defaultColumns  = postgres.ColumnList{CreatedAtColumn}
 	)
 
@@ -85,6 +89,8 @@ func newIdentityAccountsTableImpl(schemaName, tableName, alias string) identityA
 		AppID:     AppIDColumn,
 		OpenID:    OpenIDColumn,
 		UnionID:   UnionIDColumn,
+		Nickname:  NicknameColumn,
+		AvatarURL: AvatarURLColumn,
 		CreatedAt: CreatedAtColumn,
 
 		AllColumns:     allColumns,

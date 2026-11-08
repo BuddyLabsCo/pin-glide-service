@@ -46,6 +46,15 @@ func (f *Fake) Kind() identity.ProviderKind {
 
 // Verify implements identity.Provider.
 func (f *Fake) Verify(_ context.Context, code string) (identity.Identity, error) {
+	return f.verify(code, false)
+}
+
+// VerifyLogin includes the registered profile, like the login-only adapter path.
+func (f *Fake) VerifyLogin(_ context.Context, code string) (identity.Identity, error) {
+	return f.verify(code, true)
+}
+
+func (f *Fake) verify(code string, profile bool) (identity.Identity, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
@@ -53,6 +62,9 @@ func (f *Fake) Verify(_ context.Context, code string) (identity.Identity, error)
 		return identity.Identity{}, err
 	}
 	if verified, accepted := f.identities[code]; accepted {
+		if !profile {
+			verified.Profile = nil
+		}
 		return verified, nil
 	}
 	return identity.Identity{}, identity.ErrQQAuthorizationInvalid

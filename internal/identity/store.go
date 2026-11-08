@@ -16,14 +16,16 @@ import (
 )
 
 // The account upsert is parameterized SQL because no Jet builder expresses a
-// conflict update that keeps a recorded UnionID when this verification has
+// conflict update that preserves known optional claims when verification has
 // none. It returns the existing Account ID when two first logins race.
 const upsertAccountSQL = `
 INSERT INTO pin_glide.identity_accounts AS account
-    (id, provider, app_id, open_id, union_id)
-VALUES ($1, $2, $3, $4, $5)
+    (id, provider, app_id, open_id, union_id, nickname, avatar_url)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (provider, app_id, open_id) DO UPDATE
-SET union_id = COALESCE(EXCLUDED.union_id, account.union_id)
+SET union_id = COALESCE(EXCLUDED.union_id, account.union_id),
+    nickname = COALESCE(EXCLUDED.nickname, account.nickname),
+    avatar_url = COALESCE(EXCLUDED.avatar_url, account.avatar_url)
 RETURNING id`
 
 // upsertAccount maps the verified identity to its Account, creating the Account
@@ -31,9 +33,13 @@ RETURNING id`
 // under another provider or configured application is a different Account.
 func upsertAccount(ctx context.Context, tx *sql.Tx, verified Identity) (string, error) {
 	var accountID string
+	var nickname, avatar any
+	if verified.Profile != nil {
+		nickname, avatar = nullable(verified.Profile.Nickname), nullable(verified.Profile.AvatarURL)
+	}
 	err := tx.QueryRowContext(ctx, upsertAccountSQL,
 		newValue(), verified.Provider, verified.AppID, verified.OpenID,
-		nullable(verified.UnionID)).Scan(&accountID)
+		nullable(verified.UnionID), nickname, avatar).Scan(&accountID)
 	return accountID, err
 }
 

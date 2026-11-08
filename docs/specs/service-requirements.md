@@ -20,12 +20,34 @@ No offline ciphertext backlog, historical SMS API, server-side inference, additi
 - Any successfully verified identity for a completely configured approved mobile app can create/associate an Account. No allowlist, invitation or approval gate.
 - Neither provider pair is required at process startup. A missing or partial pair fails only an operation that uses that provider, without issuing identity.
 - QQ uses the mobile server-side authorization-code flow. The service exchanges the code with its configured AppID and AppKey, then trusts only the provider-returned OpenID bound to that AppID. UnionID permission is not required.
+- Successful QQ Sender login caches the authorized nickname and QQ avatar URL on that Account, including when restoring an existing Sender. A later successful login updates the shared cache. Profile-provider failure preserves existing values; an uncached Account remains readable with null display fields. Profile data never proves identity.
+- `GET /v1/self/account` accepts Sender U or active, current-generation Receiver R. It derives the Account from that credential and reads only the cached profile. Reading never calls QQ, writes profiles, renews provider tokens, consumes Receiver issuance grants, or changes connections/presence, regardless of cache age. M, F and restricted B credentials are refused. Message upload remains U-only.
 - Sender and Receiver identities are app-installation registrations. The service assigns deviceId. Reinstallation creates a new identity and requires re-pairing.
 - Sender re-login supplies fresh WeChat or QQ authorization and its saved deviceId. Restore only an active registration owned by that Account. deviceId alone is not authentication, and this is not a hardware/cloning proof.
 - Ordinary Sender logout stops new local forwarding and revokes its service credentials while preserving its Pairings and local pairing keys.
 - Account switching revokes the old Sender credentials, removes that Sender's own Pairings, clears its old local identity/keys, and creates a new registration.
 - Ordinary management changes only the current Sender's associations. Fresh WeChat or QQ identity verification additionally permits Account-owner security revocation of any owned device. Global Receiver revocation closes its connection and affects all of its Pairings.
 - A shared Receiver may have independent Pairings with multiple Senders in the same Account. Removing one Pairing does not remove the others or close their shared delivery connection.
+
+### QQ display-profile authorization
+
+Use the existing Android `Tencent.loginServerSide` flow with profile authorization
+in its scope (the SDK documents `get_simple_userinfo`). The configured AppID must
+have access to the profile API, and the QQ user must authorize that access.
+See QQ's [server-side login](https://wiki.connect.qq.com/server-side登录模式/)
+and [OpenAPI prerequisites](https://wiki.connect.qq.com/openapi调用说明_oauth2-0/).
+
+After verifying AppID/OpenID, login calls
+[`get_user_info`](https://wiki.connect.qq.com/get_user_info/) using that login's
+access token, AppID as `oauth_consumer_key`, and verified OpenID. Cache `nickname`
+and `figureurl_qq_2`, falling back to `figureurl_qq_1` when the larger QQ avatar
+is absent. Store the URL, not an image. Failed, incomplete or `is_lost` responses
+leave the cache unchanged. Recovery and revocation proofs do not fetch profiles.
+The service never stores QQ access/refresh tokens or renews them.
+
+Schema Sync adds nullable `nickname` and `avatar_url` columns to existing Accounts.
+No data backfill or transition script is needed; existing IDs and relationships
+remain intact. Existing/provider Accounts without a cache return null display fields.
 
 ### Sender login, security revocation and re-pairing
 
@@ -245,6 +267,7 @@ IDs are opaque strings; callers do not infer identity or authority from them. Me
 | POST /v1/auth/qq | fresh QQ code | Create/restore Account and Sender registration; issue M/U/F |
 | POST /v1/auth/refresh | F in body | Rotate Sender bundle using operationId and attempt |
 | POST /v1/auth/logout | valid Sender self access credential or F; M for switch_account | Revoke current Sender credentials; Account switching also removes own Pairings |
+| GET /v1/self/account | U or active current-generation R | Own Account identity and cached display profile |
 | GET /v1/self/receivers | M | Own Receiver list, aliases and presence |
 | PATCH /v1/self/pairings/{id} | M | Rename own association alias |
 | DELETE /v1/self/pairings/{id} | M | Remove own association only |
@@ -266,6 +289,7 @@ The following definitions form the shared v1 contract. Sender ID and Receiver ID
 Common response objects:
 
 - CredentialBundle: accountId, senderId, userSession {token, expiresAt}, uploader {token, expiresAt}, refresh {token, expiresAt}. All fields are required. Expirations are RFC 3339 UTC and reflect the actual issued credentials.
+- AccountProfile: accountId, nickname, avatarUrl. All fields are present; nickname and avatarUrl are nullable. accountId is the internal service Account ID, never a numeric QQ number or OpenID. The response contains no provider credentials.
 - ReceiverAssociation: receiverId, pairingId, alias, presence (online/offline), stateChangedAt. alias is the current Sender's own string, initially empty if unset. Only active own associations appear in the list; pending reservations are represented by their Pairing Sessions.
 - PairingSessionView: sessionId, mode, receiverId, state, expiresAt, senderConfirmed, receiverConfirmed, senderId once claimed, and pairingId when a new/replacement Pairing has been allocated. It contains no raw credential, QR PSK, client private key or message key.
 - DeliveryView: receiverId, pairingId, status, createdAt, completedAt when terminal, and error for terminal failures. status may be processing only in a metadata query; synchronous upload 207 results remain terminal. Input index belongs to an upload response, not a Delivery's persistent identity.
@@ -277,6 +301,7 @@ Common response objects:
 | POST /v1/auth/qq | qqCode; optional saved senderId | 200 CredentialBundle; omit senderId to request a new registration |
 | POST /v1/auth/refresh | refreshToken, operationId, attempt (0 or 1) | 200 CredentialBundle plus the accepted operationId and attempt |
 | POST /v1/auth/logout | Optional mode: logout or switch_account, default logout; refreshToken when using F | 204; logout revokes the current Sender's credentials and preserves Pairings; switch_account also removes its Pairings and requires M management authority |
+| GET /v1/self/account | No body or Account selector | 200 AccountProfile; 401 credential_missing/credential_invalid/credential_expired, 409 device_registration_revoked for a revoked Sender, 503 service_unavailable |
 | GET /v1/self/receivers | No body | 200 {items: ReceiverAssociation[]} |
 | PATCH /v1/self/pairings/{id} | alias string | 200 ReceiverAssociation with the updated own alias |
 | DELETE /v1/self/pairings/{id} | No body | 204; remove only the current Sender's association |
